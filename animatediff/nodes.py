@@ -237,9 +237,9 @@ class AnimateDiffCombine:
 
 NODE_CLASS_MAPPINGS = {
     "AnimateDiffLoader": AnimateDiffLoader,
-    "AnimateDiffCombile": AnimateDiffCombine,
+    "AnimateDiffCombine": AnimateDiffCombine,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimateDiffLoader": "Animate Diff Loader",
-    "AnimateDiffCombile": "Animate Diff Combine",
+    "AnimateDiffCombine": "Animate Diff Combine",
 }
