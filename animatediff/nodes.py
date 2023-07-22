@@ -152,7 +152,7 @@ class AnimateDiffCombine:
                     {"default": 8, "min": 1, "max": 24, "step": 1},
                 ),
                 "loop_count": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
-                "save_image": (("Enabled", "Disabled"),),
+                "save_image": (["Enabled", "Disabled"],),
                 "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
             },
             "hidden": {
