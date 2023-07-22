@@ -1,4 +1,4 @@
-# Adapted from
+# Adapted from https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py
 
 import importlib
 from typing import Callable, Optional, Union

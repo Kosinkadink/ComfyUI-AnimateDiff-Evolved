@@ -1,9 +1,11 @@
 import os
+import json
 import hashlib
 import torch
 import numpy as np
 from PIL import Image
-from typing import Dict
+from PIL.PngImagePlugin import PngInfo
+from typing import Dict, List
 
 import folder_paths
 import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
@@ -152,12 +154,16 @@ class AnimateDiffCombine:
                 "loop_count": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
                 "save_image": (("Enabled", "Disabled"),),
                 "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
-            }
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    CATEGORY = "Animate Diff"
+    RETURN_TYPES = ()
     OUTPUT_NODE = True
+    CATEGORY = "Animate Diff"
     FUNCTION = "generate_gif"
 
     def generate_gif(
@@ -167,15 +173,15 @@ class AnimateDiffCombine:
         loop_count: int,
         save_image="Enabled",
         filename_prefix="AnimateDiff",
+        prompt=None,
+        extra_pnginfo=None,
     ):
-        import imageio
-
         # convert images to numpy
-        image_nps = []
+        pil_images: List[Image.Image] = []
         for image in images:
             img = 255.0 * image.cpu().numpy()
-            img = np.clip(img, 0, 255).astype(np.uint8)
-            image_nps.append(img)
+            img = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
+            pil_images.append(img)
 
         # save image
         output_dir = (
@@ -190,22 +196,34 @@ class AnimateDiffCombine:
             subfolder,
             _,
         ) = folder_paths.get_save_image_path(filename_prefix, output_dir)
-        file = f"{filename}_{counter:05}.gif"
-        file_path = os.path.join(full_output_folder, file)
 
-        # save gif
-        imageio.mimsave(
+        metadata = PngInfo()
+        if prompt is not None:
+            metadata.add_text("prompt", json.dumps(prompt))
+        if extra_pnginfo is not None:
+            for x in extra_pnginfo:
+                metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+
+        # save first frame as png to keep metadata
+        file = f"{filename}_{counter:05}_.png"
+        file_path = os.path.join(full_output_folder, file)
+        pil_images[0].save(
             file_path,
-            image_nps,
-            duration=round(1000 / frame_rate),
-            loop=loop_count,
+            pnginfo=metadata,
+            compress_level=4,
         )
 
-        # load saved image back as torch tensor
-        saved = Image.open(file_path)
-        saved = saved.convert("RGB")
-        saved = np.array(saved).astype(np.float32) / 255.0
-        saved = torch.from_numpy(saved)[None,]
+        # save gif
+        file = f"{filename}_{counter:05}_.gif"
+        file_path = os.path.join(full_output_folder, file)
+        pil_images[0].save(
+            file_path,
+            save_all=True,
+            append_images=pil_images[1:],
+            duration=round(1000 / frame_rate),
+            loop=loop_count,
+            compress_level=4,
+        )
 
         previews = [
             {
@@ -214,8 +232,7 @@ class AnimateDiffCombine:
                 "type": "output" if save_image == "Enabled" else "temp",
             }
         ]
-
-        return {"ui": {"images": previews}, "result": (saved,)}
+        return {"ui": {"images": previews}}
 
 
 NODE_CLASS_MAPPINGS = {
