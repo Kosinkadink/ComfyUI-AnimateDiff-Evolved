@@ -141,6 +141,7 @@ class AnimateDiffLoader:
 
 
 class AnimatedDiffUnload:
+    @classmethod
     def INPUT_TYPES(s):
         return {"required": {"model": ("MODEL",)}}
 
