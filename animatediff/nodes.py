@@ -130,7 +130,7 @@ class AnimateDiffLoader:
             injected_model_hashs.add(calculate_model_hash(unet))
 
         if init_latent is None:
-            latent = torch.zeros([frame_number, 4, width // 8, height // 8]).cpu()
+            latent = torch.zeros([frame_number, 4, height // 8, width // 8]).cpu()
         else:
             # clone value of first frame
             latent = init_latent["samples"].clone().cpu()
