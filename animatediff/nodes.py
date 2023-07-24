@@ -73,6 +73,11 @@ class AnimateDiffLoader:
             },
         }
 
+    @classmethod
+    def IS_CHANGED(s, model: ModelPatcher):
+        unet = model.model.diffusion_model
+        return calculate_model_hash(unet) not in injected_model_hashs
+
     RETURN_TYPES = ("MODEL", "LATENT")
     CATEGORY = "Animate Diff"
     FUNCTION = "inject_motion_modules"
@@ -145,13 +150,19 @@ class AnimatedDiffUnload:
     def INPUT_TYPES(s):
         return {"required": {"model": ("MODEL",)}}
 
+    @classmethod
+    def IS_CHANGED(s, model: ModelPatcher):
+        unet = model.model.diffusion_model
+        return calculate_model_hash(unet) in injected_model_hashs
+
     RETURN_TYPES = ("MODEL",)
     CATEGORY = "Animate Diff"
     FUNCTION = "unload_motion_modules"
 
     def unload_motion_modules(self, model: ModelPatcher):
         unet = model.model.diffusion_model
-        if calculate_model_hash(unet) in injected_model_hashs:
+        model_hash = calculate_model_hash(unet)
+        if model_hash in injected_model_hashs:
             logger.info(f"Unloading motion module from UNet input blocks.")
             for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
                 unet.input_blocks[unet_idx].pop(-1)
@@ -163,9 +174,9 @@ class AnimatedDiffUnload:
                 else:
                     unet.output_blocks[unet_idx].pop(-1)
 
-            injected_model_hashs.remove(calculate_model_hash(unet))
+            injected_model_hashs.remove(model_hash)
         else:
-            logger.info(f"Motion module not injected, skipping unloading.")
+            logger.info(f"Motion module not injected, skip unloading.")
 
         return (model,)
 
