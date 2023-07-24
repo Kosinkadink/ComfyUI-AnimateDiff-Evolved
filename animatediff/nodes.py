@@ -43,12 +43,18 @@ def forward_timestep_embed(
 openaimodel.forward_timestep_embed = forward_timestep_embed
 
 motion_module: MotionWrapper = None
+injected_model_hashs = set()
+
+
+def calculate_model_hash(unet):
+    t = unet.input_blocks[1]
+    m = hashlib.sha256()
+    for buf in t.buffers():
+        m.update(buf.cpu().numpy().view(np.uint8))
+    return m.hexdigest()
 
 
 class AnimateDiffLoader:
-    def __init__(self) -> None:
-        self.last_injected_model_hash = set()
-
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -99,7 +105,7 @@ class AnimateDiffLoader:
             motion_module.load_state_dict(mm_state_dict)
 
         unet = model.model.diffusion_model
-        if self.calculate_model_hash(unet) in self.last_injected_model_hash:
+        if calculate_model_hash(unet) in injected_model_hashs:
             logger.info(f"Motion module already injected, skipping injection.")
         else:
             logger.info(f"Injecting motion module into UNet input blocks.")
@@ -121,7 +127,7 @@ class AnimateDiffLoader:
                         motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
                     )
 
-            self.last_injected_model_hash.add(self.calculate_model_hash(unet))
+            injected_model_hashs.add(calculate_model_hash(unet))
 
         if init_latent is None:
             latent = torch.zeros([frame_number, 4, width // 8, height // 8]).cpu()
@@ -133,12 +139,34 @@ class AnimateDiffLoader:
 
         return (model, {"samples": latent})
 
-    def calculate_model_hash(self, unet):
-        t = unet.input_blocks[1]
-        m = hashlib.sha256()
-        for buf in t.buffers():
-            m.update(buf.numpy().view(np.uint8))
-        return m.hexdigest()
+
+class AnimatedDiffUnload:
+    def INPUT_TYPES(s):
+        return {"required": {"model": ("MODEL",)}}
+
+    RETURN_TYPES = ("MODEL",)
+    CATEGORY = "Animate Diff"
+    FUNCTION = "unload_motion_modules"
+
+    def unload_motion_modules(self, model: ModelPatcher):
+        unet = model.model.diffusion_model
+        if calculate_model_hash(unet) in injected_model_hashs:
+            logger.info(f"Unloading motion module from UNet input blocks.")
+            for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
+                unet.input_blocks[unet_idx].pop(-1)
+
+            logger.info(f"Unloading motion module from UNet output blocks.")
+            for unet_idx in range(12):
+                if unet_idx % 2 == 2:
+                    unet.output_blocks[unet_idx].pop(-2)
+                else:
+                    unet.output_blocks[unet_idx].pop(-1)
+
+            injected_model_hashs.remove(calculate_model_hash(unet))
+        else:
+            logger.info(f"Motion module not injected, skipping unloading.")
+
+        return (model,)
 
 
 class AnimateDiffCombine:
@@ -225,6 +253,8 @@ class AnimateDiffCombine:
             compress_level=4,
         )
 
+        print("Saved gif to", file_path, os.path.exists(file_path))
+
         previews = [
             {
                 "filename": file,
@@ -237,9 +267,11 @@ class AnimateDiffCombine:
 
 NODE_CLASS_MAPPINGS = {
     "AnimateDiffLoader": AnimateDiffLoader,
+    "AnimatedDiffUnload": AnimatedDiffUnload,
     "AnimateDiffCombine": AnimateDiffCombine,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimateDiffLoader": "Animate Diff Loader",
+    "AnimatedDiffUnload": "Animated Diff Unload",
     "AnimateDiffCombine": "Animate Diff Combine",
 }
