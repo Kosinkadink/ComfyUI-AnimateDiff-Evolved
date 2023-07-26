@@ -17,14 +17,15 @@ def zero_module(module):
 
 
 class MotionWrapper(nn.Module):
-    def __init__(self):
+    def __init__(self, mm_type="mm_sd_v15.ckpt"):
         super().__init__()
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
-        for i, c in enumerate((320, 640, 1280, 1280)):
+        for c in (320, 640, 1280, 1280):
             self.down_blocks.append(MotionModule(c))
-        for i, c in enumerate((1280, 1280, 640, 320)):
+        for c in (1280, 1280, 640, 320):
             self.up_blocks.append(MotionModule(c, is_up=True))
+        self.mm_type = mm_type
 
 
 class MotionModule(nn.Module):
@@ -75,18 +76,7 @@ class VanillaTemporalModule(nn.Module):
             )
 
     def forward(self, input_tensor, encoder_hidden_states, attention_mask=None):
-        input_cond, input_uncond = input_tensor.chunk(2)
-        hidden_states = torch.stack([input_cond, input_uncond], dim=0)
-        hidden_states = rearrange(hidden_states, "b f c h w -> b c f h w")
-
-        hidden_states = self.temporal_transformer(
-            hidden_states, encoder_hidden_states, attention_mask
-        )
-
-        hidden_states = rearrange(hidden_states, "b c f h w -> b f c h w")
-        output_cond, output_uncond = hidden_states.chunk(2)
-        output = torch.cat([output_cond[0], output_uncond[0]], dim=0)
-        return output
+        return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)
 
 
 class TemporalTransformer3DModel(nn.Module):
@@ -142,11 +132,7 @@ class TemporalTransformer3DModel(nn.Module):
         self.proj_out = nn.Linear(inner_dim, in_channels)
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
-        assert (
-            hidden_states.dim() == 5
-        ), f"Expected hidden_states to have ndim=5, but got ndim={hidden_states.dim()}."
-        video_length = hidden_states.shape[2]
-        hidden_states = rearrange(hidden_states, "b c f h w -> (b f) c h w")
+        video_length = hidden_states.shape[0] // 2 # TODO: config this value in scripts
 
         batch, channel, height, weight = hidden_states.shape
         residual = hidden_states
@@ -175,7 +161,6 @@ class TemporalTransformer3DModel(nn.Module):
         )
 
         output = hidden_states + residual
-        output = rearrange(output, "(b f) c h w -> b c f h w", f=video_length)
 
         return output
 
@@ -342,4 +327,3 @@ class VersatileAttention(CrossAttention):
         hidden_states = rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
 
         return hidden_states
-

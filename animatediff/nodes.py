@@ -3,14 +3,16 @@ import json
 import hashlib
 import torch
 import numpy as np
+from typing import Dict, List
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-from typing import Dict, List
+from einops import rearrange
 
 import folder_paths
 import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
 from comfy.ldm.modules.attention import SpatialTransformer
+from comfy.ldm.modules.diffusionmodules.util import GroupNorm32
 from comfy.utils import load_torch_file
 from comfy.sd import ModelPatcher, calculate_parameters
 
@@ -20,6 +22,7 @@ from .model_utils import MODEL_DIR, get_available_models
 
 
 orig_forward_timestep_embed = openaimodel.forward_timestep_embed
+groupnorm32_original_forward = GroupNorm32.forward
 
 
 def forward_timestep_embed(
@@ -95,10 +98,10 @@ class AnimateDiffLoader:
         model_path = os.path.join(MODEL_DIR, model_name)
 
         global motion_module
-        if motion_module is None:
+        if motion_module is None or motion_module.mm_type != model_name:
             logger.info(f"Loading motion module {model_name} from {model_path}")
             mm_state_dict = load_torch_file(model_path)
-            motion_module = MotionWrapper()
+            motion_module = MotionWrapper(model_name)
 
             parameters = calculate_parameters(mm_state_dict, "")
             usefp16 = model_management.should_use_fp16(model_params=parameters)
@@ -108,6 +111,16 @@ class AnimateDiffLoader:
             offload_device = model_management.unet_offload_device()
             motion_module = motion_module.to(offload_device)
             motion_module.load_state_dict(mm_state_dict)
+
+        logger.info(f"Hacking GroupNorm32 forward function.")
+
+        def groupnorm32_mm_forward(self, x):
+            x = rearrange(x, "(b f) c h w -> b c f h w", b=2)
+            x = groupnorm32_original_forward(self, x)
+            x = rearrange(x, "b c f h w -> (b f) c h w", b=2)
+            return x
+
+        GroupNorm32.forward = groupnorm32_mm_forward
 
         unet = model.model.diffusion_model
         if calculate_model_hash(unet) in injected_model_hashs:
@@ -123,9 +136,9 @@ class AnimateDiffLoader:
             logger.info(f"Injecting motion module into UNet output blocks.")
             for unet_idx in range(12):
                 mm_idx0, mm_idx1 = unet_idx // 3, unet_idx % 3
-                if unet_idx % 2 == 2:
+                if unet_idx % 3 == 2 and unet_idx != 11:
                     unet.output_blocks[unet_idx].insert(
-                        -1, motion_module.up_blocks[mm_idx0].motion_modules[mm_idx]
+                        -1, motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
                     )
                 else:
                     unet.output_blocks[unet_idx].append(
@@ -169,12 +182,15 @@ class AnimatedDiffUnload:
 
             logger.info(f"Unloading motion module from UNet output blocks.")
             for unet_idx in range(12):
-                if unet_idx % 2 == 2:
+                if unet_idx % 3 == 2 and unet_idx != 11:
                     unet.output_blocks[unet_idx].pop(-2)
                 else:
                     unet.output_blocks[unet_idx].pop(-1)
 
             injected_model_hashs.remove(model_hash)
+
+            logger.info(f"Restoring GroupNorm32 forward function.")
+            GroupNorm32.forward = groupnorm32_original_forward
         else:
             logger.info(f"Motion module not injected, skip unloading.")
 

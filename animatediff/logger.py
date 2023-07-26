@@ -28,10 +28,9 @@ logger.propagate = False
 # Add handler if we don't have one.
 if not logger.handlers:
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        ColoredFormatter("[%(name)s] - %(levelname)s - %(message)s")
-    )
+    handler.setFormatter(ColoredFormatter("[%(name)s] - %(levelname)s - %(message)s"))
     logger.addHandler(handler)
 
 # Configure logger
-logger.setLevel("INFO")
+loglevel = logging.INFO
+logger.setLevel(loglevel)
