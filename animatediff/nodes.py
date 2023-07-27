@@ -112,16 +112,6 @@ class AnimateDiffLoader:
             motion_module = motion_module.to(offload_device)
             motion_module.load_state_dict(mm_state_dict)
 
-        logger.info(f"Hacking GroupNorm32 forward function.")
-
-        def groupnorm32_mm_forward(self, x):
-            x = rearrange(x, "(b f) c h w -> b c f h w", b=2)
-            x = groupnorm32_original_forward(self, x)
-            x = rearrange(x, "b c f h w -> (b f) c h w", b=2)
-            return x
-
-        GroupNorm32.forward = groupnorm32_mm_forward
-
         unet = model.model.diffusion_model
         if calculate_model_hash(unet) in injected_model_hashs:
             logger.info(f"Motion module already injected, skipping injection.")
@@ -146,6 +136,15 @@ class AnimateDiffLoader:
                     )
 
             injected_model_hashs.add(calculate_model_hash(unet))
+
+            def groupnorm32_mm_forward(self, x):
+                x = rearrange(x, "(b f) c h w -> b c f h w", b=2)
+                x = groupnorm32_original_forward(self, x)
+                x = rearrange(x, "b c f h w -> (b f) c h w", b=2)
+                return x
+
+            logger.info(f"Hacking GroupNorm32 forward function.")
+            GroupNorm32.forward = groupnorm32_mm_forward
 
         if init_latent is None:
             latent = torch.zeros([frame_number, 4, height // 8, width // 8]).cpu()
