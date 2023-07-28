@@ -43,6 +43,13 @@ def forward_timestep_embed(
     return x
 
 
+def groupnorm32_mm_forward(self, x):
+    x = rearrange(x, "(b f) c h w -> b c f h w", b=2)
+    x = groupnorm32_original_forward(self, x)
+    x = rearrange(x, "b c f h w -> (b f) c h w", b=2)
+    return x
+
+
 openaimodel.forward_timestep_embed = forward_timestep_embed
 
 motion_modules: Dict[str, MotionWrapper] = {}
@@ -147,12 +154,12 @@ def eject_motion_module_from_unet_legacy(unet):
 
 injectors = {
     "legacy": inject_motion_module_to_unet_legacy,
-    "current": inject_motion_module_to_unet,
+    "v1": inject_motion_module_to_unet,
 }
 
 ejectors = {
     "legacy": eject_motion_module_from_unet_legacy,
-    "current": eject_motion_module_from_unet,
+    "v1": eject_motion_module_from_unet,
 }
 
 
@@ -179,7 +186,8 @@ class AnimateDiffLoaderLegacy:
         }
 
     @classmethod
-    def IS_CHANGED(s, model: ModelPatcher):
+    def IS_CHANGED(s, model: ModelPatcher, *args, **kwargs):
+        print("AnimateDiffLoaderLegacy IS_CHANGED", model, args, kwargs)
         unet = model.model.diffusion_model
         return calculate_model_hash(unet) not in injected_model_hashs
 
@@ -198,7 +206,6 @@ class AnimateDiffLoaderLegacy:
     ):
         model = model.clone()
 
-        global motion_modules
         if not model_name in motion_modules is None:
             motion_modules[model_name] = load_motion_module(model_name)
 
@@ -226,12 +233,6 @@ class AnimateDiffLoaderLegacy:
             unet_hash = calculate_model_hash(unet)
             injected_model_hashs[unet_hash] = (motion_module.mm_type, self.version)
 
-            def groupnorm32_mm_forward(self, x):
-                x = rearrange(x, "(b f) c h w -> b c f h w", b=2)
-                x = groupnorm32_original_forward(self, x)
-                x = rearrange(x, "b c f h w -> (b f) c h w", b=2)
-                return x
-
             logger.info(f"Hacking GroupNorm32 forward function.")
             GroupNorm32.forward = groupnorm32_mm_forward
 
@@ -239,7 +240,7 @@ class AnimateDiffLoaderLegacy:
             latent = torch.zeros([frame_number, 4, height // 8, width // 8]).cpu()
         else:
             # clone value of first frame
-            latent = init_latent["samples"].clone().cpu()
+            latent = init_latent["samples"][:1, :, :, :].clone().cpu()
             # repeat for all frames
             latent = latent.repeat(frame_number, 1, 1, 1)
 
@@ -263,24 +264,23 @@ class MotionModuleLoader:
         self,
         model_name: str,
     ):
-        global motion_modules
         if not model_name in motion_modules is None:
             motion_modules[model_name] = load_motion_module(model_name)
 
         return (motion_modules[model_name],)
 
 
-class MotionModuleInject:
+class AnimateDiffLoader:
     def __init__(self) -> None:
-        self.version = "current"
+        self.version = "v1"
 
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "motion_module": ("MOTION_MODULE",),
                 "model": ("MODEL",),
                 "init_latent": ("LATENT",),
+                "model_name": (get_available_models(),),
                 "frame_number": (
                     "INT",
                     {"default": 16, "min": 2, "max": 24, "step": 1},
@@ -289,7 +289,8 @@ class MotionModuleInject:
         }
 
     @classmethod
-    def IS_CHANGED(s, model: ModelPatcher):
+    def IS_CHANGED(s, model: ModelPatcher, *args, **kwargs):
+        print("AnimateDiffLoader IS_CHANGED", model, args, kwargs)
         unet = model.model.diffusion_model
         return calculate_model_hash(unet) not in injected_model_hashs
 
@@ -299,15 +300,19 @@ class MotionModuleInject:
 
     def inject_motion_modules(
         self,
-        motion_module: MotionWrapper,
         model: ModelPatcher,
         init_latent: Dict[str, torch.Tensor],
+        model_name: str,
         frame_number=16,
     ):
+        if not model_name in motion_modules is None:
+            motion_modules[model_name] = load_motion_module(model_name)
+
+        motion_module = motion_modules[model_name]
+
         model = model.clone()
         unet = model.model.diffusion_model
         unet_hash = calculate_model_hash(unet)
-
         need_inject = unet_hash not in injected_model_hashs
 
         if unet_hash in injected_model_hashs:
@@ -328,24 +333,18 @@ class MotionModuleInject:
             unet_hash = calculate_model_hash(unet)
             injected_model_hashs[unet_hash] = (motion_module.mm_type, self.version)
 
-            def groupnorm32_mm_forward(self, x):
-                x = rearrange(x, "(b f) c h w -> b c f h w", b=2)
-                x = groupnorm32_original_forward(self, x)
-                x = rearrange(x, "b c f h w -> (b f) c h w", b=2)
-                return x
-
             logger.info(f"Hacking GroupNorm32 forward function.")
             GroupNorm32.forward = groupnorm32_mm_forward
 
         # clone value of first frame
-        samples = init_latent["samples"].clone().cpu()
+        samples = init_latent["samples"][:1, :, :, :].clone().cpu()
         # repeat for all frames
         samples = samples.repeat(frame_number, 1, 1, 1)
 
         return (model, {"samples": samples})
 
 
-class AnimateDiffEject:
+class AnimateDiffUnload:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {"model": ("MODEL",)}}
@@ -353,13 +352,16 @@ class AnimateDiffEject:
     @classmethod
     def IS_CHANGED(s, model: ModelPatcher):
         unet = model.model.diffusion_model
-        return calculate_model_hash(unet) in injected_model_hashs
+        changed = calculate_model_hash(unet) in injected_model_hashs
+        logger.debug("AnimateDiffUnload changed", changed)
+        return changed
 
     RETURN_TYPES = ("MODEL",)
     CATEGORY = "Animate Diff"
     FUNCTION = "unload_motion_modules"
 
     def unload_motion_modules(self, model: ModelPatcher):
+        model = model.clone()
         unet = model.model.diffusion_model
         model_hash = calculate_model_hash(unet)
         if model_hash in injected_model_hashs:
@@ -471,15 +473,13 @@ class AnimateDiffCombine:
 
 NODE_CLASS_MAPPINGS = {
     "AnimateDiffLoader": AnimateDiffLoaderLegacy,
-    "AnimateDiffMotionModuleLoader": MotionModuleLoader,
-    "AnimateDiffInject": MotionModuleInject,
-    "AnimateDiffUnload": AnimateDiffEject,
+    "AnimateDiffLoader_v2": AnimateDiffLoader,
+    "AnimateDiffUnload": AnimateDiffUnload,
     "AnimateDiffCombine": AnimateDiffCombine,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "AnimateDiffLoader": "[DEPRECATED] Animate Diff Loader",
-    "AnimateDiffMotionModuleLoader": "Motion Module Loader",
-    "AnimateDiffInject": "Animate Diff Inject",
-    "AnimateDiffUnload": "Animate Diff Eject",
+    "AnimateDiffLoader": "[DEPRECATED] Animate Diff Loader Legacy",
+    "AnimateDiffLoader_v2": "Animate Diff Loader",
+    "AnimateDiffUnload": "Animate Diff Unload",
     "AnimateDiffCombine": "Animate Diff Combine",
 }
