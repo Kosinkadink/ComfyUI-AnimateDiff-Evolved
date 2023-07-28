@@ -105,14 +105,14 @@ def inject_motion_module_to_unet_legacy(unet, motion_module: MotionWrapper):
             )
 
 
-def eject_motion_module_from_unet(unet):
-    logger.info(f"Unloading motion module from UNet input blocks.")
+def eject_motion_module_from_unet_legacy(unet):
+    logger.info(f"Ejecting motion module from UNet input blocks.")
     for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
         unet.input_blocks[unet_idx].pop(-1)
 
-    logger.info(f"Unloading motion module from UNet output blocks.")
+    logger.info(f"Ejecting motion module from UNet output blocks.")
     for unet_idx in range(12):
-        if unet_idx % 3 == 2 and unet_idx != 11:
+        if unet_idx % 2 == 2:
             unet.output_blocks[unet_idx].pop(-2)
         else:
             unet.output_blocks[unet_idx].pop(-1)
@@ -139,14 +139,14 @@ def inject_motion_module_to_unet(unet, motion_module: MotionWrapper):
             )
 
 
-def eject_motion_module_from_unet_legacy(unet):
-    logger.info(f"Unloading motion module from UNet input blocks.")
+def eject_motion_module_from_unet(unet):
+    logger.info(f"Ejecting motion module from UNet input blocks.")
     for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
         unet.input_blocks[unet_idx].pop(-1)
 
-    logger.info(f"Unloading motion module from UNet output blocks.")
+    logger.info(f"Ejecting motion module from UNet output blocks.")
     for unet_idx in range(12):
-        if unet_idx % 2 == 2:
+        if unet_idx % 3 == 2 and unet_idx != 11:
             unet.output_blocks[unet_idx].pop(-2)
         else:
             unet.output_blocks[unet_idx].pop(-1)
@@ -186,8 +186,7 @@ class AnimateDiffLoaderLegacy:
         }
 
     @classmethod
-    def IS_CHANGED(s, model: ModelPatcher, *args, **kwargs):
-        print("AnimateDiffLoaderLegacy IS_CHANGED", model, args, kwargs)
+    def IS_CHANGED(s, model: ModelPatcher):
         unet = model.model.diffusion_model
         return calculate_model_hash(unet) not in injected_model_hashs
 
@@ -206,7 +205,7 @@ class AnimateDiffLoaderLegacy:
     ):
         model = model.clone()
 
-        if not model_name in motion_modules is None:
+        if model_name not in motion_modules:
             motion_modules[model_name] = load_motion_module(model_name)
 
         motion_module = motion_modules[model_name]
@@ -216,12 +215,10 @@ class AnimateDiffLoaderLegacy:
         need_inject = unet_hash not in injected_model_hashs
 
         if unet_hash in injected_model_hashs:
-            (model_name, version) = injected_model_hashs[unet_hash]
-            if version != self.version or model_name != motion_module.mm_type:
+            (mm_type, version) = injected_model_hashs[unet_hash]
+            if version != self.version or mm_type != motion_module.mm_type:
                 # injected by another motion module, unload first
-                logger.info(
-                    f"Motion module was injected by {model_name} version {version}, unloading first."
-                )
+                logger.info(f"Ejecting motion module {mm_type} version {version}.")
                 ejectors[version](unet)
                 GroupNorm32.forward = groupnorm32_original_forward
                 need_inject = True
@@ -229,6 +226,7 @@ class AnimateDiffLoaderLegacy:
                 logger.info(f"Motion module already injected, skipping injection.")
 
         if need_inject:
+            logger.info(f"Injecting motion module {model_name} version {self.version}.")
             injectors[self.version](unet, motion_module)
             unet_hash = calculate_model_hash(unet)
             injected_model_hashs[unet_hash] = (motion_module.mm_type, self.version)
@@ -289,8 +287,7 @@ class AnimateDiffLoader:
         }
 
     @classmethod
-    def IS_CHANGED(s, model: ModelPatcher, *args, **kwargs):
-        print("AnimateDiffLoader IS_CHANGED", model, args, kwargs)
+    def IS_CHANGED(s, model: ModelPatcher, _):
         unet = model.model.diffusion_model
         return calculate_model_hash(unet) not in injected_model_hashs
 
@@ -305,7 +302,7 @@ class AnimateDiffLoader:
         model_name: str,
         frame_number=16,
     ):
-        if not model_name in motion_modules is None:
+        if model_name not in motion_modules:
             motion_modules[model_name] = load_motion_module(model_name)
 
         motion_module = motion_modules[model_name]
@@ -316,12 +313,10 @@ class AnimateDiffLoader:
         need_inject = unet_hash not in injected_model_hashs
 
         if unet_hash in injected_model_hashs:
-            (model_name, version) = injected_model_hashs[unet_hash]
-            if version != self.version or model_name != motion_module.mm_type:
+            (mm_type, version) = injected_model_hashs[unet_hash]
+            if version != self.version or mm_type != motion_module.mm_type:
                 # injected by another motion module, unload first
-                logger.info(
-                    f"Motion module was injected by {model_name} version {version}, unloading first."
-                )
+                logger.info(f"Ejecting motion module {mm_type} version {version}.")
                 ejectors[version](unet)
                 GroupNorm32.forward = groupnorm32_original_forward
                 need_inject = True
@@ -329,6 +324,7 @@ class AnimateDiffLoader:
                 logger.info(f"Motion module already injected, skipping injection.")
 
         if need_inject:
+            logger.info(f"Injecting motion module {model_name} version {self.version}.")
             injectors[self.version](unet, motion_module)
             unet_hash = calculate_model_hash(unet)
             injected_model_hashs[unet_hash] = (motion_module.mm_type, self.version)
@@ -352,9 +348,7 @@ class AnimateDiffUnload:
     @classmethod
     def IS_CHANGED(s, model: ModelPatcher):
         unet = model.model.diffusion_model
-        changed = calculate_model_hash(unet) in injected_model_hashs
-        logger.debug("AnimateDiffUnload changed", changed)
-        return changed
+        return calculate_model_hash(unet) in injected_model_hashs
 
     RETURN_TYPES = ("MODEL",)
     CATEGORY = "Animate Diff"
@@ -366,7 +360,7 @@ class AnimateDiffUnload:
         model_hash = calculate_model_hash(unet)
         if model_hash in injected_model_hashs:
             (model_name, version) = injected_model_hashs[model_hash]
-            logger.info(f"Unloading motion module {model_name} version {version}.")
+            logger.info(f"Ejecting motion module {model_name} version {version}.")
             ejectors[version](unet)
             GroupNorm32.forward = groupnorm32_original_forward
         else:
