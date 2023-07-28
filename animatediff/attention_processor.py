@@ -542,6 +542,7 @@ class AttnProcessor:
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
 
+        print("****** input_ndim", input_ndim)
         if input_ndim == 4:
             hidden_states = hidden_states.transpose(-1, -2).reshape(
                 batch_size, channel, height, width

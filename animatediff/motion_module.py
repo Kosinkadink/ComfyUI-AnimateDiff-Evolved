@@ -297,9 +297,6 @@ class VersatileAttention(CrossAttention):
         video_length=None,
         **cross_attention_kwargs,
     ):
-        if self.added_kv_proj_dim is not None:
-            raise NotImplementedError
-
         if self.attention_mode != "Temporal":
             raise NotImplementedError
 
