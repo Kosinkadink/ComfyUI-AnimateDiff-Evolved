@@ -331,11 +331,14 @@ class AnimateDiffLoader:
 
             logger.info(f"Hacking GroupNorm32 forward function.")
             GroupNorm32.forward = groupnorm32_mm_forward
-
-        # clone value of first frame
-        samples = init_latent["samples"][:1, :, :, :].clone().cpu()
-        # repeat for all frames
-        samples = samples.repeat(frame_number, 1, 1, 1)
+        
+        init_frames = len(init_latent["samples"])
+        samples = init_latent["samples"][:init_frames, :, :, :].clone().cpu()
+        
+        if init_frames < frame_number:
+            last_frame = samples[-1].unsqueeze(0)
+            repeated_last_frames = last_frame.repeat(frame_number - init_frames, 1, 1, 1)
+            samples = torch.cat((samples, repeated_last_frames), dim=0)
 
         return (model, {"samples": samples})
 
