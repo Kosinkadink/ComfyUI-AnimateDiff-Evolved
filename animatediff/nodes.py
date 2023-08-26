@@ -13,8 +13,8 @@ import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
 from comfy.ldm.modules.attention import SpatialTransformer
 from comfy.ldm.modules.diffusionmodules.util import GroupNorm32
-from comfy.utils import load_torch_file
-from comfy.sd import ModelPatcher, calculate_parameters
+from comfy.utils import load_torch_file, calculate_parameters
+from comfy.sd import ModelPatcher
 
 from .logger import logger
 from .motion_module import MotionWrapper, VanillaTemporalModule
