@@ -18,7 +18,7 @@ from comfy.sd import ModelPatcher
 
 from .logger import logger
 from .motion_module import MotionWrapper, VanillaTemporalModule
-from .model_utils import Folders, get_available_models
+from .model_utils import Folders, get_available_models, get_full_path
 
 
 orig_forward_timestep_embed = openaimodel.forward_timestep_embed
@@ -66,7 +66,7 @@ def calculate_model_hash(unet):
 
 
 def load_motion_module(model_name: str):
-    model_path = os.path.join(Folders.MODELS, model_name)
+    model_path = get_full_path(Folders.MODELS, model_name)
 
     logger.info(f"Loading motion module {model_name}")
     mm_state_dict = load_torch_file(model_path)

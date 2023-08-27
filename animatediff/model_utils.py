@@ -7,23 +7,20 @@ import folder_paths
 HF_REPO = "guoyww/animatediff"
 MODEL_FILES = ["mm_sd_v14.ckpt", "mm_sd_v15.ckpt"]
 
-CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
-MODEL_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "../models"))
-
 
 class Folders:
     MODELS = "models"
 
 
 # create and handle directories for models
-basedir = os.path.dirname(os.path.realpath(__file__))
-checkpoints_dir = os.path.join(basedir, Folders.MODELS)
+CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
+MODEL_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "../models"))
 
-if not os.path.exists(checkpoints_dir):
-    os.makedirs(checkpoints_dir)
+if not os.path.exists(MODEL_DIR):
+    os.makedirs(MODEL_DIR)
 
 folder_names_and_paths = {}
-folder_names_and_paths[Folders.MODELS] = ([checkpoints_dir], folder_paths.supported_ckpt_extensions)
+folder_names_and_paths[Folders.MODELS] = ([MODEL_DIR], folder_paths.supported_ckpt_extensions)
 
 filename_list_cache = {}
 
@@ -88,6 +85,7 @@ def get_full_path(folder_name, filename):
 
 
 def get_available_models():
+    print(MODEL_DIR)
     return get_filename_list(Folders.MODELS)
 
 
