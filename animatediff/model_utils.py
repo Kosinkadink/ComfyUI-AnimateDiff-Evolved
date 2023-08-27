@@ -12,18 +12,18 @@ MODEL_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "../models"))
 
 
 class Folders:
-    MODULES = "modules"
+    MODELS = "models"
 
 
 # create and handle directories for models
 basedir = os.path.dirname(os.path.realpath(__file__))
-checkpoints_dir = os.path.join(basedir, Folders.MODULES)
+checkpoints_dir = os.path.join(basedir, Folders.MODELS)
 
 if not os.path.exists(checkpoints_dir):
     os.makedirs(checkpoints_dir)
 
 folder_names_and_paths = {}
-folder_names_and_paths[Folders.MODULES] = ([checkpoints_dir], folder_paths.supported_ckpt_extensions)
+folder_names_and_paths[Folders.MODELS] = ([checkpoints_dir], folder_paths.supported_ckpt_extensions)
 
 filename_list_cache = {}
 
@@ -88,7 +88,7 @@ def get_full_path(folder_name, filename):
 
 
 def get_available_models():
-    return get_filename_list(Folders.MODULES)
+    return get_filename_list(Folders.MODELS)
 
 
 def download(model_file=MODEL_FILES[-1]):
