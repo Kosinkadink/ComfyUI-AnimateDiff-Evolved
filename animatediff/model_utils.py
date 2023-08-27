@@ -1,6 +1,8 @@
 import os
+import time
 from huggingface_hub import hf_hub_download
 
+import folder_paths
 
 HF_REPO = "guoyww/animatediff"
 MODEL_FILES = ["mm_sd_v14.ckpt", "mm_sd_v15.ckpt"]
@@ -9,12 +11,84 @@ CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
 MODEL_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "../models"))
 
 
-def get_available_models():
-    available_model = [
-        f for f in MODEL_FILES if os.path.exists(os.path.join(MODEL_DIR, f))
-    ]
+class Folders:
+    MODULES = "modules"
 
-    return available_model
+
+# create and handle directories for models
+basedir = os.path.dirname(os.path.realpath(__file__))
+checkpoints_dir = os.path.join(basedir, Folders.MODULES)
+
+if not os.path.exists(checkpoints_dir):
+    os.makedirs(checkpoints_dir)
+
+folder_names_and_paths = {}
+folder_names_and_paths[Folders.MODULES] = ([checkpoints_dir], folder_paths.supported_ckpt_extensions)
+
+filename_list_cache = {}
+
+
+def get_filename_list_(folder_name):
+    global folder_names_and_paths
+    output_list = set()
+    folders = folder_names_and_paths[folder_name]
+    output_folders = {}
+    for x in folders[0]:
+        files, folders_all = folder_paths.recursive_search(x)
+        output_list.update(folder_paths.filter_files_extensions(files, folders[1]))  # folders[1] is extensions
+        output_folders = {**output_folders, **folders_all}
+
+    return (sorted(list(output_list)), output_folders, time.perf_counter())
+
+
+def cached_filename_list_(folder_name):
+    global filename_list_cache
+    global folder_names_and_paths
+    if folder_name not in filename_list_cache:
+        return None
+    out = filename_list_cache[folder_name]
+    if time.perf_counter() < (out[2] + 0.5):
+        return out
+    for x in out[1]:
+        time_modified = out[1][x]
+        folder = x
+        if os.path.getmtime(folder) != time_modified:
+            return None
+        
+    folders = folder_names_and_paths[folder_name]
+    for x in folders[0]:
+        if os.path.isdir(x):
+            if not x in out[1]:
+                return None
+            
+    return out
+
+
+def get_filename_list(folder_name):
+    out = cached_filename_list_(folder_name)
+    if out is None:
+        out = get_filename_list_(folder_name)
+        global filename_list_cache
+        filename_list_cache[folder_name] = out
+    return list(out[0])
+
+
+def get_full_path(folder_name, filename):
+    global folder_names_and_paths
+    if folder_name not in folder_names_and_paths:
+        return None
+    folders = folder_names_and_paths[folder_name]
+    filename = os.path.relpath(os.path.join("/", filename), "/")
+    for path in folders[0]:
+        full_path = os.path.join(path, filename)
+        if os.path.isfile(full_path):
+            return full_path
+        
+    return None
+
+
+def get_available_models():
+    return get_filename_list(Folders.MODULES)
 
 
 def download(model_file=MODEL_FILES[-1]):
