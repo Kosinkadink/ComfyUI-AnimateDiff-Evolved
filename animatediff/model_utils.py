@@ -8,6 +8,28 @@ HF_REPO = "guoyww/animatediff"
 MODEL_FILES = ["mm_sd_v14.ckpt", "mm_sd_v15.ckpt"]
 
 
+class BetaSchedules:
+    SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
+    LINEAR = "linear (default)"
+    SQRT = "sqrt"
+    COSINE = "cosine"
+    SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
+
+    ALIAS_LIST = [SQRT_LINEAR, LINEAR, SQRT, COSINE, SQUAREDCOS_CAP_V2]
+
+    ALIAS_MAP = {
+        SQRT_LINEAR: "sqrt_linear",
+        LINEAR: "linear",
+        SQRT: "sqrt",
+        COSINE: "cosine",
+        SQUAREDCOS_CAP_V2: "squaredcos_cap_v2",
+    }
+
+    @classmethod
+    def to_name(cls, alias: str):
+        return cls.ALIAS_MAP[alias]
+
+
 class Folders:
     MODELS = "models"
 

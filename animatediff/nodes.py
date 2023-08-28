@@ -14,11 +14,11 @@ import comfy.model_management as model_management
 from comfy.ldm.modules.attention import SpatialTransformer
 from comfy.ldm.modules.diffusionmodules.util import GroupNorm32
 from comfy.utils import load_torch_file, calculate_parameters
-from comfy.sd import ModelPatcher
+from comfy.sd import ModelPatcher, load_checkpoint_guess_config
 
 from .logger import logger
 from .motion_module import MotionWrapper, VanillaTemporalModule
-from .model_utils import Folders, get_available_models, get_full_path
+from .model_utils import Folders, get_available_models, get_full_path, BetaSchedules
 
 
 orig_forward_timestep_embed = openaimodel.forward_timestep_embed
@@ -468,13 +468,40 @@ class AnimateDiffCombine:
         return {"ui": {"images": previews}}
 
 
+class CheckpointLoaderSimpleWithNoiseSelect:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
+                "beta_schedule": (BetaSchedules.ALIAS_LIST, )
+            },
+        }
+    RETURN_TYPES = ("MODEL", "CLIP", "VAE")
+    FUNCTION = "load_checkpoint"
+
+    CATEGORY = "Animate Diff"
+
+    def load_checkpoint(self, ckpt_name, beta_schedule, output_vae=True, output_clip=True):
+        ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
+        out = load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
+        # register chosen beta schedule on model - convert to beta_schedule name recognized by ComfyUI
+        beta_schedule_name = BetaSchedules.to_name(beta_schedule)
+        out[0].model.register_schedule(given_betas=None, beta_schedule=beta_schedule_name, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
+        return out
+
+
 NODE_CLASS_MAPPINGS = {
+    "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
+    # AnimateDiff-specific
     "AnimateDiffLoader": AnimateDiffLoaderLegacy,
     "AnimateDiffLoader_v2": AnimateDiffLoader,
     "AnimateDiffUnload": AnimateDiffUnload,
     "AnimateDiffCombine": AnimateDiffCombine,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select",
+    # AnimateDiff-specific
     "AnimateDiffLoader": "[DEPRECATED] Animate Diff Loader Legacy",
     "AnimateDiffLoader_v2": "Animate Diff Loader",
     "AnimateDiffUnload": "Animate Diff Unload",
