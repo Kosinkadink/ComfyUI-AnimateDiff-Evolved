@@ -14,7 +14,7 @@ import comfy.model_management as model_management
 from comfy.ldm.modules.attention import SpatialTransformer
 from comfy.ldm.modules.diffusionmodules.util import GroupNorm32
 from comfy.utils import load_torch_file, calculate_parameters
-from comfy.sd import ModelPatcher, load_checkpoint_guess_config
+from comfy.sd import VAE, ModelPatcher, load_checkpoint_guess_config
 
 from .logger import logger
 from .motion_module import MotionWrapper, VanillaTemporalModule
@@ -209,6 +209,9 @@ class AnimateDiffLoaderLegacy:
             motion_modules[model_name] = load_motion_module(model_name)
 
         motion_module = motion_modules[model_name]
+        # set motion_module's video_length to match latent length
+        motion_module.set_video_length(frame_number)
+
         unet = model.model.diffusion_model
         unet_hash = calculate_model_hash(unet)
 
@@ -245,29 +248,6 @@ class AnimateDiffLoaderLegacy:
         return (model, {"samples": latent})
 
 
-class MotionModuleLoader:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "model_name": (get_available_models(),),
-            },
-        }
-
-    RETURN_TYPES = ("MOTION_MODULE",)
-    CATEGORY = "Animate Diff"
-    FUNCTION = "load_motion_module"
-
-    def load_motion_module(
-        self,
-        model_name: str,
-    ):
-        if not model_name in motion_modules is None:
-            motion_modules[model_name] = load_motion_module(model_name)
-
-        return (motion_modules[model_name],)
-
-
 class AnimateDiffLoader:
     def __init__(self) -> None:
         self.version = "v1"
@@ -277,12 +257,8 @@ class AnimateDiffLoader:
         return {
             "required": {
                 "model": ("MODEL",),
-                "init_latent": ("LATENT",),
                 "model_name": (get_available_models(),),
-                "frame_number": (
-                    "INT",
-                    {"default": 16, "min": 2, "max": 24, "step": 1},
-                ),
+                "latents": ("LATENT",),
             },
         }
 
@@ -298,14 +274,19 @@ class AnimateDiffLoader:
     def inject_motion_modules(
         self,
         model: ModelPatcher,
-        init_latent: Dict[str, torch.Tensor],
         model_name: str,
-        frame_number=16,
+        latents: Dict[str, torch.Tensor],
     ):
         if model_name not in motion_modules:
             motion_modules[model_name] = load_motion_module(model_name)
 
         motion_module = motion_modules[model_name]
+        # check that latents don't exceed max frame size
+        init_frames = len(latents["samples"])
+        if init_frames > 24:
+            raise ValueError(f"AnimateDiff has upper limit of 24 frames, but received {init_frames} latents.")
+        # set motion_module's video_length to match latent length
+        motion_module.set_video_length(init_frames)
 
         model = model.clone()
         unet = model.model.diffusion_model
@@ -331,16 +312,8 @@ class AnimateDiffLoader:
 
             logger.info(f"Hacking GroupNorm32 forward function.")
             GroupNorm32.forward = groupnorm32_mm_forward
-        
-        init_frames = len(init_latent["samples"])
-        samples = init_latent["samples"][:init_frames, :, :, :].clone().cpu()
-        
-        if init_frames < frame_number:
-            last_frame = samples[-1].unsqueeze(0)
-            repeated_last_frames = last_frame.repeat(frame_number - init_frames, 1, 1, 1)
-            samples = torch.cat((samples, repeated_last_frames), dim=0)
 
-        return (model, {"samples": samples})
+        return (model, latents)
 
 
 class AnimateDiffUnload:
@@ -491,19 +464,94 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         return out
 
 
+def decode_injected(self, samples_in):
+    self.first_stage_model = self.first_stage_model.to(self.device)
+    try:
+        print("$$$$ in decode_injected!")
+        memory_used = (2562 * samples_in.shape[2] * samples_in.shape[3] * 64) * 1.7
+        model_management.free_memory(memory_used, self.device)
+        free_memory = model_management.get_free_memory(self.device)
+        batch_number = int(free_memory / memory_used)
+        batch_number = max(1, batch_number)
+
+        latent_length = samples_in.shape[0]
+
+        #samples_in = 1 / 0.18215 * samples_in
+        #samples_in = rearrange(samples_in, "(b f) c h w -> b c f h w")
+        #x = groupnorm32_original_forward(self, x)
+        
+
+        pixel_samples = torch.empty((samples_in.shape[0], 3, round(samples_in.shape[2] * 8), round(samples_in.shape[3] * 8)), device="cpu")
+        for x in range(0, samples_in.shape[0], batch_number):
+            samples = samples_in[x:x+batch_number].to(self.vae_dtype).to(self.device)
+            pixel_samples[x:x+batch_number] = torch.clamp((self.first_stage_model.decode(samples) + 1.0) / 2.0, min=0.0, max=1.0).cpu().float()
+
+    except model_management.OOM_EXCEPTION as e:
+        print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
+        raise ValueError("Ran out of memory! ")
+        pixel_samples = self.decode_tiled_(samples_in)
+
+    #pixel_samples = (pixel_samples / 2 + 0.5).clamp(0, 1).cpu().float()
+
+    # batch_images = []
+    # for i, x_sample in enumerate(pixel_samples):
+    #     x_sample = 255. * np.moveaxis(x_sample.cpu().numpy(), 0, 2)
+    #     x_sample = x_sample.astype(np.uint8)
+    #     image = Image.fromarray(x_sample)
+    #     #image = images.resize_image(0, image, target_width, target_height, upscaler_name=self.hr_upscaler)
+    #     image = np.array(image).astype(np.float32) / 255.0
+    #     image = np.moveaxis(image, 2, 0)
+    #     batch_images.append(image)
+    
+    # pixel_samples = torch.from_numpy(np.array(batch_images))
+    # pixel_samples = pixel_samples.to(self.device)
+    # pixel_samples = 2. * pixel_samples - 1.
+
+    self.first_stage_model = self.first_stage_model.to(self.offload_device)
+    pixel_samples = pixel_samples.cpu().movedim(1,-1)
+    #samples_in = rearrange(samples_in, "b c f h w -> (b f) c h w", f=latent_length)
+    return pixel_samples
+
+
+class VAEDecodeNormalized:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": { "samples": ("LATENT", ), "vae": ("VAE", )}}
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "decode"
+
+    CATEGORY = "Animate Diff"
+
+    def inject_decode(self, vae: VAE):
+        vae.decode = decode_injected.__get__(vae, type(vae))
+
+    def eject_decode(self, vae: VAE, original_decode):
+        vae.decode = original_decode.__get__(vae, type(vae))
+
+    def decode(self, vae: VAE, samples):
+        original_decode = vae.decode
+        try:
+            self.inject_decode(vae)
+            return (vae.decode(samples["samples"]), )
+        finally:
+            self.eject_decode(vae, original_decode)
+
+
 NODE_CLASS_MAPPINGS = {
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
+    # "VAEDecodeNormalized": VAEDecodeNormalized,
     # AnimateDiff-specific
-    "AnimateDiffLoader": AnimateDiffLoaderLegacy,
-    "AnimateDiffLoader_v2": AnimateDiffLoader,
+    "AnimateDiffLoaderLegacy": AnimateDiffLoaderLegacy,
+    "AnimateDiffLoaderV1": AnimateDiffLoader,
     "AnimateDiffUnload": AnimateDiffUnload,
     "AnimateDiffCombine": AnimateDiffCombine,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select",
+    # "VAEDecodeNormalized": "VAE Decode (Normalized)",
     # AnimateDiff-specific
-    "AnimateDiffLoader": "[DEPRECATED] Animate Diff Loader Legacy",
-    "AnimateDiffLoader_v2": "Animate Diff Loader",
-    "AnimateDiffUnload": "Animate Diff Unload",
-    "AnimateDiffCombine": "Animate Diff Combine",
+    "AnimateDiffLoaderLegacy": "[DEPRECATED] AnimateDiff Loader Legacy",
+    "AnimateDiffLoaderV1": "AnimateDiff Loader",
+    "AnimateDiffUnload": "AnimateDiff Unload",
+    "AnimateDiffCombine": "AnimateDiff Combine",
 }

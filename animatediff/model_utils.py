@@ -107,7 +107,6 @@ def get_full_path(folder_name, filename):
 
 
 def get_available_models():
-    print(MODEL_DIR)
     return get_filename_list(Folders.MODELS)
 
 

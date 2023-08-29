@@ -26,6 +26,12 @@ class MotionWrapper(nn.Module):
         for c in (1280, 1280, 640, 320):
             self.up_blocks.append(MotionModule(c, is_up=True))
         self.mm_type = mm_type
+    
+    def set_video_length(self, video_length: int):
+        for block in self.down_blocks:
+            block.set_video_length(video_length)
+        for block in self.up_blocks:
+            block.set_video_length(video_length)
 
 
 class MotionModule(nn.Module):
@@ -36,6 +42,10 @@ class MotionModule(nn.Module):
         )
         if is_up:
             self.motion_modules.append(get_motion_module(in_channels))
+    
+    def set_video_length(self, video_length: int):
+        for motion_module in self.motion_modules:
+            motion_module.set_video_length(video_length)
 
 
 def get_motion_module(in_channels):
@@ -74,6 +84,9 @@ class VanillaTemporalModule(nn.Module):
             self.temporal_transformer.proj_out = zero_module(
                 self.temporal_transformer.proj_out
             )
+
+    def set_video_length(self, video_length: int):
+        self.temporal_transformer.set_video_length(video_length)
 
     def forward(self, input_tensor, encoder_hidden_states, attention_mask=None):
         return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)
@@ -130,10 +143,12 @@ class TemporalTransformer3DModel(nn.Module):
             ]
         )
         self.proj_out = nn.Linear(inner_dim, in_channels)
+        self.video_length = 16
+
+    def set_video_length(self, video_length: int):
+        self.video_length = video_length
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
-        video_length = hidden_states.shape[0] // 2 # TODO: config this value in scripts
-
         batch, channel, height, weight = hidden_states.shape
         residual = hidden_states
 
@@ -149,7 +164,7 @@ class TemporalTransformer3DModel(nn.Module):
             hidden_states = block(
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
-                video_length=video_length,
+                video_length=self.video_length,
             )
 
         # output
