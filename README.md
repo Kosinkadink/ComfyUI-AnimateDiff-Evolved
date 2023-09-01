@@ -10,27 +10,58 @@ Examples shown here will also often make use of two helpful set of nodes:
 
 1. Clone this repo into `custom_nodes` folder.
 2. Download motion modules from [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836) | [Baidu NetDisk](https://pan.baidu.com/s/18ZpcSM6poBqxWNHtnyMcxg?pwd=et8y). You can download one or more motion models. They can be renamed if you want. More motion modules are being trained by the community - if I am made aware of any good ones, I will link here as well. (TODO: create .safetensor versions of the motion modules and share them here.)
+3. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Try stuff and you will be surprised by what you can do.
 
 ## Samples
 
 ### txt2img
 
-<img width="1254" alt="ComfyUI AnimateDiff Usage" src="https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/a88e2141-c55f-4bdb-b6ca-9155b6639114">
+![txt2image_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/21d35c6d-1e61-4d05-81a1-87a07da35e67)
 
-![AnimateDiff_00001](https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/e48f148a-886b-4a0d-b589-9fa795b06936)
+![AA_gif_00002_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/91933fb2-5b0b-4f41-a57a-ebebb604bd9d)
 
-### img2img
+
+### txt2img w/ latent upscale
+
+![txt2image_upscale_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/0eff4c23-ed61-412c-a9cf-533e26b4fe3a)
+
+![AA_upscale_gif_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/4ca8abd2-0b48-41d6-9eea-ed1467a68f5f)
+
+
+### txt2img w/ ControlNet-stabilized latent-upscale
+
+![txt2image_upscale_controlnet_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/54167762-55ce-4776-a09e-e655c5fe049a)
+
+![AA_upscale_controlnet_gif_00006_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/480c9bed-132c-489c-9682-39856b87fedb)
+
+
+### txt2img w/ Initial ControlNet input (using LineArt preprocessor on first txt2img as an exmaple)
+
+![txt2image_controlnet_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/4d48ee81-42e3-4a27-b9ff-81b662bc602b)
+
+![AA_controlnet_gif_00017_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/de149c0f-bc1d-4bb9-8b4d-b10686e5b09f)
+
+
+### txt2img w/ Initial ControlNet input (using OpenPose images)
+
+![txt2image_openpose_controlnet_upscale_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/c8330b1f-7d70-42b8-8189-bada4d889c1f)
+
+(open_pose images provided courtesy of toyxyz)
+![AA_openpose_cn_gif_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/23291941-864d-495a-8ba8-d02e05756396)
+
+![AA_gif_00029_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/8367b24e-dfe5-4942-8e21-ac5a562be731)
+
+
+### img2img (TODO: this is outdated and still shows the old flickering version, update this)
 <img width="1121" alt="Screenshot 2023-07-22 at 22 08 00" src="https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/600f96b0-df21-4437-917f-7eda35ab6363">
 
-### ControlNet full animation workflow
-
-### ControlNet keyframes workflow (in progress, will add more helpful nodes to Advanced-ControlNet soon and change that implementation)
-
 ![AnimateDiff_00002](https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/c78d64b9-b308-41ec-9804-bbde654d0b47)
+
 
 ## Upcoming features (aka TODO):
 - Nodes for saving videos, saving generated files into a timestamped folder instead of all over ComfyUI output dir.
 - Moving-window latent implementation for generating arbitrarily-long animations instead of being capped at 24 frames (moving window will still be limited to up to 24 frames).
+- Add examples of using ControlNet to ease one image/contorlnet input into another, and also add more nodes to Advanced-ControlNet to make it easier to do so
 
 
 ## Known Issues
@@ -46,23 +77,3 @@ Currently figuring out why, but should not be a common occurance.
 ### GIF has Watermark (especially when using mm_sd_v15)
 
 Training data used by the authors of the AnimateDiff paper contained Shutterstock watermarks. Since mm_sd_v15 was finetuned on finer, less drastic movement, the motion module attempts to replicate the transparency of that watermark and does not get blurred away like mm_sd_v14. Community finetunes of motion modules should eventually create equivalent (or better) results without the watermark. Until then, you'll need some good RNG or stick with mm_sd_v15, depending on your application.
-
-<table  class="center">
-    <tr>
-    <td>Old revision</td>
-    <td>New revision</td>
-    </tr>
-    <tr>
-    <td><img src="https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/8f1a6233-875f-4f0c-aa60-ba93e73b7d64" /></td>
-    <td><img src="https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/a2029eba-f519-437c-a0b5-1f881e099a20" /></td>
-    </tr>
-    <tr>
-    <td><img src="https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/41ec449f-1955-466c-bd38-6f2a55d654f8" /></td>
-    <td><img src="https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/766c2891-5d27-4052-99f9-be9862620919" /></td>
-    </tr>
-</table>
-
-
-I played around with both version and found that the watermark only present in some models, not always. So I've brought back the old method and also created a new node with the new method. You can try both to find the best fit for each model.
-
-![Screenshot 2023-07-28 at 18 14 14](https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/25cf6092-3e67-435e-86cc-43614ca7d6aa)
