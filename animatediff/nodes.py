@@ -1,7 +1,10 @@
 import os
+import sys
 import json
 import hashlib
 import torch
+from torch import Tensor
+from torch.nn.functional import group_norm
 import numpy as np
 from typing import Dict, List, Tuple
 from PIL import Image
@@ -11,19 +14,41 @@ from einops import rearrange
 import folder_paths
 import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
+import comfy.sample as comfy_sample
 from comfy.ldm.modules.attention import SpatialTransformer
-from comfy.ldm.modules.diffusionmodules.util import GroupNorm32
 from comfy.utils import load_torch_file, calculate_parameters
-from comfy.sd import VAE, load_checkpoint_guess_config
+from comfy.sd import load_checkpoint_guess_config
 from comfy.model_patcher import ModelPatcher
-
 from .logger import logger
 from .motion_module import MotionWrapper, VanillaTemporalModule
 from .model_utils import Folders, get_available_models, get_full_path, BetaSchedules
 
+#############################################
+#### Code Injection #########################
+MM_INJECTED_ATTR = "_mm_injected"
 
-orig_forward_timestep_embed = openaimodel.forward_timestep_embed
-groupnorm32_original_forward = GroupNorm32.forward
+class InjectionParams:
+    def __init__(self, axes_factor: int, video_length: int, ignore_factor_on_trunc: bool, unlimited_area_hack: bool) -> None:
+        self.axes_factor = axes_factor
+        self.video_length = video_length
+        self.ignore_factor_on_trunc = ignore_factor_on_trunc
+        self.unlimited_area_hack = unlimited_area_hack
+
+def is_mm_injected_into_model(model: ModelPatcher):
+    return hasattr(model.model.diffusion_model, MM_INJECTED_ATTR)
+
+def get_mm_injected_params(model: ModelPatcher) -> InjectionParams:
+    return getattr(model.model.diffusion_model, MM_INJECTED_ATTR)
+
+def set_mm_injected_params(model: ModelPatcher, injection_params: InjectionParams):
+    setattr(model.model.diffusion_model, MM_INJECTED_ATTR, injection_params)
+
+
+
+orig_comfy_sample = comfy_sample.sample # wrapper will go around this to inject/eject GroupNorm hack
+orig_maximum_batch_area = model_management.maximum_batch_area # allows for "unlimited area hack" to prevent halving of conds/unconds
+orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
+orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
 
 
 def forward_timestep_embed(
@@ -43,15 +68,52 @@ def forward_timestep_embed(
             x = layer(x)
     return x
 
-
-def groupnorm32_mm_forward(self, x):
-    x = rearrange(x, "(b f) c h w -> b c f h w", b=2)
-    x = groupnorm32_original_forward(self, x)
-    x = rearrange(x, "b c f h w -> (b f) c h w", b=2)
-    return x
-
-
+# inject forward_timestep embed
 openaimodel.forward_timestep_embed = forward_timestep_embed
+
+
+def unlimited_batch_area():
+    return int(sys.maxsize)
+
+
+def groupnorm_mm_factory(params: InjectionParams):
+    def groupnorm_mm_forward(self, input: Tensor) -> Tensor:
+        # if video_length same length as input tensor and ignore_on_trunc, use 1
+        if input.size()[0] == params.video_length and params.ignore_factor_on_trunc:
+            axes_factor = 1
+        # otherwise, use set b_factor_inp if can divide input size
+        else:
+            axes_factor = params.axes_factor if input.size()[0]%params.axes_factor==0 else 1
+        
+        input = rearrange(input, "(b f) c h w -> b c f h w", b=axes_factor)
+        input = group_norm(input, self.num_groups, self.weight, self.bias, self.eps)
+        input = rearrange(input, "b c f h w -> (b f) c h w", b=axes_factor)
+        return input
+    return groupnorm_mm_forward
+
+
+def sample_wrapper(model, *args, **kwargs):
+    #previous_groupnorm_forward = torch.nn.GroupNorm.forward
+    # check if model is currently injected
+    if is_mm_injected_into_model(model):
+        params = get_mm_injected_params(model)
+        if params.unlimited_area_hack:
+            logger.info(f"Hacking model_management.maximum_batch_area function.")
+            model_management.maximum_batch_area = unlimited_batch_area
+        logger.info(f"Hacking torch.nn.GroupNorm forward function.")
+        torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
+    try:
+        return orig_comfy_sample(model, *args, **kwargs)
+    except:
+        raise
+    finally:
+        # maintain functions present prior to sampling
+        model_management.maximum_batch_area = orig_maximum_batch_area
+        torch.nn.GroupNorm.forward = orig_groupnorm_forward
+
+# inject sample_wrapper to wrap original sample function
+comfy_sample.sample = sample_wrapper
+
 
 motion_modules: Dict[str, MotionWrapper] = {}
 original_model_hashs = set()
@@ -85,7 +147,7 @@ def load_motion_module(model_name: str):
     return motion_module
 
 
-def inject_motion_module_to_unet_legacy(unet, motion_module: MotionWrapper):
+def inject_motion_module_to_unet_legacy(unet, motion_module: MotionWrapper, injection_params: InjectionParams):
     logger.info(f"Injecting motion module into UNet input blocks.")
     for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
         mm_idx0, mm_idx1 = mm_idx // 2, mm_idx % 2
@@ -104,6 +166,7 @@ def inject_motion_module_to_unet_legacy(unet, motion_module: MotionWrapper):
             unet.output_blocks[unet_idx].append(
                 motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
             )
+    setattr(unet, MM_INJECTED_ATTR, injection_params)
 
 
 def eject_motion_module_from_unet_legacy(unet):
@@ -117,9 +180,10 @@ def eject_motion_module_from_unet_legacy(unet):
             unet.output_blocks[unet_idx].pop(-2)
         else:
             unet.output_blocks[unet_idx].pop(-1)
+    delattr(unet, MM_INJECTED_ATTR)
 
 
-def inject_motion_module_to_unet(unet, motion_module: MotionWrapper):
+def inject_motion_module_to_unet(unet, motion_module: MotionWrapper, injection_params: InjectionParams):
     logger.info(f"Injecting motion module into UNet input blocks.")
     for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
         mm_idx0, mm_idx1 = mm_idx // 2, mm_idx % 2
@@ -138,6 +202,7 @@ def inject_motion_module_to_unet(unet, motion_module: MotionWrapper):
             unet.output_blocks[unet_idx].append(
                 motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
             )
+    setattr(unet, MM_INJECTED_ATTR, injection_params)
 
 
 def eject_motion_module_from_unet(unet):
@@ -151,6 +216,7 @@ def eject_motion_module_from_unet(unet):
             unet.output_blocks[unet_idx].pop(-2)
         else:
             unet.output_blocks[unet_idx].pop(-1)
+    delattr(unet, MM_INJECTED_ATTR)
 
 
 injectors = {
@@ -162,6 +228,8 @@ ejectors = {
     "legacy": eject_motion_module_from_unet_legacy,
     "v1": eject_motion_module_from_unet,
 }
+#############################################
+#############################################
 
 
 class AnimateDiffLoaderLegacy:
@@ -224,7 +292,6 @@ class AnimateDiffLoaderLegacy:
                 # injected by another motion module, unload first
                 logger.info(f"Ejecting motion module {mm_type} version {version}.")
                 ejectors[version](unet)
-                GroupNorm32.forward = groupnorm32_original_forward
                 need_inject = True
             else:
                 logger.info(f"Motion module already injected, skipping injection.")
@@ -234,9 +301,6 @@ class AnimateDiffLoaderLegacy:
             injectors[self.version](unet, motion_module)
             unet_hash = calculate_model_hash(unet)
             injected_model_hashs[unet_hash] = (motion_module.mm_type, self.version)
-
-            logger.info(f"Hacking GroupNorm32 forward function.")
-            GroupNorm32.forward = groupnorm32_mm_forward
 
         if init_latent is None:
             latent = torch.zeros([frame_number, 4, height // 8, width // 8]).cpu()
@@ -258,8 +322,11 @@ class AnimateDiffLoader:
         return {
             "required": {
                 "model": ("MODEL",),
-                "model_name": (get_available_models(),),
                 "latents": ("LATENT",),
+                "model_name": (get_available_models(),),
+                "axes_factor": ("INT", {"default": 2, "min": 1, "max": 24, "step": 1},),
+                "ignore_factor_on_trunc": ([True, False],),
+                "unlimited_area_hack": ([False, True],),
             },
         }
 
@@ -275,24 +342,32 @@ class AnimateDiffLoader:
     def inject_motion_modules(
         self,
         model: ModelPatcher,
-        model_name: str,
         latents: Dict[str, torch.Tensor],
+        model_name: str, axes_factor: int, ignore_factor_on_trunc: bool, unlimited_area_hack: bool
     ):
         if model_name not in motion_modules:
             motion_modules[model_name] = load_motion_module(model_name)
 
         motion_module = motion_modules[model_name]
         # check that latents don't exceed max frame size
-        init_frames = len(latents["samples"])
-        if init_frames > 24:
-            raise ValueError(f"AnimateDiff has upper limit of 24 frames, but received {init_frames} latents.")
+        init_frames_len = len(latents["samples"])
+        if init_frames_len > 24:
+            # TODO: warning and cutoff frames instead of error
+            raise ValueError(f"AnimateDiff has upper limit of 24 frames, but received {init_frames_len} latents.")
         # set motion_module's video_length to match latent length
-        motion_module.set_video_length(init_frames)
+        motion_module.set_video_length(init_frames_len)
 
         model = model.clone()
         unet = model.model.diffusion_model
         unet_hash = calculate_model_hash(unet)
         need_inject = unet_hash not in injected_model_hashs
+
+        injection_params = InjectionParams(
+            axes_factor=axes_factor,
+            video_length=init_frames_len,
+            ignore_factor_on_trunc=ignore_factor_on_trunc,
+            unlimited_area_hack=unlimited_area_hack,
+        )
 
         if unet_hash in injected_model_hashs:
             (mm_type, version) = injected_model_hashs[unet_hash]
@@ -300,19 +375,17 @@ class AnimateDiffLoader:
                 # injected by another motion module, unload first
                 logger.info(f"Ejecting motion module {mm_type} version {version}.")
                 ejectors[version](unet)
-                GroupNorm32.forward = groupnorm32_original_forward
                 need_inject = True
             else:
-                logger.info(f"Motion module already injected, skipping injection.")
+                logger.info(f"Motion module already injected, only injecting params.")
+                set_mm_injected_params(model, injection_params)
 
         if need_inject:
             logger.info(f"Injecting motion module {model_name} version {self.version}.")
-            injectors[self.version](unet, motion_module)
+            
+            injectors[self.version](unet, motion_module, injection_params)
             unet_hash = calculate_model_hash(unet)
             injected_model_hashs[unet_hash] = (motion_module.mm_type, self.version)
-
-            logger.info(f"Hacking GroupNorm32 forward function.")
-            GroupNorm32.forward = groupnorm32_mm_forward
 
         return (model, latents)
 
@@ -339,7 +412,9 @@ class AnimateDiffUnload:
             (model_name, version) = injected_model_hashs[model_hash]
             logger.info(f"Ejecting motion module {model_name} version {version}.")
             ejectors[version](unet)
-            GroupNorm32.forward = groupnorm32_original_forward
+            # just in case (is done automatically on mm eject anyway)
+            torch.nn.GroupNorm.forward = orig_groupnorm_forward
+            model_management.maximum_batch_area = orig_maximum_batch_area
         else:
             logger.info(f"Motion module not injected, skip unloading.")
 
@@ -465,94 +540,20 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         return out
 
 
-def decode_injected(self, samples_in):
-    self.first_stage_model = self.first_stage_model.to(self.device)
-    try:
-        print("$$$$ in decode_injected!")
-        memory_used = (2562 * samples_in.shape[2] * samples_in.shape[3] * 64) * 1.7
-        model_management.free_memory(memory_used, self.device)
-        free_memory = model_management.get_free_memory(self.device)
-        batch_number = int(free_memory / memory_used)
-        batch_number = max(1, batch_number)
-
-        latent_length = samples_in.shape[0]
-
-        #samples_in = 1 / 0.18215 * samples_in
-        #samples_in = rearrange(samples_in, "(b f) c h w -> b c f h w")
-        #x = groupnorm32_original_forward(self, x)
-        
-
-        pixel_samples = torch.empty((samples_in.shape[0], 3, round(samples_in.shape[2] * 8), round(samples_in.shape[3] * 8)), device="cpu")
-        for x in range(0, samples_in.shape[0], batch_number):
-            samples = samples_in[x:x+batch_number].to(self.vae_dtype).to(self.device)
-            pixel_samples[x:x+batch_number] = torch.clamp((self.first_stage_model.decode(samples) + 1.0) / 2.0, min=0.0, max=1.0).cpu().float()
-
-    except model_management.OOM_EXCEPTION as e:
-        print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
-        raise ValueError("Ran out of memory! ")
-        pixel_samples = self.decode_tiled_(samples_in)
-
-    #pixel_samples = (pixel_samples / 2 + 0.5).clamp(0, 1).cpu().float()
-
-    # batch_images = []
-    # for i, x_sample in enumerate(pixel_samples):
-    #     x_sample = 255. * np.moveaxis(x_sample.cpu().numpy(), 0, 2)
-    #     x_sample = x_sample.astype(np.uint8)
-    #     image = Image.fromarray(x_sample)
-    #     #image = images.resize_image(0, image, target_width, target_height, upscaler_name=self.hr_upscaler)
-    #     image = np.array(image).astype(np.float32) / 255.0
-    #     image = np.moveaxis(image, 2, 0)
-    #     batch_images.append(image)
-    
-    # pixel_samples = torch.from_numpy(np.array(batch_images))
-    # pixel_samples = pixel_samples.to(self.device)
-    # pixel_samples = 2. * pixel_samples - 1.
-
-    self.first_stage_model = self.first_stage_model.to(self.offload_device)
-    pixel_samples = pixel_samples.cpu().movedim(1,-1)
-    #samples_in = rearrange(samples_in, "b c f h w -> (b f) c h w", f=latent_length)
-    return pixel_samples
-
-
-class VAEDecodeNormalized:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {"required": { "samples": ("LATENT", ), "vae": ("VAE", )}}
-    RETURN_TYPES = ("IMAGE",)
-    FUNCTION = "decode"
-
-    CATEGORY = "Animate Diff"
-
-    def inject_decode(self, vae: VAE):
-        vae.decode = decode_injected.__get__(vae, type(vae))
-
-    def eject_decode(self, vae: VAE, original_decode):
-        vae.decode = original_decode.__get__(vae, type(vae))
-
-    def decode(self, vae: VAE, samples):
-        original_decode = vae.decode
-        try:
-            self.inject_decode(vae)
-            return (vae.decode(samples["samples"]), )
-        finally:
-            self.eject_decode(vae, original_decode)
-
-
 NODE_CLASS_MAPPINGS = {
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
-    # "VAEDecodeNormalized": VAEDecodeNormalized,
-    # AnimateDiff-specific
-    "AnimateDiffLoaderLegacy": AnimateDiffLoaderLegacy,
     "AnimateDiffLoaderV1": AnimateDiffLoader,
     "AnimateDiffUnload": AnimateDiffUnload,
     "AnimateDiffCombine": AnimateDiffCombine,
+    # AnimateDiff-specific
+    "AnimateDiffLoaderLegacy": AnimateDiffLoaderLegacy,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select",
-    # "VAEDecodeNormalized": "VAE Decode (Normalized)",
-    # AnimateDiff-specific
-    "AnimateDiffLoaderLegacy": "[DEPRECATED] AnimateDiff Loader Legacy",
     "AnimateDiffLoaderV1": "AnimateDiff Loader",
     "AnimateDiffUnload": "AnimateDiff Unload",
     "AnimateDiffCombine": "AnimateDiff Combine",
+    # AnimateDiff-specific
+    "AnimateDiffLoaderLegacy": "[DEPRECATED] AnimateDiff Loader Legacy",
+    
 }
