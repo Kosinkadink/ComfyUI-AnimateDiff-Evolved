@@ -1,12 +1,10 @@
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 import math
 from einops import rearrange, repeat
 
-from comfy.ldm.modules.attention import FeedForward
-from .attention_processor import Attention as CrossAttention
+from comfy.ldm.modules.attention import FeedForward, CrossAttention
 
 
 def zero_module(module):
@@ -209,15 +207,15 @@ class TemporalTransformerBlock(nn.Module):
             attention_blocks.append(
                 VersatileAttention(
                     attention_mode=block_name.split("_")[0],
-                    cross_attention_dim=cross_attention_dim
+                    context_dim=cross_attention_dim # called context_dim for ComfyUI impl
                     if block_name.endswith("_Cross")
                     else None,
                     query_dim=dim,
                     heads=num_attention_heads,
                     dim_head=attention_head_dim,
                     dropout=dropout,
-                    bias=attention_bias,
-                    upcast_attention=upcast_attention,
+                    #bias=attention_bias, # remove for Comfy CrossAttention
+                    #upcast_attention=upcast_attention, # remove for Comfy CrossAttention
                     cross_frame_attention_mode=cross_frame_attention_mode,
                     temporal_position_encoding=temporal_position_encoding,
                     temporal_position_encoding_max_len=temporal_position_encoding_max_len,
@@ -289,7 +287,7 @@ class VersatileAttention(CrossAttention):
         assert attention_mode == "Temporal"
 
         self.attention_mode = attention_mode
-        self.is_cross_attention = kwargs["cross_attention_dim"] is not None
+        self.is_cross_attention = kwargs["context_dim"] is not None
 
         self.pos_encoder = (
             PositionalEncoding(
@@ -310,7 +308,6 @@ class VersatileAttention(CrossAttention):
         encoder_hidden_states=None,
         attention_mask=None,
         video_length=None,
-        **cross_attention_kwargs,
     ):
         if self.attention_mode != "Temporal":
             raise NotImplementedError
@@ -321,7 +318,7 @@ class VersatileAttention(CrossAttention):
         )
 
         if self.pos_encoder is not None:
-            hidden_states = self.pos_encoder(hidden_states)
+           hidden_states = self.pos_encoder(hidden_states)
 
         encoder_hidden_states = (
             repeat(encoder_hidden_states, "b n c -> (b d) n c", d=d)
@@ -332,8 +329,8 @@ class VersatileAttention(CrossAttention):
         hidden_states = super().forward(
             hidden_states,
             encoder_hidden_states,
-            attention_mask,
-            **cross_attention_kwargs,
+            value=None,
+            mask=attention_mask,
         )
 
         hidden_states = rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
