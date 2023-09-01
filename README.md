@@ -4,7 +4,7 @@ Improved [AnimateDiff](https://github.com/guoyww/AnimateDiff/) integration for C
 
 Examples shown here will also often make use of two helpful set of nodes:
 - [ComfyUI-Advanced-ControlNet](https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet) for loading files in batches and controlling which latents should be affected by the ControlNet inputs (work in progress, will include more advance workflows + features for AnimateDiff usage later).
-- [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux) for ControlNet preprocessors not present in vanilla ComfyUI.
+- [comfy_controlnet_preprocessors](https://github.com/Fannovel16/comfy_controlnet_preprocessors) for ControlNet preprocessors not present in vanilla ComfyUI; this repo is archived, and future development by the dev will happen here: [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux). While most preprocessors are common between the two, some give different results. Workflows linked here use the archived version, comfy_controlnet_preprocessors.
 
 ## How to Use
 
@@ -41,7 +41,7 @@ Examples shown here will also often make use of two helpful set of nodes:
 ![AA_upscale_readme_00081_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/13476d34-2d46-43e6-af88-ae43e44cb6de)
 
 
-### txt2img w/ Initial ControlNet input (using LineArt preprocessor on first txt2img as an exmaple)
+### txt2img w/ Initial ControlNet input (using LineArt preprocessor on first txt2img as an example)
 
 ![txt2image_controlnet_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/4d48ee81-42e3-4a27-b9ff-81b662bc602b)
 
