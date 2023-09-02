@@ -23,6 +23,15 @@ Examples shown here will also often make use of two helpful set of nodes:
 ![AA_readme_00289_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/6ed622ef-cc79-42bc-81c7-81a69eb48f38)
 
 
+### txt2img w/ latent upscale (partial denoise on upscale)
+
+![txt2image_upscale_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/03d8b53e-5f78-4d92-8875-0f36c18f41fb)
+
+![AA_upscale_gif_00007_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/0cb2ca7e-8666-4abc-86f2-f24a20ff4bed)
+
+![AA_upscale_readme_00097_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/82dfc0f8-e8a1-43ff-b8cf-a77875908180)
+
+
 ### txt2img w/ latent upscale (full denoise on upscale)
 
 ![txt2image_upscale_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/0eff4c23-ed61-412c-a9cf-533e26b4fe3a)
@@ -32,7 +41,16 @@ Examples shown here will also often make use of two helpful set of nodes:
 ![AA_upscale_readme_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/328ba63a-67a7-4ce7-937e-97ceebc4d79f)
 
 
-### txt2img w/ ControlNet-stabilized latent-upscale
+### txt2img w/ ControlNet-stabilized latent-upscale (partial denoise on upscale, Scaled Soft ControlNet Weights)
+
+![txt2image_upscale_controlnetsoftweights_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/0653c7be-c2b1-4999-bc47-a1573bc462fc)
+
+![AA_upscale_gif_00009_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/4f03d03d-839b-484d-b612-8add086a6b8b)
+
+![AA_upscale_readme_00129_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/41473028-0dc2-4bdb-b70d-c96cb25feede)
+
+
+### txt2img w/ ControlNet-stabilized latent-upscale (full denoise on upscale)
 
 ![txt2image_upscale_controlnet_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/54167762-55ce-4776-a09e-e655c5fe049a)
 
