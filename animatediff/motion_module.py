@@ -1,5 +1,5 @@
 import torch
-from torch import nn
+from torch import Tensor, nn
 
 import math
 from einops import rearrange, repeat
@@ -304,7 +304,7 @@ class VersatileAttention(CrossAttention):
 
     def forward(
         self,
-        hidden_states,
+        hidden_states: Tensor,
         encoder_hidden_states=None,
         attention_mask=None,
         video_length=None,

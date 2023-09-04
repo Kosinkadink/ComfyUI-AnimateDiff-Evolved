@@ -76,6 +76,8 @@ def unlimited_batch_area():
 
 def groupnorm_mm_factory(params: InjectionParams):
     def groupnorm_mm_forward(self, input: Tensor) -> Tensor:
+        # axes_factor normalizes batch based on total conds and unconds passed in batch;
+        # the conds and unconds per batch can change based on VRAM optimizations that may kick in
         axes_factor = input.size(0)//params.video_length
 
         input = rearrange(input, "(b f) c h w -> b c f h w", b=axes_factor)

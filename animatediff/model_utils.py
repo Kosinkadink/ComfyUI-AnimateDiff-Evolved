@@ -92,6 +92,10 @@ def get_filename_list(folder_name):
     return list(out[0])
 
 
+def get_folder_path(folder_name):
+    return folder_names_and_paths.get(folder_name, ([""],set()))[0][0]
+
+
 def get_full_path(folder_name, filename):
     global folder_names_and_paths
     if folder_name not in folder_names_and_paths:
