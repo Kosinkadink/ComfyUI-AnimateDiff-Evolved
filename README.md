@@ -98,6 +98,5 @@ Training data used by the authors of the AnimateDiff paper contained Shutterstoc
 
 
 ## Upcoming features (aka TODO):
-- Nodes for saving videos, saving generated files into a timestamped folder instead of all over ComfyUI output dir.
 - Moving-window latent implementation for generating arbitrarily-long animations instead of being capped at 24 frames (moving window will still be limited to up to 24 frames).
 - Add examples of using ControlNet to ease one image/controlnet input into another, and also add more nodes to Advanced-ControlNet to make it easier to do so

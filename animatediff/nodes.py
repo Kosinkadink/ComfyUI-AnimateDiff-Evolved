@@ -416,7 +416,7 @@ class AnimateDiffCombine:
                 ),
                 "loop_count": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
                 "save_image": (["Enabled", "Disabled"],),
-                "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
+                "filename_prefix": ("STRING", {"default": "%date:ddMMyyhhmmss%/AnimateDiff"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
