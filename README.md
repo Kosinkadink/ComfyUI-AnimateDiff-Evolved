@@ -6,13 +6,34 @@ Examples shown here will also often make use of two helpful set of nodes:
 - [ComfyUI-Advanced-ControlNet](https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet) for loading files in batches and controlling which latents should be affected by the ControlNet inputs (work in progress, will include more advance workflows + features for AnimateDiff usage later).
 - [comfy_controlnet_preprocessors](https://github.com/Fannovel16/comfy_controlnet_preprocessors) for ControlNet preprocessors not present in vanilla ComfyUI; this repo is archived, and future development by the dev will happen here: [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux). While most preprocessors are common between the two, some give different results. Workflows linked here use the archived version, comfy_controlnet_preprocessors.
 
-## How to Use
+## Installation
 
+🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥
+
+***IMPORTANT: if you already have ArtVentureX's version of AnimateDiff installed, either remove the ```custom_nodes/comfyui-animatediff``` folder, uninstall or disable it using ComfyUI-Manager, or add .disabled to the end of that folder's name! Otherwise things will go wrong!***
+
+🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥
+
+### If using ComfyUI-Manager:
+
+1. In ComfyUI-Manager menu, set Channel to ```forked```:
+
+![comfyuimanagerexpl1](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/f565ff0a-1f6a-478b-84cc-e843f6c8d175)
+
+2. Look for ```AnimateDiff```, and be sure it is ```(Kosinkadink version)```. Install it.
+
+![comfyuimanagerexpl2](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/20e40e65-aa4e-4c5d-9e80-1a8eff8f234b)
+
+
+
+### If installing manually:
 1. Clone this repo into `custom_nodes` folder.
-2. Download motion modules from [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836) | [Baidu NetDisk](https://pan.baidu.com/s/18ZpcSM6poBqxWNHtnyMcxg?pwd=et8y). You can download one or more motion models. Place models in ComfyUI/custom_nodes/ComfyUI-AnimateDiff/models. They can be renamed if you want. More motion modules are being trained by the community - if I am made aware of any good ones, I will link here as well. (TODO: create .safetensor versions of the motion modules and share them here.)
-3. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Masking the conditioning of ControlNets to only affect part of the animation? Sure. Try stuff and you will be surprised by what you can do.
 
-## Known Issues
+## How to Use:
+1. Download motion modules from [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836) | [Baidu NetDisk](https://pan.baidu.com/s/18ZpcSM6poBqxWNHtnyMcxg?pwd=et8y). You can download one or more motion models. Place models in ComfyUI/custom_nodes/ComfyUI-AnimateDiff/models. They can be renamed if you want. More motion modules are being trained by the community - if I am made aware of any good ones, I will link here as well. (TODO: create .safetensor versions of the motion modules and share them here.)
+2. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Masking the conditioning of ControlNets to only affect part of the animation? Sure. Try stuff and you will be surprised by what you can do. Samples with workflows are included below.
+
+## Known Issues (and Solutions, please read!)
 
 ### Large resolutions may cause xformers to throw a CUDA error concerning a misconfigured value despite being within VRAM limitations.
 
