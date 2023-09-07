@@ -526,17 +526,17 @@ class CheckpointLoaderSimpleWithNoiseSelect:
 NODE_CLASS_MAPPINGS = {
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
     "AnimateDiffLoaderV1": AnimateDiffLoader,
-    "AnimateDiffUnload": AnimateDiffUnload,
-    "AnimateDiffCombine": AnimateDiffCombine,
+    "ADE_AnimateDiffUnload": AnimateDiffUnload,
+    "ADE_AnimateDiffCombine": AnimateDiffCombine,
     # AnimateDiff-specific
-    "AnimateDiffLoaderLegacy": AnimateDiffLoaderLegacy,
+    "ADE_AnimateDiffLoaderLegacy": AnimateDiffLoaderLegacy,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select",
     "AnimateDiffLoaderV1": "AnimateDiff Loader",
-    "AnimateDiffUnload": "AnimateDiff Unload",
-    "AnimateDiffCombine": "AnimateDiff Combine",
+    "ADE_AnimateDiffUnload": "AnimateDiff Unload",
+    "ADE_AnimateDiffCombine": "AnimateDiff Combine",
     # AnimateDiff-specific
-    "AnimateDiffLoaderLegacy": "[DEPRECATED] AnimateDiff Loader Legacy",
+    "ADE_AnimateDiffLoaderLegacy": "[DEPRECATED] AnimateDiff Loader Legacy",
     
 }
