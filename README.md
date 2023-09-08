@@ -16,14 +16,9 @@ Examples shown here will also often make use of two helpful set of nodes:
 
 ### If using ComfyUI-Manager:
 
-1. In ComfyUI-Manager menu, set Channel to ```forked```:
+1. Look for ```AnimateDiff```, and be sure it is ```(Kosinkadink version)```. Install it.
 
-![comfyuimanagerexpl1](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/f565ff0a-1f6a-478b-84cc-e843f6c8d175)
-
-2. Look for ```AnimateDiff```, and be sure it is ```(Kosinkadink version)```. Install it.
-
-![comfyuimanagerexpl2](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/20e40e65-aa4e-4c5d-9e80-1a8eff8f234b)
-
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/10324120-aaee-460a-8ec9-57a46c1b9edc)
 
 
 ### If installing manually:
