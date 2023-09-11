@@ -42,7 +42,7 @@ if not os.path.exists(MODEL_DIR):
     os.makedirs(MODEL_DIR)
 
 folder_names_and_paths = {}
-folder_names_and_paths[Folders.MODELS] = ([MODEL_DIR], folder_paths.supported_ckpt_extensions)
+folder_names_and_paths[Folders.MODELS] = ([MODEL_DIR], folder_paths.supported_pt_extensions)
 
 filename_list_cache = {}
 

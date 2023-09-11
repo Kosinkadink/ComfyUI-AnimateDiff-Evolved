@@ -7,6 +7,12 @@ from einops import rearrange, repeat
 from comfy.ldm.modules.attention import FeedForward, CrossAttention
 
 
+class BlockType:
+    UP = "up"
+    DOWN = "down"
+    MID = "mid"
+
+
 def zero_module(module):
     # Zero out the parameters of a module and return it.
     for p in module.parameters():
@@ -14,40 +20,72 @@ def zero_module(module):
     return module
 
 
+def get_temporal_position_encoding_max_len(mm_state_dict: dict[str, Tensor], mm_type: str) -> int:
+    # use pos_encoder.pe entries to determine max length - [1, {max_length}, {320|640|1280}]
+    for key in mm_state_dict.keys():
+        if key.endswith("pos_encoder.pe"):
+            return mm_state_dict[key].size(1) # get middle dim
+    raise ValueError(f"No pos_encoder.pe found in mm_state_dict - {mm_type} is not a valid motion module!")
+
+
+def has_mid_block(mm_state_dict: dict[str, Tensor]):
+    # check if keys contain mid_block
+    for key in mm_state_dict.keys():
+        if key.startswith("mid_block."):
+            return True
+    return False
+
+
 class MotionWrapper(nn.Module):
-    def __init__(self, mm_type="mm_sd_v15.ckpt"):
+    def __init__(self, mm_state_dict: dict[str, Tensor], mm_type: str="mm_sd_v15.ckpt"):
         super().__init__()
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
+        self.mid_block = None
+        self.encoding_max_len = get_temporal_position_encoding_max_len(mm_state_dict, mm_type)
         for c in (320, 640, 1280, 1280):
-            self.down_blocks.append(MotionModule(c))
+            self.down_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.DOWN))
         for c in (1280, 1280, 640, 320):
-            self.up_blocks.append(MotionModule(c, is_up=True))
+            self.up_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.UP))
+        if has_mid_block(mm_state_dict):
+            self.mid_block = MotionModule(1280, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.MID)
         self.mm_type = mm_type
+        self.version = "v1" if self.mid_block is None else "v2"
     
     def set_video_length(self, video_length: int):
         for block in self.down_blocks:
             block.set_video_length(video_length)
         for block in self.up_blocks:
             block.set_video_length(video_length)
+        if self.mid_block is not None:
+            self.mid_block.set_video_length(video_length)
 
 
 class MotionModule(nn.Module):
-    def __init__(self, in_channels, is_up=False):
+    def __init__(self, in_channels, temporal_position_encoding_max_len=24, block_type: str=BlockType.DOWN):
         super().__init__()
-        self.motion_modules = nn.ModuleList(
-            [get_motion_module(in_channels), get_motion_module(in_channels)]
-        )
-        if is_up:
-            self.motion_modules.append(get_motion_module(in_channels))
+        if block_type == BlockType.MID:
+            # mid blocks contain only a single VanillaTemporalModule
+            self.motion_modules = nn.ModuleList([get_motion_module(in_channels, temporal_position_encoding_max_len)])
+        else:
+            # down blocks contain two VanillaTemporalModules
+            self.motion_modules = nn.ModuleList(
+                [
+                    get_motion_module(in_channels, temporal_position_encoding_max_len),
+                    get_motion_module(in_channels, temporal_position_encoding_max_len)
+                ]
+            )
+            # up blocks contain one additional VanillaTemporalModule
+            if block_type == BlockType.UP: 
+                self.motion_modules.append(get_motion_module(in_channels, temporal_position_encoding_max_len))
     
     def set_video_length(self, video_length: int):
         for motion_module in self.motion_modules:
             motion_module.set_video_length(video_length)
 
 
-def get_motion_module(in_channels):
-    return VanillaTemporalModule(in_channels=in_channels)
+def get_motion_module(in_channels, temporal_position_encoding_max_len):
+    return VanillaTemporalModule(in_channels=in_channels, temporal_position_encoding_max_len=temporal_position_encoding_max_len)
 
 
 class VanillaTemporalModule(nn.Module):
