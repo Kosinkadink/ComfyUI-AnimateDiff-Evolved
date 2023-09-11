@@ -42,13 +42,13 @@ class MotionWrapper(nn.Module):
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
         self.mid_block = None
-        encoding_max_len = get_temporal_position_encoding_max_len(mm_state_dict, mm_type)
+        self.encoding_max_len = get_temporal_position_encoding_max_len(mm_state_dict, mm_type)
         for c in (320, 640, 1280, 1280):
-            self.down_blocks.append(MotionModule(c, temporal_position_encoding_max_len=encoding_max_len, block_type=BlockType.DOWN))
+            self.down_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.DOWN))
         for c in (1280, 1280, 640, 320):
-            self.up_blocks.append(MotionModule(c, temporal_position_encoding_max_len=encoding_max_len, block_type=BlockType.UP))
+            self.up_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.UP))
         if has_mid_block(mm_state_dict):
-            self.mid_block = MotionModule(1280, temporal_position_encoding_max_len=encoding_max_len, block_type=BlockType.MID)
+            self.mid_block = MotionModule(1280, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.MID)
         self.mm_type = mm_type
         self.version = "v1" if self.mid_block is None else "v2"
     
@@ -57,6 +57,8 @@ class MotionWrapper(nn.Module):
             block.set_video_length(video_length)
         for block in self.up_blocks:
             block.set_video_length(video_length)
+        if self.mid_block is not None:
+            self.mid_block.set_video_length(video_length)
 
 
 class MotionModule(nn.Module):

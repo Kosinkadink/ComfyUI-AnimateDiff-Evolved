@@ -284,9 +284,9 @@ class AnimateDiffLoaderLegacy:
         motion_module = motion_modules[model_name]
         # check that latents don't exceed max frame size
         init_frames_len = len(latents["samples"])
-        if init_frames_len > 24:
+        if init_frames_len > motion_module.encoding_max_len:
             # TODO: warning and cutoff frames instead of error
-            raise ValueError(f"AnimateDiff has upper limit of 24 frames, but received {init_frames_len} latents.")
+            raise ValueError(f"AnimateDiff model {model_name} has upper limit of {motion_module.encoding_max_len} frames, but received {init_frames_len} latents.")
         # set motion_module's video_length to match latent length
         motion_module.set_video_length(init_frames_len)
 
@@ -357,9 +357,9 @@ class AnimateDiffLoader:
         motion_module = motion_modules[model_name]
         # check that latents don't exceed max frame size
         init_frames_len = len(latents["samples"])
-        if init_frames_len > 24:
+        if init_frames_len > motion_module.encoding_max_len:
             # TODO: warning and cutoff frames instead of error
-            raise ValueError(f"AnimateDiff has upper limit of 24 frames, but received {init_frames_len} latents.")
+            raise ValueError(f"AnimateDiff model {model_name} has upper limit of {motion_module.encoding_max_len} frames, but received {init_frames_len} latents.")
         # set motion_module's video_length to match latent length
         motion_module.set_video_length(init_frames_len)
 
