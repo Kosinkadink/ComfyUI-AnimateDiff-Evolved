@@ -128,7 +128,7 @@ def load_motion_module(model_name: str):
 
     logger.info(f"Loading motion module {model_name}")
     mm_state_dict = load_torch_file(model_path)
-    motion_module = MotionWrapper(model_name)
+    motion_module = MotionWrapper(mm_state_dict=mm_state_dict, mm_type=model_name)
 
     parameters = calculate_parameters(mm_state_dict, "")
     usefp16 = model_management.should_use_fp16(model_params=parameters)
@@ -142,7 +142,7 @@ def load_motion_module(model_name: str):
     return motion_module
 
 
-def inject_motion_module_to_unet_legacy(unet, motion_module: MotionWrapper, injection_params: InjectionParams):
+def inject_motion_module_to_unet_legacy(unet: openaimodel.UNetModel, motion_module: MotionWrapper, injection_params: InjectionParams):
     logger.info(f"Injecting motion module into UNet input blocks.")
     for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
         mm_idx0, mm_idx1 = mm_idx // 2, mm_idx % 2
@@ -161,10 +161,14 @@ def inject_motion_module_to_unet_legacy(unet, motion_module: MotionWrapper, inje
             unet.output_blocks[unet_idx].append(
                 motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
             )
+    
+    if motion_module.mid_block is not None:
+        logger.info(f"Injecting motion module into UNet middle blocks.")
+        unet.middle_block.insert(-1, motion_module.mid_block.motion_modules[0]) # only 1 VanillaTemporalModule
     setattr(unet, MM_INJECTED_ATTR, injection_params)
 
 
-def eject_motion_module_from_unet_legacy(unet):
+def eject_motion_module_from_unet_legacy(unet: openaimodel.UNetModel):
     logger.info(f"Ejecting motion module from UNet input blocks.")
     for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
         unet.input_blocks[unet_idx].pop(-1)
@@ -175,10 +179,14 @@ def eject_motion_module_from_unet_legacy(unet):
             unet.output_blocks[unet_idx].pop(-2)
         else:
             unet.output_blocks[unet_idx].pop(-1)
+        
+    if len(unet.middle_block) > 3: # SD1.5 UNet has 3 expected middle_blocks - more means injected
+        logger.info(f"Ejecting motion module from UNet middle blocks.")
+        unet.middle_block.pop(-2)
     delattr(unet, MM_INJECTED_ATTR)
 
 
-def inject_motion_module_to_unet(unet, motion_module: MotionWrapper, injection_params: InjectionParams):
+def inject_motion_module_to_unet(unet: openaimodel.UNetModel, motion_module: MotionWrapper, injection_params: InjectionParams):
     logger.info(f"Injecting motion module into UNet input blocks.")
     for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
         mm_idx0, mm_idx1 = mm_idx // 2, mm_idx % 2
@@ -197,10 +205,14 @@ def inject_motion_module_to_unet(unet, motion_module: MotionWrapper, injection_p
             unet.output_blocks[unet_idx].append(
                 motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
             )
+
+    if motion_module.mid_block is not None:
+        logger.info(f"Injecting motion module into UNet middle blocks.")
+        unet.middle_block.insert(-1, motion_module.mid_block.motion_modules[0]) # only 1 VanillaTemporalModule
     setattr(unet, MM_INJECTED_ATTR, injection_params)
 
 
-def eject_motion_module_from_unet(unet):
+def eject_motion_module_from_unet(unet: openaimodel.UNetModel):
     logger.info(f"Ejecting motion module from UNet input blocks.")
     for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
         unet.input_blocks[unet_idx].pop(-1)
@@ -211,17 +223,26 @@ def eject_motion_module_from_unet(unet):
             unet.output_blocks[unet_idx].pop(-2)
         else:
             unet.output_blocks[unet_idx].pop(-1)
+    
+    if len(unet.middle_block) > 3: # SD1.5 UNet has 3 expected middle_blocks - more means injected
+        logger.info(f"Ejecting motion module from UNet middle blocks.")
+        unet.middle_block.pop(-2)
     delattr(unet, MM_INJECTED_ATTR)
+
+
+class InjectorVersion:
+    LEGACY = "legacy"
+    V1_V2 = "v1/v2"
 
 
 injectors = {
-    "legacy": inject_motion_module_to_unet_legacy,
-    "v1": inject_motion_module_to_unet,
+    InjectorVersion.LEGACY: inject_motion_module_to_unet_legacy,
+    InjectorVersion.V1_V2: inject_motion_module_to_unet,
 }
 
 ejectors = {
-    "legacy": eject_motion_module_from_unet_legacy,
-    "v1": eject_motion_module_from_unet,
+    InjectorVersion.LEGACY: eject_motion_module_from_unet_legacy,
+    InjectorVersion.V1_V2: eject_motion_module_from_unet,
 }
 #############################################
 #############################################
@@ -229,7 +250,7 @@ ejectors = {
 
 class AnimateDiffLoaderLegacy:
     def __init__(self) -> None:
-        self.version = "legacy"
+        self.version =  InjectorVersion.LEGACY
 
     @classmethod
     def INPUT_TYPES(s):
@@ -283,7 +304,7 @@ class AnimateDiffLoaderLegacy:
             (mm_type, version) = injected_model_hashs[unet_hash]
             if version != self.version or mm_type != motion_module.mm_type:
                 # injected by another motion module, unload first
-                logger.info(f"Ejecting motion module {mm_type} version {version}.")
+                logger.info(f"Ejecting motion module {mm_type} version {version} - {motion_module.version}.")
                 ejectors[version](unet)
                 need_inject = True
             else:
@@ -291,7 +312,7 @@ class AnimateDiffLoaderLegacy:
                 set_mm_injected_params(model, injection_params)
 
         if need_inject:
-            logger.info(f"Injecting motion module {model_name} version {self.version}.")
+            logger.info(f"Injecting motion module {model_name} version {self.version} - {motion_module.version}.")
             
             injectors[self.version](unet, motion_module, injection_params)
             unet_hash = calculate_model_hash(unet)
@@ -302,7 +323,7 @@ class AnimateDiffLoaderLegacy:
 
 class AnimateDiffLoader:
     def __init__(self) -> None:
-        self.version = "v1"
+        self.version = InjectorVersion.V1_V2
 
     @classmethod
     def INPUT_TYPES(s):
@@ -356,7 +377,7 @@ class AnimateDiffLoader:
             (mm_type, version) = injected_model_hashs[unet_hash]
             if version != self.version or mm_type != motion_module.mm_type:
                 # injected by another motion module, unload first
-                logger.info(f"Ejecting motion module {mm_type} version {version}.")
+                logger.info(f"Ejecting motion module {mm_type} version {version} - {motion_module.version}.")
                 ejectors[version](unet)
                 need_inject = True
             else:
@@ -364,7 +385,7 @@ class AnimateDiffLoader:
                 set_mm_injected_params(model, injection_params)
 
         if need_inject:
-            logger.info(f"Injecting motion module {model_name} version {self.version}.")
+            logger.info(f"Injecting motion module {model_name} version {motion_module.version}.")
             
             injectors[self.version](unet, motion_module, injection_params)
             unet_hash = calculate_model_hash(unet)
