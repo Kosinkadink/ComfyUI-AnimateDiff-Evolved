@@ -436,8 +436,9 @@ class AnimateDiffCombine:
                     {"default": 8, "min": 1, "max": 24, "step": 1},
                 ),
                 "loop_count": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
-                "save_image": (["Enabled", "Disabled"],),
+                "save_image": ("BOOLEAN", {"default": True}),
                 "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
+                "pingpong": ("BOOLEAN", {"default": False}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -455,8 +456,9 @@ class AnimateDiffCombine:
         images,
         frame_rate: int,
         loop_count: int,
-        save_image="Enabled",
+        save_image=True,
         filename_prefix="AnimateDiff",
+        pingpong=False,
         prompt=None,
         extra_pnginfo=None,
     ):
@@ -466,11 +468,13 @@ class AnimateDiffCombine:
             img = 255.0 * image.cpu().numpy()
             img = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
             pil_images.append(img)
-
+        if pingpong:
+            pil_images += pil_images[::-1]
+            
         # save image
         output_dir = (
             folder_paths.get_output_directory()
-            if save_image == "Enabled"
+            if save_image
             else folder_paths.get_temp_directory()
         )
         (
@@ -496,7 +500,8 @@ class AnimateDiffCombine:
             pnginfo=metadata,
             compress_level=4,
         )
-
+       
+        
         # save gif
         file = f"{filename}_{counter:05}_.gif"
         file_path = os.path.join(full_output_folder, file)
@@ -514,11 +519,12 @@ class AnimateDiffCombine:
         previews = [
             {
                 "filename": file,
-                "subfolder": subfolder,
-                "type": "output" if save_image == "Enabled" else "temp",
+                "subfolder": "",
+                "type": "output" if save_image else "temp",
             }
         ]
-        return {"ui": {"images": previews}}
+        print(previews)
+        return {"ui": {"gif": previews}}
 
 
 class CheckpointLoaderSimpleWithNoiseSelect:
