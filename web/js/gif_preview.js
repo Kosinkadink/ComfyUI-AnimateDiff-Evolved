@@ -36,6 +36,13 @@ function offsetDOMWidget(
     })
   }
 
+  export const hasWidgets = (node) => {
+    if (!node.widgets || !node.widgets?.[Symbol.iterator]) {
+      return false
+    }
+    return true
+  }
+  
   export const cleanupNode = (node) => {
     if (!hasWidgets(node)) {
       return
@@ -127,7 +134,7 @@ const gif_preview = {
                     }
                     const onRemoved = this.onRemoved
                     this.onRemoved = () => {
-                    shared.cleanupNode(this)
+                    cleanupNode(this)
                     return onRemoved?.()
                     }
                 }
