@@ -1,6 +1,8 @@
 import os
 import sys
 import json
+import subprocess
+import shutil
 import hashlib
 import torch
 from torch import Tensor
@@ -526,6 +528,94 @@ class AnimateDiffCombine:
         print(previews)
         return {"ui": {"gif": previews}}
 
+class AnimateDiffCombineVideo:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "frame_rate": (
+                    "INT",
+                    {"default": 8, "min": 1, "max": 24, "step": 1},
+                ),
+                "save_image": (["Enabled", "Disabled"],),
+                "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
+        }
+
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    CATEGORY = "Animate Diff"
+    FUNCTION = "generate_video"
+
+    def generate_video(
+        self,
+        images,
+        frame_rate: int,
+        save_image="Enabled",
+        filename_prefix="AnimateDiff",
+        prompt=None,
+        extra_pnginfo=None,
+    ):
+        # save image
+        output_dir = (
+            folder_paths.get_output_directory()
+            if save_image == "Enabled"
+            else folder_paths.get_temp_directory()
+        )
+        (
+            full_output_folder,
+            filename,
+            counter,
+            subfolder,
+            _,
+        ) = folder_paths.get_save_image_path(filename_prefix, output_dir)
+
+        metadata = PngInfo()
+        if prompt is not None:
+            metadata.add_text("prompt", json.dumps(prompt))
+        if extra_pnginfo is not None:
+            for x in extra_pnginfo:
+                metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+
+        # save first frame as png to keep metadata
+        file = f"{filename}_{counter:05}_.png"
+        file_path = os.path.join(full_output_folder, file)
+        first_image = Image.fromarray(np.clip(255.0*images[0].cpu().numpy(),0,255).astype(np.uint8))
+        first_image.save(
+            file_path,
+            pnginfo=metadata,
+            compress_level=4,
+        )
+
+        # save webm
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path is None:
+            raise ProcessLookupError("Could not find ffmpeg")
+        file_webm = f"{filename}_{counter:05}_.webm"
+        file_path = os.path.join(full_output_folder, file_webm)
+        dimensions = f"{first_image.width}x{first_image.height}"
+        args = [ffmpeg_path, "-v", "panic", "-n", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
+                dimensions, "-r", str(frame_rate), "-i", "-", "-pix_fmt", "yuv420p", file_path]
+        with subprocess.Popen(args, stdin=subprocess.PIPE) as proc:
+            for image in images:
+                proc.stdin.write(np.clip(255.0*image.cpu().numpy(),0,255).astype(np.uint8).tobytes())
+        print("Saved webm to", file_path, os.path.exists(file_path))
+
+
+        previews = [
+            {
+                "filename": file,
+                "subfolder": subfolder,
+                "type": "output" if save_image == "Enabled" else "temp",
+            }
+        ]
+        return {"ui": {"images": previews}}
+
 
 class CheckpointLoaderSimpleWithNoiseSelect:
     @classmethod
@@ -555,6 +645,7 @@ NODE_CLASS_MAPPINGS = {
     "AnimateDiffLoaderV1": AnimateDiffLoader,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_AnimateDiffCombine": AnimateDiffCombine,
+    "ADE_AnimateDiffCombineVideo": AnimateDiffCombineVideo,
     # AnimateDiff-specific
     "ADE_AnimateDiffLoaderLegacy": AnimateDiffLoaderLegacy,
 }
@@ -563,6 +654,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimateDiffLoaderV1": "AnimateDiff Loader",
     "ADE_AnimateDiffUnload": "AnimateDiff Unload",
     "ADE_AnimateDiffCombine": "AnimateDiff Combine",
+    "ADE_AnimateDiffCombineVideo": "AnimateDiff Combine Video",
     # AnimateDiff-specific
     "ADE_AnimateDiffLoaderLegacy": "[DEPRECATED] AnimateDiff Loader Legacy",
     
