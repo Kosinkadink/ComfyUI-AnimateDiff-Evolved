@@ -540,6 +540,7 @@ class AnimateDiffCombineVideo:
                 ),
                 "save_image": (["Enabled", "Disabled"],),
                 "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
+                "pingpong": ("BOOLEAN", {"default": False}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -558,6 +559,7 @@ class AnimateDiffCombineVideo:
         frame_rate: int,
         save_image="Enabled",
         filename_prefix="AnimateDiff",
+        pingpong=False,
         prompt=None,
         extra_pnginfo=None,
     ):
@@ -591,7 +593,7 @@ class AnimateDiffCombineVideo:
             pnginfo=metadata,
             compress_level=4,
         )
-
+        
         # save webm
         ffmpeg_path = shutil.which("ffmpeg")
         if ffmpeg_path is None:
@@ -601,20 +603,29 @@ class AnimateDiffCombineVideo:
         dimensions = f"{first_image.width}x{first_image.height}"
         args = [ffmpeg_path, "-v", "panic", "-n", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
                 dimensions, "-r", str(frame_rate), "-i", "-", "-pix_fmt", "yuv420p", file_path]
+        # convert images to numpy
+        frames: List[Image.Image] = []
+        for image in images:
+            img = 255.0 * image.cpu().numpy()
+            img = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
+            frames.append(img)
+        if pingpong:
+            frames += frames[::-1]
+
         with subprocess.Popen(args, stdin=subprocess.PIPE) as proc:
-            for image in images:
-                proc.stdin.write(np.clip(255.0*image.cpu().numpy(),0,255).astype(np.uint8).tobytes())
+            for frame in frames:
+                proc.stdin.write(frame.tobytes())
         print("Saved webm to", file_path, os.path.exists(file_path))
 
 
         previews = [
             {
-                "filename": file,
+                "filename": file_webm,
                 "subfolder": subfolder,
                 "type": "output" if save_image == "Enabled" else "temp",
             }
         ]
-        return {"ui": {"images": previews}}
+        return {"ui": {"video": previews}}
 
 
 class CheckpointLoaderSimpleWithNoiseSelect:

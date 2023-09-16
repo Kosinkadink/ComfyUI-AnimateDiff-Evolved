@@ -42,7 +42,7 @@ function offsetDOMWidget(
     }
     return true
   }
-  
+
   export const cleanupNode = (node) => {
     if (!hasWidgets(node)) {
       return
@@ -60,7 +60,43 @@ function offsetDOMWidget(
     }
   }
 
-const DEBUG_IMG = (name, val) => {
+const CreateVideoElement = (name, val) => {
+    const w = {
+      name,
+      type: 'video',
+      value: val,
+      draw: function (ctx, node, widgetWidth, widgetY, height) {
+        const [cw, ch] = this.computeSize(widgetWidth)
+        offsetDOMWidget(this, ctx, node, widgetWidth, widgetY, ch)
+      },
+      computeSize: function (width) {
+        const ratio = this.inputRatio || 1
+        if (width) {
+          return [width, width / ratio + 4]
+        }
+        return [128, 128]
+      },
+      onRemoved: function () {
+        if (this.inputEl) {
+          this.inputEl.remove()
+        }
+      },
+    }
+
+    w.inputEl = document.createElement('video')
+    w.inputEl.src = w.value
+    w.inputEl.setAttribute('type', 'video/webm');
+    w.inputEl.autoplay = true
+    w.inputEl.loop = true
+    w.inputEl.controls = false; // Add controls to the video element
+    w.inputEl.onload = function () {
+      w.inputRatio = w.inputEl.naturalWidth / w.inputEl.naturalHeight
+    }
+    document.body.appendChild(w.inputEl)
+    return w
+  }
+
+  const CreateImgElement = (name, val) => {
     const w = {
       name,
       type: 'image',
@@ -85,6 +121,7 @@ const DEBUG_IMG = (name, val) => {
 
     w.inputEl = document.createElement('img')
     w.inputEl.src = w.value
+    w.inputEl.controls = false; // Add controls to the video element
     w.inputEl.onload = function () {
       w.inputRatio = w.inputEl.naturalWidth / w.inputEl.naturalHeight
     }
@@ -96,6 +133,7 @@ const gif_preview = {
     name: 'gif.preview',
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         switch (nodeData.name) {
+            case 'ADE_AnimateDiffCombineVideo':
             case 'ADE_AnimateDiffCombine':{
                 const onExecuted = nodeType.prototype.onExecuted
                 nodeType.prototype.onExecuted = function (message) {
@@ -112,9 +150,9 @@ const gif_preview = {
                     }
 
                     let imgURLs = []
+                    let videoURLs = []
                     if (message) {
                     if (message.gif) {
-                        console.log("found gif")
                         imgURLs = imgURLs.concat(
                         message.gif.map((params) => {
                             return api.apiURL(
@@ -123,14 +161,30 @@ const gif_preview = {
                         })
                         )
                     }
+                    if (message.video) {
+                      videoURLs = videoURLs.concat(
+                      message.video.map((params) => {
+                          return api.apiURL(
+                          '/view?' + new URLSearchParams(params).toString()
+                          )
+                      })
+                      )
+                  }
                     let i = 0
                     for (const img of imgURLs) {
                         const w = this.addCustomWidget(
-                        DEBUG_IMG(`${prefix}_${i}`, img)
+                        CreateImgElement(`${prefix}_${i}`, img)
                         )
                         w.parent = this
                         i++
                     }
+                    for (const video of videoURLs) {
+                      const w = this.addCustomWidget(
+                      CreateVideoElement(`${prefix}_${i}`, video)
+                      )
+                      w.parent = this
+                      i++
+                  }
                     }
                     const onRemoved = this.onRemoved
                     this.onRemoved = () => {
