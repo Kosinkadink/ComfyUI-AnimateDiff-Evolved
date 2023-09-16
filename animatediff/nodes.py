@@ -471,7 +471,7 @@ class AnimateDiffCombine:
             img = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
             pil_images.append(img)
         if pingpong:
-            pil_images += pil_images[::-1]
+            pil_images += pil_images[-2:0:-1]
             
         # save image
         output_dir = (
@@ -610,7 +610,7 @@ class AnimateDiffCombineVideo:
             img = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
             frames.append(img)
         if pingpong:
-            frames += frames[::-1]
+            frames += frames[-2:0:-1]
 
         with subprocess.Popen(args, stdin=subprocess.PIPE) as proc:
             for frame in frames:
