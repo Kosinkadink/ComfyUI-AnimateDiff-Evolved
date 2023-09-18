@@ -8,6 +8,7 @@ import comfy.samplers
 from comfy.samplers import lcm
 import comfy.samplers as comfy_samplers
 import comfy.model_management as model_management
+from controlnet import ControlBase
 import latent_preview
 
 from model_patcher import ModelPatcher
@@ -364,6 +365,13 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
             uncond_final = torch.zeros_like(x)
             out_count_final = torch.zeros((x.shape[0], 1, 1, 1), device=x.device)
 
+            def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
+                if control.previous_controlnet is not None:
+                    prepare_control_objects(control.previous_controlnet, full_idxs)
+                control.sub_idxs = full_idxs
+                control.full_latent_length = ADGS.video_length
+                control.context_length = ADGS.context_frames
+
             def get_resized_cond(cond_in, full_idxs) -> list:
                 # reuse or resize cond items to match context requirements
                 resized_cond = []
@@ -376,11 +384,20 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                             # check that tensor is the expected length - x.size(0)
                             if cond_item.size(0) == x.size(0):
                                 pass
-                                # if so, it's subsetting time - leave only full_idxs elements
+                                # if so, it's subsetting time - tell controls the expected indeces so they can handle them
                                 actual_cond_item = cond_item[full_idxs]
                                 resized_actual_cond.append(actual_cond_item)
                             else:
                                 resized_actual_cond.append(cond_item)
+                        elif isinstance(cond_item, dict):
+                            # when in dictionary, look for control
+                            if "control" in cond_item:
+                                control_item = cond_item["control"]
+                                if hasattr(control_item, "sub_idxs"):
+                                    prepare_control_objects(control_item, full_idxs)
+                                else:
+                                    raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; use Control objects from Kosinkadink/Advanced-ControlNet nodes.")
+                            resized_actual_cond.append(cond_item)
                         else:
                             resized_actual_cond.append(cond_item)
                     resized_cond.append(resized_actual_cond)
