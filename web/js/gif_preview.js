@@ -17,18 +17,16 @@ function offsetDOMWidget(
         elRect.height / ctx.canvas.height
       )
       .multiplySelf(ctx.getTransform())
-      .translateSelf(margin, margin + widgetY)
+      .translateSelf(0, widgetY + margin)
   
     const scale = new DOMMatrix().scaleSelf(transform.a, transform.d)
     Object.assign(widget.inputEl.style, {
       transformOrigin: '0 0',
       transform: scale,
-      left: `${transform.a + transform.e}px`,
+      left: `${transform.e}px`,
       top: `${transform.d + transform.f}px`,
-      width: `${widgetWidth - margin * 2}px`,
-      // height: `${(widget.parent?.inputHeight || 32) - (margin * 2)}px`,
-      height: `${(height || widget.parent?.inputHeight || 32) - margin * 2}px`,
-  
+      width: `${widgetWidth}px`,
+      height: `${(height || widget.parent?.inputHeight || 32) - margin}px`,
       position: 'absolute',
       background: !node.color ? '' : node.color,
       color: !node.color ? '' : 'white',
@@ -60,21 +58,20 @@ function offsetDOMWidget(
     }
   }
 
-const CreateVideoElement = (name, val) => {
-    const w = {
+const CreatePreviewElement = (name, val, format) => {
+  const [type] = format.split('/')  
+  const w = {
       name,
-      type: 'video',
+      type,
       value: val,
       draw: function (ctx, node, widgetWidth, widgetY, height) {
         const [cw, ch] = this.computeSize(widgetWidth)
         offsetDOMWidget(this, ctx, node, widgetWidth, widgetY, ch)
       },
-      computeSize: function (width) {
+      computeSize: function (_) {
         const ratio = this.inputRatio || 1
-        if (width) {
-          return [width, width / ratio + 4]
-        }
-        return [128, 128]
+        const width = Math.max(220, this.parent.size[0])
+        return [width, (width / ratio + 10)]
       },
       onRemoved: function () {
         if (this.inputEl) {
@@ -83,45 +80,14 @@ const CreateVideoElement = (name, val) => {
       },
     }
 
-    w.inputEl = document.createElement('video')
+    w.inputEl = document.createElement(type === 'video' ? 'video' : 'img')
     w.inputEl.src = w.value
-    w.inputEl.setAttribute('type', 'video/webm');
-    w.inputEl.autoplay = true
-    w.inputEl.loop = true
-    w.inputEl.controls = false; // Add controls to the video element
-    w.inputEl.onload = function () {
-      w.inputRatio = w.inputEl.naturalWidth / w.inputEl.naturalHeight
+    if (type === 'video') {
+      w.inputEl.setAttribute('type', 'video/webm');
+      w.inputEl.autoplay = true
+      w.inputEl.loop = true
+      w.inputEl.controls = false;
     }
-    document.body.appendChild(w.inputEl)
-    return w
-  }
-
-  const CreateImgElement = (name, val) => {
-    const w = {
-      name,
-      type: 'image',
-      value: val,
-      draw: function (ctx, node, widgetWidth, widgetY, height) {
-        const [cw, ch] = this.computeSize(widgetWidth)
-        offsetDOMWidget(this, ctx, node, widgetWidth, widgetY, ch)
-      },
-      computeSize: function (width) {
-        const ratio = this.inputRatio || 1
-        if (width) {
-          return [width, width / ratio + 4]
-        }
-        return [128, 128]
-      },
-      onRemoved: function () {
-        if (this.inputEl) {
-          this.inputEl.remove()
-        }
-      },
-    }
-
-    w.inputEl = document.createElement('img')
-    w.inputEl.src = w.value
-    w.inputEl.controls = false; // Add controls to the video element
     w.inputEl.onload = function () {
       w.inputRatio = w.inputEl.naturalWidth / w.inputEl.naturalHeight
     }
@@ -130,74 +96,45 @@ const CreateVideoElement = (name, val) => {
   }
 
 const gif_preview = {
-    name: 'gif.preview',
+    name: 'AnimateDiff.gif_preview',
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         switch (nodeData.name) {
-            case 'ADE_AnimateDiffCombineVideo':
             case 'ADE_AnimateDiffCombine':{
                 const onExecuted = nodeType.prototype.onExecuted
                 nodeType.prototype.onExecuted = function (message) {
-                const prefix = 'anything_'
+                const prefix = 'ad_gif_preview_'
                 const r = onExecuted ? onExecuted.apply(this, message) : undefined
 
                 if (this.widgets) {
                     const pos = this.widgets.findIndex((w) => w.name === `${prefix}_0`)
                     if (pos !== -1) {
-                    for (let i = pos; i < this.widgets.length; i++) {
+                      for (let i = pos; i < this.widgets.length; i++) {
                         this.widgets[i].onRemoved?.()
                     }
                     this.widgets.length = pos
                     }
-
-                    let imgURLs = []
-                    let videoURLs = []
-                    if (message) {
-                    if (message.gif) {
-                        imgURLs = imgURLs.concat(
-                        message.gif.map((params) => {
-                            return api.apiURL(
-                            '/view?' + new URLSearchParams(params).toString()
-                            )
-                        })
-                        )
-                    }
-                    if (message.video) {
-                      videoURLs = videoURLs.concat(
-                      message.video.map((params) => {
-                          return api.apiURL(
+                    if (message?.gifs) {
+                      message.gifs.forEach((params, i) => {
+                        const previewUrl = api.apiURL(
                           '/view?' + new URLSearchParams(params).toString()
-                          )
-                      })
-                      )
-                  }
-                    let i = 0
-                    for (const img of imgURLs) {
-                        const w = this.addCustomWidget(
-                        CreateImgElement(`${prefix}_${i}`, img)
                         )
-                        w.parent = this
-                        i++
-                    }
-                    for (const video of videoURLs) {
-                      const w = this.addCustomWidget(
-                      CreateVideoElement(`${prefix}_${i}`, video)
-                      )
-                      w.parent = this
-                      i++
-                  }
-                    }
-                    const onRemoved = this.onRemoved
-                    this.onRemoved = () => {
+                  const w = this.addCustomWidget(
+                    CreatePreviewElement(`${prefix}_${i}`, previewUrl, params.format || 'image/gif')
+                  )
+                  w.parent = this
+                  })
+                 }
+                  const onRemoved = this.onRemoved
+                  this.onRemoved = () => {
                     cleanupNode(this)
                     return onRemoved?.()
-                    }
+                  }
                 }
-                //this.setSize?.(this.computeSize())  # this seems to reset the node size on each generation
+                this.setSize([this.size[0], this.computeSize([this.size[0], this.size[1]])[1]])
                 return r
                 }
-
                 break
-        }
+              }
         }
     }
 }

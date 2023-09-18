@@ -425,9 +425,10 @@ class AnimateDiffCombine:
                     {"default": 8, "min": 1, "max": 24, "step": 1},
                 ),
                 "loop_count": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
-                "save_image": ("BOOLEAN", {"default": True}),
                 "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
+                "format": (["image/gif", "image/webp", "video/webm"],),
                 "pingpong": ("BOOLEAN", {"default": False}),
+                "save_image": ("BOOLEAN", {"default": True}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -435,7 +436,7 @@ class AnimateDiffCombine:
             },
         }
 
-    RETURN_TYPES = ()
+    RETURN_TYPES = ("GIF",)
     OUTPUT_NODE = True
     CATEGORY = "Animate Diff"
     FUNCTION = "generate_gif"
@@ -445,20 +446,19 @@ class AnimateDiffCombine:
         images,
         frame_rate: int,
         loop_count: int,
-        save_image=True,
         filename_prefix="AnimateDiff",
+        format="image/gif",
         pingpong=False,
+        save_image=True,
         prompt=None,
         extra_pnginfo=None,
     ):
         # convert images to numpy
-        pil_images: List[Image.Image] = []
+        frames: List[Image.Image] = []
         for image in images:
             img = 255.0 * image.cpu().numpy()
             img = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
-            pil_images.append(img)
-        if pingpong:
-            pil_images += pil_images[-2:0:-1]
+            frames.append(img)
             
         # save image
         output_dir = (
@@ -484,136 +484,54 @@ class AnimateDiffCombine:
         # save first frame as png to keep metadata
         file = f"{filename}_{counter:05}_.png"
         file_path = os.path.join(full_output_folder, file)
-        pil_images[0].save(
+        frames[0].save(
             file_path,
             pnginfo=metadata,
             compress_level=4,
         )
-       
+        if pingpong:
+            frames = frames + frames[-2:0:-1]
         
         # save gif
-        file = f"{filename}_{counter:05}_.gif"
+        format_type, format_ext = format.split("/")
+        file = f"{filename}_{counter:05}_.{format_ext}"
         file_path = os.path.join(full_output_folder, file)
-        pil_images[0].save(
-            file_path,
-            save_all=True,
-            append_images=pil_images[1:],
-            duration=round(1000 / frame_rate),
-            loop=loop_count,
-            compress_level=4,
-        )
+        if format_type == "image":
+            frames[0].save(
+                file_path,
+                format=format_ext.upper(),
+                save_all=True,
+                append_images=frames[1:],
+                duration=round(1000 / frame_rate),
+                loop=loop_count,
+                compress_level=4,
+            )
+        else:
+            # save webm
+            import shutil
+            import subprocess
 
-        print("Saved gif to", file_path, os.path.exists(file_path))
+            ffmpeg_path = shutil.which("ffmpeg")
+            if ffmpeg_path is None:
+                raise ProcessLookupError("Could not find ffmpeg")
+            dimensions = f"{frames[0].width}x{frames[0].height}"
+            args = [ffmpeg_path, "-v", "panic", "-n", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
+                    dimensions, "-r", str(frame_rate), "-i", "-", "-pix_fmt", "yuv420p", file_path]
+
+            with subprocess.Popen(args, stdin=subprocess.PIPE) as proc:
+                for frame in frames:
+                    proc.stdin.write(frame.tobytes())
 
         previews = [
             {
                 "filename": file,
-                "subfolder": "",
+                "subfolder": subfolder,
                 "type": "output" if save_image else "temp",
+                "format": format,
             }
         ]
         print(previews)
-        return {"ui": {"gif": previews}}
-
-class AnimateDiffCombineVideo:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "images": ("IMAGE",),
-                "frame_rate": (
-                    "INT",
-                    {"default": 8, "min": 1, "max": 24, "step": 1},
-                ),
-                "save_image": (["Enabled", "Disabled"],),
-                "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
-                "pingpong": ("BOOLEAN", {"default": False}),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    RETURN_TYPES = ()
-    OUTPUT_NODE = True
-    CATEGORY = "Animate Diff"
-    FUNCTION = "generate_video"
-
-    def generate_video(
-        self,
-        images,
-        frame_rate: int,
-        save_image="Enabled",
-        filename_prefix="AnimateDiff",
-        pingpong=False,
-        prompt=None,
-        extra_pnginfo=None,
-    ):
-        # save image
-        output_dir = (
-            folder_paths.get_output_directory()
-            if save_image == "Enabled"
-            else folder_paths.get_temp_directory()
-        )
-        (
-            full_output_folder,
-            filename,
-            counter,
-            subfolder,
-            _,
-        ) = folder_paths.get_save_image_path(filename_prefix, output_dir)
-
-        metadata = PngInfo()
-        if prompt is not None:
-            metadata.add_text("prompt", json.dumps(prompt))
-        if extra_pnginfo is not None:
-            for x in extra_pnginfo:
-                metadata.add_text(x, json.dumps(extra_pnginfo[x]))
-
-        # save first frame as png to keep metadata
-        file = f"{filename}_{counter:05}_.png"
-        file_path = os.path.join(full_output_folder, file)
-        first_image = Image.fromarray(np.clip(255.0*images[0].cpu().numpy(),0,255).astype(np.uint8))
-        first_image.save(
-            file_path,
-            pnginfo=metadata,
-            compress_level=4,
-        )
-        
-        # save webm
-        ffmpeg_path = shutil.which("ffmpeg")
-        if ffmpeg_path is None:
-            raise ProcessLookupError("Could not find ffmpeg")
-        file_webm = f"{filename}_{counter:05}_.webm"
-        file_path = os.path.join(full_output_folder, file_webm)
-        dimensions = f"{first_image.width}x{first_image.height}"
-        args = [ffmpeg_path, "-v", "panic", "-n", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
-                dimensions, "-r", str(frame_rate), "-i", "-", "-pix_fmt", "yuv420p", file_path]
-        # convert images to numpy
-        frames: List[Image.Image] = []
-        for image in images:
-            img = 255.0 * image.cpu().numpy()
-            img = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
-            frames.append(img)
-        if pingpong:
-            frames += frames[-2:0:-1]
-
-        with subprocess.Popen(args, stdin=subprocess.PIPE) as proc:
-            for frame in frames:
-                proc.stdin.write(frame.tobytes())
-        print("Saved webm to", file_path, os.path.exists(file_path))
-
-
-        previews = [
-            {
-                "filename": file_webm,
-                "subfolder": subfolder,
-                "type": "output" if save_image == "Enabled" else "temp",
-            }
-        ]
-        return {"ui": {"video": previews}}
-
+        return {"ui": {"gifs": previews}}
 
 class CheckpointLoaderSimpleWithNoiseSelect:
     @classmethod
