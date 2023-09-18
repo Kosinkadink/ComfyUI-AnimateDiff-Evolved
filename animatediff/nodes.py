@@ -422,6 +422,13 @@ class AnimateDiffUnload:
 class AnimateDiffCombine:
     @classmethod
     def INPUT_TYPES(s):
+        ffmpeg_path = shutil.which("ffmpeg")
+        #Hide ffmpeg formats if ffmpeg isn't available
+        if ffmpeg_path is not None:
+            ffmpeg_formats = ["video/"+x[:-5] for x in folder_paths.get_filename_list("video_formats")]
+        else:
+            ffmpeg_formats = []
+            logger.warning("ffmpeg could not be found. Outputs that require it have been disabled")
         return {
             "required": {
                 "images": ("IMAGE",),
@@ -431,7 +438,7 @@ class AnimateDiffCombine:
                 ),
                 "loop_count": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
                 "filename_prefix": ("STRING", {"default": "AnimateDiff"}),
-                "format": (["image/gif", "image/webp", "video/webm"],),
+                "format": (["image/gif", "image/webp"] + ffmpeg_formats,),
                 "pingpong": ("BOOLEAN", {"default": False}),
                 "save_image": ("BOOLEAN", {"default": True}),
             },
@@ -465,7 +472,7 @@ class AnimateDiffCombine:
             img = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
             frames.append(img)
             
-        # save image
+        # get output information
         output_dir = (
             folder_paths.get_output_directory()
             if save_image
@@ -497,11 +504,11 @@ class AnimateDiffCombine:
         if pingpong:
             frames = frames + frames[-2:0:-1]
         
-        # save gif
         format_type, format_ext = format.split("/")
         file = f"{filename}_{counter:05}_.{format_ext}"
         file_path = os.path.join(full_output_folder, file)
         if format_type == "image":
+            # Use pillow directly to save an animated image
             frames[0].save(
                 file_path,
                 format=format_ext.upper(),
@@ -512,18 +519,26 @@ class AnimateDiffCombine:
                 compress_level=4,
             )
         else:
-            # save webm
-            import shutil
-            import subprocess
-
+            # Use ffmpeg to save a video
             ffmpeg_path = shutil.which("ffmpeg")
             if ffmpeg_path is None:
+                #Should never be reachable
                 raise ProcessLookupError("Could not find ffmpeg")
-            dimensions = f"{frames[0].width}x{frames[0].height}"
-            args = [ffmpeg_path, "-v", "panic", "-n", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
-                    dimensions, "-r", str(frame_rate), "-i", "-", "-pix_fmt", "yuv420p", file_path]
 
-            with subprocess.Popen(args, stdin=subprocess.PIPE) as proc:
+            video_format_path = folder_paths.get_full_path("video_formats", format_ext + ".json")
+            with open(video_format_path, 'r') as stream:
+                video_format = json.load(stream)
+            file = f"{filename}_{counter:05}_.{video_format['extension']}"
+            file_path = os.path.join(full_output_folder, file)
+            dimensions = f"{frames[0].width}x{frames[0].height}"
+            args = [ffmpeg_path, "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                    "-s", dimensions, "-r", str(frame_rate), "-i", "-"] \
+                    + video_format['main_pass'] + [file_path]
+
+            env=os.environ.copy()
+            if  "environment" in video_format:
+                env.update(video_format["environment"])
+            with subprocess.Popen(args, stdin=subprocess.PIPE, env=env) as proc:
                 for frame in frames:
                     proc.stdin.write(frame.tobytes())
 
@@ -535,7 +550,6 @@ class AnimateDiffCombine:
                 "format": format,
             }
         ]
-        print(previews)
         return {"ui": {"gifs": previews}}
 
 class CheckpointLoaderSimpleWithNoiseSelect:
