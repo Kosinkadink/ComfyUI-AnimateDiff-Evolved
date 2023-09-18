@@ -62,11 +62,25 @@ Training data used by the authors of the AnimateDiff paper contained Shutterstoc
 ![AA_gif_00002_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/91933fb2-5b0b-4f41-a57a-ebebb604bd9d)
 
 
+### txt2img - 48 frame animation with 16 frame window
+
+![txt2image_sliding_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/c0135530-1bd3-43b6-ba7a-f9e75eb65be3)
+
+![txt2image_sliding](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/7d14075d-fbd1-48dc-81b3-2fa0ff68adc8)
+
+
 ### txt2img w/ latent upscale (partial denoise on upscale)
 
 ![txt2image_upscale_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/82a9ba7b-6da1-4eee-bead-8aca55943fb9)
 
 ![AA_upscale_gif_00007_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/0cb2ca7e-8666-4abc-86f2-f24a20ff4bed)
+
+
+### txt2img w/ latent upscale (partial denoise on upscale) - 48 frame animation with 16 frame window
+
+![txt2image_sliding_upscale_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9980e9dc-dde3-421f-8c90-319b71616fdc)
+
+TODO: add generated image here (gif is too big for github)
 
 
 ### txt2img w/ latent upscale (full denoise on upscale)
