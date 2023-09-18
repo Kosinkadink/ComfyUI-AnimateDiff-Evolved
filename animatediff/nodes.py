@@ -293,8 +293,8 @@ class AnimateDiffLoaderAdvanced:
                 "latents": ("LATENT",),
                 "model_name": (get_available_models(),),
                 "unlimited_area_hack": ("BOOLEAN", {"default": False},),
-                "context_frames": ("INT", {"default": -1, "min": -1, "max": 1000}),
-                "context_stride": ("INT", {"default": 4, "min": 0, "max": 1000}),
+                "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
+                "context_stride": ("INT", {"default": 1, "min": 0, "max": 1000}),
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
                 "context_schedule": (CONTEXT_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
@@ -315,7 +315,7 @@ class AnimateDiffLoaderAdvanced:
         model: ModelPatcher,
         latents: Dict[str, torch.Tensor],
         model_name: str, unlimited_area_hack: bool,
-        context_frames: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool
+        context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool
     ):
         raise_if_not_checkpoint_sd1_5(model)
 
@@ -323,28 +323,42 @@ class AnimateDiffLoaderAdvanced:
             motion_modules[model_name] = load_motion_module(model_name)
 
         motion_module = motion_modules[model_name]
-        # check that latents don't exceed max frame size
+        
         init_frames_len = len(latents["samples"])
-        if context_frames > motion_module.encoding_max_len:
-            # TODO: warning and cutoff frames instead of error
-            raise ValueError(f"AnimateDiff model {model_name} has upper limit of {motion_module.encoding_max_len} frames, but received context frames of {context_frames} latents.")
-        # set motion_module's video_length to match context length
-        motion_module.set_video_length(context_frames)
+        # if latents exceed context_length, use sliding window
+        if init_frames_len > context_length and context_length > 0:
+            logger.info("Criteria for sliding context met.")
+            # check that context_length don't exceed max frame size
+            if context_length > motion_module.encoding_max_len:
+                raise ValueError(f"AnimateDiff model {model_name} has upper limit of {motion_module.encoding_max_len} frames, but received context frames of {context_length} latents.")
+            # set motion_module's video_length to match context length
+            motion_module.set_video_length(context_length)
+            injection_params = InjectionParams.init_with_context(
+                video_length=init_frames_len,
+                unlimited_area_hack=unlimited_area_hack,
+                context_frames=context_length,
+                context_stride=context_stride,
+                context_overlap=context_overlap,
+                context_schedule=context_schedule,
+                closed_loop=closed_loop
+            )
+        # otherwise, do normal AnimateDiff operation
+        else:
+            logger.info("Criteria for sliding context not met - will do full-latent sampling.")
+            if init_frames_len > motion_module.encoding_max_len:
+                # TODO: warning and cutoff frames instead of error
+                raise ValueError(f"AnimateDiff model {model_name} has upper limit of {motion_module.encoding_max_len} frames, but received {init_frames_len} latents.")
+            # set motion_module's video_length to match latent amount
+            motion_module.set_video_length(init_frames_len)
+            injection_params = InjectionParams(
+                video_length=init_frames_len,
+                unlimited_area_hack=unlimited_area_hack,
+            )
 
         model = model.clone()
         unet = model.model.diffusion_model
         unet_hash = calculate_model_hash(unet)
         need_inject = unet_hash not in injected_model_hashs
-
-        injection_params = InjectionParams.init_with_context(
-            video_length=init_frames_len,
-            unlimited_area_hack=unlimited_area_hack,
-            context_frames=context_frames,
-            context_stride=context_stride,
-            context_overlap=context_overlap,
-            context_schedule=context_schedule,
-            closed_loop=closed_loop
-        )
 
         if unet_hash in injected_model_hashs:
             (mm_type, version) = injected_model_hashs[unet_hash]
