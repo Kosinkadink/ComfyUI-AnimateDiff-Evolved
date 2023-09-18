@@ -5,6 +5,75 @@ import math
 from einops import rearrange, repeat
 
 from comfy.ldm.modules.attention import FeedForward, CrossAttention
+from model_patcher import ModelPatcher
+
+##################################################################################
+# Injection-related classes and functions
+MM_INJECTED_ATTR = "_mm_injected"
+
+class InjectionParams:
+    def __init__(self, video_length: int, unlimited_area_hack: bool) -> None:
+        self.video_length = video_length
+        self.unlimited_area_hack = unlimited_area_hack
+        self.context_frames: int = None
+        self.context_stride: int = None
+        self.context_overlap: int = None
+        self.context_schedule: str = None
+        self.closed_loop: bool = False
+    
+    @classmethod
+    def init_with_context(cls, video_length: int, unlimited_area_hack: bool, context_frames: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool) -> 'InjectionParams':
+        params = InjectionParams(video_length=video_length, unlimited_area_hack=unlimited_area_hack)
+        params.context_frames = context_frames
+        params.context_stride = context_stride
+        params.context_overlap = context_overlap
+        params.context_schedule = context_schedule
+        params.closed_loop = closed_loop
+        return params
+
+
+def is_mm_injected_into_model(model: ModelPatcher):
+    return hasattr(model.model.diffusion_model, MM_INJECTED_ATTR)
+
+def get_mm_injected_params(model: ModelPatcher) -> InjectionParams:
+    return getattr(model.model.diffusion_model, MM_INJECTED_ATTR)
+
+def set_mm_injected_params(model: ModelPatcher, injection_params: InjectionParams):
+    setattr(model.model.diffusion_model, MM_INJECTED_ATTR, injection_params)
+##################################################################################
+
+
+##################################################################################
+# Global variable to use to more conveniently hack variable access into samplers
+class AnimateDiffHelper_GlobalState:
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        self.start_step: int = 0
+        self.last_step: int = 0
+        self.current_step: int = 0
+        self.total_steps: int = 0
+        self.video_length: int  = 0
+        self.context_frames: int = None
+        self.context_stride: int = None
+        self.context_overlap: int = None
+        self.context_schedule: str = None
+        self.closed_loop: bool = False
+    
+    def update_with_inject_params(self, params: InjectionParams):
+        self.video_length = params.video_length
+        self.context_frames = params.context_frames
+        self.context_stride = params.context_stride
+        self.context_overlap = params.context_overlap
+        self.context_schedule = params.context_schedule
+        self.closed_loop = params.closed_loop
+
+    def is_using_sliding_context(self):
+        return self.context_frames is not None
+
+ANIMATEDIFF_GLOBALSTATE = AnimateDiffHelper_GlobalState()
+##################################################################################
 
 
 class BlockType:

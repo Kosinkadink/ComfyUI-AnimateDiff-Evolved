@@ -4,4 +4,5 @@ __pycache__
 *.ckpt
 *.safetensors
 *.pth
+manual_testing.py
 

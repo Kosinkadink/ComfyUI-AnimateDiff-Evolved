@@ -28,8 +28,19 @@ Examples shown here will also often make use of two helpful set of nodes:
 1. Download motion modules. You will need at least 1. Different modules produce different results.
    - Original research models available from [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836) | [Baidu NetDisk](https://pan.baidu.com/s/18ZpcSM6poBqxWNHtnyMcxg?pwd=et8y).
    - Stabilized finetunes of mm_sd_v14 by manshoety from [HuggingFace](https://huggingface.co/manshoety/AD_Stabilized_Motion/tree/main)
+   - Higher resolution finetune by CiaraRowles from [HuggingFace](https://huggingface.co/CiaraRowles/TemporalDiff/tree/main)
    - Place models in ```ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/models```. They can be renamed if you want. More motion modules are being trained by the community - if I am made aware of any good ones, I will link here as well. (TODO: create .safetensor versions of the motion modules and share them here.)
 3. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Masking the conditioning of ControlNets to only affect part of the animation? Sure. Try stuff and you will be surprised by what you can do. Samples with workflows are included below.
+
+## Current Features:
+- txt2img support; if it works for generating ComfyUI images, it will likely work for AnimateDiff. If something does not work, start a discussion or open an issue and I'll see if I can make it work
+- ControlNet support - both per-frame, or "interpolating" between frames; can kind of use this as img2video (see workflows below)
+- Long animation lengths using sliding context windows {via AnimateDiff Loader (Advanced)}, allowing for longer coherent animations
+
+## Upcoming features (aka TODO):
+- Prompt travel, and in general more control over per-frame conditioning
+- Nodes for saving videos, saving generated files into a timestamped folder instead of all over ComfyUI output dir.
+
 
 ## Known Issues (and Solutions, please read!)
 
@@ -39,23 +50,37 @@ It is an xformers bug accidentally triggered by the way the original AnimateDiff
 
 ### GIF has Watermark (especially when using mm_sd_v15)
 
-Training data used by the authors of the AnimateDiff paper contained Shutterstock watermarks. Since mm_sd_v15 was finetuned on finer, less drastic movement, the motion module attempts to replicate the transparency of that watermark and does not get blurred away like mm_sd_v14. Community finetunes of motion modules should eventually create equivalent (or better) results without the watermark. Until then, you'll need some good RNG or stick with mm_sd_v14 or finetunes, depending on your application.
+Training data used by the authors of the AnimateDiff paper contained Shutterstock watermarks. Since mm_sd_v15 was finetuned on finer, less drastic movement, the motion module attempts to replicate the transparency of that watermark and does not get blurred away like mm_sd_v14. Using other motion modules, or combinations of them using Advanced KSamplers should alleviate watermark issues.
 
 
 ## Samples (download or drag images of the workflows into ComfyUI to instantly load the corresponding workflows!)
 
 ### txt2img
 
-![txt2image_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/2e6be92e-8f0b-428c-b7b4-84589ebd701e)
+![txt2image_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/16e5b590-1c49-4d3a-9ed1-dddb813506f7)
 
 ![AA_gif_00002_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/91933fb2-5b0b-4f41-a57a-ebebb604bd9d)
 
 
+### txt2img - 48 frame animation with 16 frame window
+
+![txt2image_sliding_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/c0135530-1bd3-43b6-ba7a-f9e75eb65be3)
+
+![txt2image_sliding](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/7d14075d-fbd1-48dc-81b3-2fa0ff68adc8)
+
+
 ### txt2img w/ latent upscale (partial denoise on upscale)
 
-![txt2image_upscale_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/6a74ccb0-4c4a-4738-bf0f-8109c14507f1)
+![txt2image_upscale_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/82a9ba7b-6da1-4eee-bead-8aca55943fb9)
 
 ![AA_upscale_gif_00007_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/0cb2ca7e-8666-4abc-86f2-f24a20ff4bed)
+
+
+### txt2img w/ latent upscale (partial denoise on upscale) - 48 frame animation with 16 frame window
+
+![txt2image_sliding_upscale_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9980e9dc-dde3-421f-8c90-319b71616fdc)
+
+TODO: add generated image here (gif is too big for github)
 
 
 ### txt2img w/ latent upscale (full denoise on upscale)
@@ -101,9 +126,3 @@ Training data used by the authors of the AnimateDiff paper contained Shutterstoc
 <img width="1121" alt="Screenshot 2023-07-22 at 22 08 00" src="https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/600f96b0-df21-4437-917f-7eda35ab6363">
 
 ![AnimateDiff_00002](https://github.com/ArtVentureX/comfyui-animatediff/assets/133728487/c78d64b9-b308-41ec-9804-bbde654d0b47)
-
-
-## Upcoming features (aka TODO):
-- Nodes for saving videos, saving generated files into a timestamped folder instead of all over ComfyUI output dir.
-- Moving-window latent implementation for generating arbitrarily-long animations instead of being capped at 24 frames (moving window will still be limited to up to 24 frames).
-- Add examples of using ControlNet to ease one image/controlnet input into another, and also add more nodes to Advanced-ControlNet to make it easier to do so
