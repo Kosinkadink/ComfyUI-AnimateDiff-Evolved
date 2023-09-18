@@ -2,6 +2,8 @@ import os
 import time
 
 import folder_paths
+from comfy.model_base import BaseModel
+from comfy.model_patcher import ModelPatcher
 
 
 class BetaSchedules:
@@ -108,3 +110,9 @@ def get_full_path(folder_name, filename):
 
 def get_available_models():
     return get_filename_list(Folders.MODELS)
+
+
+def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
+    model_type = type(model.model)
+    if model_type != BaseModel:
+        raise ValueError(f"For AnimateDiff, SD Checkpoint (model) is expected to be SD1.5-based (BaseModel), but was: {model_type.__name__}")

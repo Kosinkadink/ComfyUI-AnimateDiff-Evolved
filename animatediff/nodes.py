@@ -23,7 +23,7 @@ from comfy.model_patcher import ModelPatcher
 from .logger import logger
 from .motion_module import MotionWrapper, VanillaTemporalModule, ANIMATEDIFF_GLOBALSTATE
 from .motion_module import InjectionParams, is_mm_injected_into_model, get_mm_injected_params, set_mm_injected_params, MM_INJECTED_ATTR
-from .model_utils import Folders, get_available_models, get_full_path, BetaSchedules
+from .model_utils import Folders, get_available_models, get_full_path, BetaSchedules, raise_if_not_checkpoint_sd1_5
 from .sliding_context_sampling import sliding_common_ksampler
 from .context import CONTEXT_SCHEDULE_LIST
 
@@ -236,6 +236,8 @@ class AnimateDiffLoader:
         latents: Dict[str, torch.Tensor],
         model_name: str, unlimited_area_hack: bool
     ):
+        raise_if_not_checkpoint_sd1_5(model)
+
         if model_name not in motion_modules:
             motion_modules[model_name] = load_motion_module(model_name)
 
@@ -315,6 +317,8 @@ class AnimateDiffLoaderAdvanced:
         model_name: str, unlimited_area_hack: bool,
         context_frames: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool
     ):
+        raise_if_not_checkpoint_sd1_5(model)
+
         if model_name not in motion_modules:
             motion_modules[model_name] = load_motion_module(model_name)
 
