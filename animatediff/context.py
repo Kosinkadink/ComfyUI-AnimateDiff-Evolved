@@ -104,16 +104,16 @@ def get_total_steps_fixed(
 ################################################
 # Manual testing code
 def context_test():
-    video_length = 32
+    video_length = 160
     context_frames = 16
-    context_stride = 4
+    context_stride = 1
     context_overlap = 4
     context_schedule = "uniform"
     closed_loop = False
 
     context_scheduler = get_context_scheduler(context_schedule)
 
-    num_inference_steps = 20
+    num_inference_steps = 1
     timesteps = [num_inference_steps]*num_inference_steps
     total_loops = 0
     for i, t in enumerate(timesteps):

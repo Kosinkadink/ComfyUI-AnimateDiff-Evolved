@@ -515,7 +515,26 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         beta_schedule_name = BetaSchedules.to_name(beta_schedule)
         out[0].model.register_schedule(given_betas=None, beta_schedule=beta_schedule_name, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
         return out
-    
+
+
+class EmptyLatentImageLarge:
+    def __init__(self, device="cpu"):
+        self.device = device
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": { "width": ("INT", {"default": 512, "min": 64, "max": comfy_nodes.MAX_RESOLUTION, "step": 8}),
+                              "height": ("INT", {"default": 512, "min": 64, "max": comfy_nodes.MAX_RESOLUTION, "step": 8}),
+                              "batch_size": ("INT", {"default": 1, "min": 1, "max": 262144})}}
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "generate"
+
+    CATEGORY = "Animate Diff/latent"
+
+    def generate(self, width, height, batch_size=1):
+        latent = torch.zeros([batch_size, 4, height // 8, width // 8])
+        return ({"samples":latent}, )
+
 
 NODE_CLASS_MAPPINGS = {
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
@@ -523,6 +542,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_AnimateDiffCombine": AnimateDiffCombine,
+    "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select",
@@ -530,4 +550,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced)",
     "ADE_AnimateDiffUnload": "AnimateDiff Unload",
     "ADE_AnimateDiffCombine": "AnimateDiff Combine",
+    "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch)",
 }

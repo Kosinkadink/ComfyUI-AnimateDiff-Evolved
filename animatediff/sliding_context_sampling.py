@@ -351,6 +351,8 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
 
             return out_cond, out_uncond
         
+        # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
+        # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
         def sliding_calc_cond_uncond_batch(model_function, cond, uncond, x_in, timestep, max_total_area, cond_concat_in, model_options):
             # get context scheduler
             context_scheduler = get_context_scheduler(ADGS.context_schedule)
