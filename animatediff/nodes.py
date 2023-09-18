@@ -25,7 +25,7 @@ from .motion_module import MotionWrapper, VanillaTemporalModule, ANIMATEDIFF_GLO
 from .motion_module import InjectionParams, is_mm_injected_into_model, get_mm_injected_params, set_mm_injected_params, MM_INJECTED_ATTR
 from .model_utils import Folders, get_available_models, get_full_path, BetaSchedules, raise_if_not_checkpoint_sd1_5
 from .sliding_context_sampling import sliding_common_ksampler
-from .context import CONTEXT_SCHEDULE_LIST
+from .context import ContextSchedules
 
 
 # Need to inject common_ksampler function all the way in ComfyUI's base directory
@@ -296,7 +296,7 @@ class AnimateDiffLoaderAdvanced:
                 "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
                 "context_stride": ("INT", {"default": 1, "min": 1, "max": 1000}),
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
-                "context_schedule": (CONTEXT_SCHEDULE_LIST,),
+                "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
             },
         }
