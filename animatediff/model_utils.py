@@ -1,9 +1,11 @@
 import os
 import time
+from typing import Callable
 
 import folder_paths
 from comfy.model_base import BaseModel
 from comfy.model_patcher import ModelPatcher
+from comfy.model_management import xformers_enabled
 
 
 class BetaSchedules:
@@ -116,3 +118,19 @@ def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
     model_type = type(model.model)
     if model_type != BaseModel:
         raise ValueError(f"For AnimateDiff, SD Checkpoint (model) is expected to be SD1.5-based (BaseModel), but was: {model_type.__name__}")
+
+
+# TODO: remove this filth when xformers bug gets fixed in future xformers version
+def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Callable:
+    if not xformers_enabled:
+        return function_to_wrap
+    else:
+        def wrapped_function(*args, **kwargs):
+            try:
+                return function_to_wrap(*args, **kwargs)
+            except RuntimeError as e:
+                if str(e).startswith("CUDA error: invalid configuration argument"):
+                    raise RuntimeError(f"An xformers bug was encountered in AnimateDiff - to run your workflow, \
+                                       disable xformers in ComfyUI using '--disable-xformers' startup argument.")
+                raise
+        return wrapped_function

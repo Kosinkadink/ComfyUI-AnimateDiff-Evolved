@@ -23,7 +23,7 @@ from comfy.model_patcher import ModelPatcher
 from .logger import logger
 from .motion_module import MotionWrapper, VanillaTemporalModule, ANIMATEDIFF_GLOBALSTATE
 from .motion_module import InjectionParams, is_mm_injected_into_model, get_mm_injected_params, set_mm_injected_params, MM_INJECTED_ATTR
-from .model_utils import Folders, get_available_models, get_full_path, BetaSchedules, raise_if_not_checkpoint_sd1_5
+from .model_utils import Folders, get_available_models, get_full_path, BetaSchedules, raise_if_not_checkpoint_sd1_5, wrap_function_to_inject_xformers_bug_info
 from .sliding_context_sampling import sliding_common_ksampler
 from .context import ContextSchedules
 
@@ -36,10 +36,15 @@ sys.path.insert(0, Path(__file__).parent.parent.parent.parent)
 import nodes as comfy_nodes
 
 
+# xformers bug warning - TODO: remove when xformers bug is fixed in future xformers version
+if model_management.xformers_enabled:
+    logger.warn("xformers has a bug - you may experience 'CUDA error: invalid configuration argument'. If this happens, turn off xformers with --disable-xformers arg.")
+
+
 #############################################
 #### Code Injection #########################
 orig_comfy_sample = comfy_sample.sample # wrapper will go around this to inject/eject GroupNorm hack
-orig_comfy_common_ksampler = comfy_nodes.common_ksampler
+orig_comfy_common_ksampler = wrap_function_to_inject_xformers_bug_info(comfy_nodes.common_ksampler)
 orig_maximum_batch_area = model_management.maximum_batch_area # allows for "unlimited area hack" to prevent halving of conds/unconds
 orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
 orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames

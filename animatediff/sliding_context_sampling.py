@@ -17,6 +17,7 @@ from .logger import logger
 from .motion_module import ANIMATEDIFF_GLOBALSTATE as ADGS
 from .motion_module import is_mm_injected_into_model, get_mm_injected_params
 from .context import get_context_scheduler
+from .model_utils import wrap_function_to_inject_xformers_bug_info
 
 
 orig_sampling_function = comfy_samplers.sampling_function
@@ -83,6 +84,10 @@ def sliding_common_ksampler(model: ModelPatcher, seed, steps, cfg, sampler_name,
     finally:
         # eject sliding_sampling_function from sampling_function
         eject_sampling_function()
+
+
+# wrap it so we can throw more useful error if needed for xformers bug
+sliding_common_ksampler = wrap_function_to_inject_xformers_bug_info(sliding_common_ksampler)
 
 
 def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_scale, cond_concat=None, model_options={}, seed=None):
