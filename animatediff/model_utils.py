@@ -46,6 +46,13 @@ folder_names_and_paths[Folders.MODELS] = ([MODEL_DIR], folder_paths.supported_pt
 
 filename_list_cache = {}
 
+#Register video_formats folder
+folder_paths.folder_names_and_paths["video_formats"] = (
+    [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "video_formats"),
+    ],
+    [".json"]
+)
 
 def get_filename_list_(folder_name):
     global folder_names_and_paths

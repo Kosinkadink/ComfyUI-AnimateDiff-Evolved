@@ -1,0 +1,9 @@
+{
+    "main_pass":
+    [
+        "-n", "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-crf", "19"
+    ],
+     "extension": "mp4"
+}
