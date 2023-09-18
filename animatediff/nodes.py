@@ -294,7 +294,7 @@ class AnimateDiffLoaderAdvanced:
                 "model_name": (get_available_models(),),
                 "unlimited_area_hack": ("BOOLEAN", {"default": False},),
                 "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
-                "context_stride": ("INT", {"default": 1, "min": 0, "max": 1000}),
+                "context_stride": ("INT", {"default": 1, "min": 1, "max": 1000}),
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
                 "context_schedule": (CONTEXT_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
