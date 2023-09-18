@@ -1,11 +1,9 @@
 import os
 import time
-from huggingface_hub import hf_hub_download
 
 import folder_paths
-
-HF_REPO = "guoyww/animatediff"
-MODEL_FILES = ["mm_sd_v14.ckpt", "mm_sd_v15.ckpt"]
+from comfy.model_base import BaseModel
+from comfy.model_patcher import ModelPatcher
 
 
 class BetaSchedules:
@@ -114,12 +112,7 @@ def get_available_models():
     return get_filename_list(Folders.MODELS)
 
 
-def download(model_file=MODEL_FILES[-1]):
-    if not os.path.exists(os.path.join(MODEL_DIR, model_file)):
-        hf_hub_download(
-            HF_REPO,
-            model_file,
-            cache_dir=MODEL_DIR,
-            force_download=True,
-            force_filename=model_file,
-        )
+def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
+    model_type = type(model.model)
+    if model_type != BaseModel:
+        raise ValueError(f"For AnimateDiff, SD Checkpoint (model) is expected to be SD1.5-based (BaseModel), but was: {model_type.__name__}")
