@@ -149,6 +149,8 @@ def get_context_scheduler(name: str) -> Callable:
             return uniform
         case ContextSchedules.UNIFORM_CONSTANT:
             return uniform_constant
+        case ContextSchedules.UNIFORM_V2:
+            return uniform_v2
         case _:
             raise ValueError(f"Unknown context_overlap policy {name}")
 
