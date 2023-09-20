@@ -1,5 +1,7 @@
 import os
+from pathlib import Path
 import time
+import json
 from typing import Callable
 
 import folder_paths
@@ -29,6 +31,13 @@ class BetaSchedules:
     def to_name(cls, alias: str):
         return cls.ALIAS_MAP[alias]
 
+    @staticmethod
+    def get_alias_list_with_first_element(first_element: str):
+        new_list = BetaSchedules.ALIAS_LIST.copy()
+        element_index = new_list.index(first_element)
+        new_list[0], new_list[element_index] = new_list[element_index], new_list[0]
+        return new_list
+
 
 class Folders:
     MODELS = "models"
@@ -45,6 +54,32 @@ folder_names_and_paths = {}
 folder_names_and_paths[Folders.MODELS] = ([MODEL_DIR], folder_paths.supported_pt_extensions)
 
 filename_list_cache = {}
+
+# Load config settings
+ADE_DIR = Path(__file__).parent.parent
+ADE_CONFIG_FILE = ADE_DIR / "ade_config.json"
+
+class ADE_Settings:
+    USE_XFORMERS_IN_VERSATILE_ATTENTION = "use_xformers_in_VersatileAttention"
+
+# Create ADE config if not present
+ABS_CONFIG = {
+    ADE_Settings.USE_XFORMERS_IN_VERSATILE_ATTENTION: True
+}
+if not ADE_CONFIG_FILE.exists():
+    with ADE_CONFIG_FILE.open("w") as f:
+        json.dumps(ABS_CONFIG, indent=4)
+# otherwise, load it and use values
+else:
+    loaded_values: dict = None
+    with ADE_CONFIG_FILE.open("r") as f:
+        loaded_values = json.load(f)
+    if loaded_values is not None:
+        for key, value in loaded_values.items():
+            if key in ABS_CONFIG:
+                ABS_CONFIG[key] = value
+        
+
 
 #Register video_formats folder
 folder_paths.folder_names_and_paths["video_formats"] = (
@@ -138,6 +173,8 @@ def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Cal
             except RuntimeError as e:
                 if str(e).startswith("CUDA error: invalid configuration argument"):
                     raise RuntimeError(f"An xformers bug was encountered in AnimateDiff - to run your workflow, \
-                                       disable xformers in ComfyUI using '--disable-xformers' startup argument.")
+                                       disable xformers for AD only by going to '{ADE_CONFIG_FILE}', and set \
+                                        '{ADE_Settings.USE_XFORMERS_IN_VERSATILE_ATTENTION}' to false. Reboot ComfyUI, \
+                                            and then AD will use the next-best available attention method.")
                 raise
         return wrapped_function

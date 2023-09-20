@@ -38,11 +38,6 @@ sys.path.insert(0, Path(__file__).parent.parent.parent.parent)
 import nodes as comfy_nodes
 
 
-# xformers bug warning - TODO: remove when xformers bug is fixed in future xformers version
-if model_management.xformers_enabled:
-    logger.warn("xformers has a bug - you may experience 'CUDA error: invalid configuration argument'. If this happens, turn off xformers with --disable-xformers arg.")
-
-
 #############################################
 #### Code Injection #########################
 orig_comfy_sample = comfy_sample.sample # wrapper will go around this to inject/eject GroupNorm hack
@@ -195,6 +190,7 @@ def eject_motion_module_from_unet(unet: openaimodel.UNetModel):
         logger.info(f"Ejecting motion module from UNet middle blocks.")
         unet.middle_block.pop(-2)
     delattr(unet, MM_INJECTED_ATTR)
+    injected_model_hashs.pop(calculate_model_hash(unet))
 
 
 class InjectorVersion:
@@ -225,12 +221,14 @@ class AnimateDiffLoader:
                 "latents": ("LATENT",),
                 "model_name": (get_available_models(),),
                 "unlimited_area_hack": ("BOOLEAN", {"default": False},),
+                "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
             },
         }
 
     @classmethod
     def IS_CHANGED(s, model: ModelPatcher, _):
         unet = model.model.diffusion_model
+        logger.info(f"load IS_CHANGED: {calculate_model_hash(unet) not in injected_model_hashs}")
         return calculate_model_hash(unet) not in injected_model_hashs
 
     RETURN_TYPES = ("MODEL", "LATENT")
@@ -241,7 +239,7 @@ class AnimateDiffLoader:
         self,
         model: ModelPatcher,
         latents: Dict[str, torch.Tensor],
-        model_name: str, unlimited_area_hack: bool
+        model_name: str, unlimited_area_hack: bool, beta_schedule: str,
     ):
         raise_if_not_checkpoint_sd1_5(model)
 
@@ -265,6 +263,7 @@ class AnimateDiffLoader:
         injection_params = InjectionParams(
             video_length=init_frames_len,
             unlimited_area_hack=unlimited_area_hack,
+            beta_schedule=beta_schedule,
         )
 
         if unet_hash in injected_model_hashs:
@@ -305,13 +304,15 @@ class AnimateDiffLoaderAdvanced:
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
                 "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
+                "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
             },
         }
 
-    @classmethod
-    def IS_CHANGED(s, model: ModelPatcher, _):
-        unet = model.model.diffusion_model
-        return calculate_model_hash(unet) not in injected_model_hashs
+    # @classmethod
+    # def IS_CHANGED(s, model: ModelPatcher, _):
+    #     unet = model.model.diffusion_model
+    #     logger.info(f"load IS_CHANGED: {calculate_model_hash(unet) not in injected_model_hashs}")
+    #     return calculate_model_hash(unet) not in injected_model_hashs
 
     RETURN_TYPES = ("MODEL", "LATENT")
     CATEGORY = "Animate Diff"
@@ -322,7 +323,8 @@ class AnimateDiffLoaderAdvanced:
         model: ModelPatcher,
         latents: Dict[str, torch.Tensor],
         model_name: str, unlimited_area_hack: bool,
-        context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool
+        context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool,
+        beta_schedule: str,
     ):
         raise_if_not_checkpoint_sd1_5(model)
 
@@ -343,6 +345,7 @@ class AnimateDiffLoaderAdvanced:
             injection_params = InjectionParams.init_with_context(
                 video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
+                beta_schedule=beta_schedule,
                 context_frames=context_length,
                 context_stride=context_stride,
                 context_overlap=context_overlap,
@@ -360,6 +363,7 @@ class AnimateDiffLoaderAdvanced:
             injection_params = InjectionParams(
                 video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
+                beta_schedule=beta_schedule,
             )
 
         model = model.clone()
@@ -393,10 +397,10 @@ class AnimateDiffUnload:
     def INPUT_TYPES(s):
         return {"required": {"model": ("MODEL",)}}
 
-    @classmethod
-    def IS_CHANGED(s, model: ModelPatcher):
-        unet = model.model.diffusion_model
-        return calculate_model_hash(unet) in injected_model_hashs
+    # @classmethod
+    # def IS_CHANGED(s, model: ModelPatcher):
+    #     unet = model.model.diffusion_model
+    #     return calculate_model_hash(unet) in injected_model_hashs
 
     RETURN_TYPES = ("MODEL",)
     CATEGORY = "Animate Diff"
@@ -558,7 +562,7 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         return {
             "required": {
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
-                "beta_schedule": (BetaSchedules.ALIAS_LIST, )
+                "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.LINEAR), )
             },
         }
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
@@ -608,6 +612,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced)",
     "ADE_AnimateDiffUnload": "AnimateDiff Unload",
     "ADE_AnimateDiffCombine": "AnimateDiff Combine",
+    "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch)",
     # AnimateDiff-specific
     "ADE_AnimateDiffLoaderLegacy": "[DEPRECATED] AnimateDiff Loader Legacy",
     

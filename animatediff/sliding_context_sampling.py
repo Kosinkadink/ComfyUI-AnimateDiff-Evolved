@@ -17,26 +17,75 @@ from .logger import logger
 from .motion_module import ANIMATEDIFF_GLOBALSTATE as ADGS
 from .motion_module import is_mm_injected_into_model, get_mm_injected_params
 from .context import get_context_scheduler
-from .model_utils import wrap_function_to_inject_xformers_bug_info
+from .model_utils import BetaSchedules, wrap_function_to_inject_xformers_bug_info
 
 
 orig_sampling_function = comfy_samplers.sampling_function
+orig_KSampler_sample = comfy_samplers.KSampler.sample
 
 
+# Purpose of this injection is to support sliding context window
 def inject_sampling_function():
     comfy_samplers.sampling_function = sliding_sampling_function
-
 
 def eject_sampling_function():
     comfy_samplers.sampling_function = orig_sampling_function
 
 
+# Goal of this injection is to support changing beta schedulers
+def inject_KSampler_sample(beta_schedule_name: str):
+    comfy_samplers.KSampler.sample = KSampler_sample_factory(beta_schedule_name)
+
+def eject_KSampler_sample():
+    comfy_samplers.KSampler.sample = orig_KSampler_sample
+
+
+class BetaScheduleCache:
+    def __init__(self, model): 
+        self.betas = model.betas.clone().cpu()
+        self.linear_start = model.linear_start
+        self.linear_end = model.linear_end
+
+    def use_cached_beta_schedule_and_clean(self, model):
+        model.register_schedule(given_betas=self.betas.to(model.get_device()), linear_start=self.linear_start, linear_end=self.linear_end)
+        self.clean()
+
+    def clean(self):
+        self.betas = None
+        self.linear_start = None
+        self.linear_end = None
+
+
+def KSampler_sample_factory(beta_schedule_name: str):
+    def KSampler_sample_wrapper(*args, **kwargs):
+        try:
+            # get real_model from KSampler - self
+            self: comfy_samplers.KSampler = args[0]
+            # cache previous beta schedule
+            beta_cache = BetaScheduleCache(self.model)
+            # apply suggested beta schedule
+            #self.model.register_schedule(given_betas=None, beta_schedule=beta_schedule_name, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
+            # perform original function
+            return orig_KSampler_sample(*args, **kwargs)
+        finally:
+            pass
+            # reapply previous beta schedule
+            #beta_cache.use_cached_beta_schedule_and_clean(self.model)
+
+    return KSampler_sample_wrapper
+        
+
+
 def sliding_common_ksampler(model: ModelPatcher, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent, denoise=1.0, disable_noise=False, start_step=None, last_step=None, force_full_denoise=False):
     try:
+        beta_cache = None
         if is_mm_injected_into_model(model):
-            ADGS.update_with_inject_params(get_mm_injected_params(model))
+            params = get_mm_injected_params(model)
+            ADGS.update_with_inject_params(params)
             # inject sliding_sampling_function as sampling_function
             inject_sampling_function()
+            # register chosen beta schedule on model - convert to beta_schedule name recognized by ComfyUI
+            inject_KSampler_sample(BetaSchedules.to_name(params.beta_schedule))
 
         device = comfy.model_management.get_torch_device()
         latent_image = latent["samples"]
@@ -84,6 +133,11 @@ def sliding_common_ksampler(model: ModelPatcher, seed, steps, cfg, sampler_name,
     finally:
         # eject sliding_sampling_function from sampling_function
         eject_sampling_function()
+        # eject KSampler sample injection from KSampler sample function
+        eject_KSampler_sample
+        # return cached beta_scheduler settings to model
+        # if beta_cache is not None:
+        #     beta_cache.use_cached_beta_schedule_and_clean(model)
 
 
 # wrap it so we can throw more useful error if needed for xformers bug
@@ -437,6 +491,7 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
         if math.isclose(cond_scale, 1.0):
             uncond = None
 
+        timestep.to(x.get_device())
         if not ADGS.is_using_sliding_context():
             cond, uncond = calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, cond_concat, model_options)
         else:

@@ -4,17 +4,37 @@ from torch import Tensor, nn
 import math
 from einops import rearrange, repeat
 
-from comfy.ldm.modules.attention import FeedForward, CrossAttention
+from comfy.ldm.modules.attention import CrossAttentionBirchSan, CrossAttentionDoggettx, CrossAttentionPytorch, FeedForward, CrossAttention, MemoryEfficientCrossAttention
 from model_patcher import ModelPatcher
+import comfy.model_management as model_management
+
+from comfy.cli_args import args
+
+CrossAttentionMM = CrossAttention
+# until xformers bug is fixed, do not use xformers for VersatileAttention!
+# logic for choosing CrossAttention method taken from comfy/ldm/modules/attention.py
+if model_management.xformers_enabled():
+    pass
+    # CrossAttentionMM = MemoryEfficientCrossAttention
+if model_management.pytorch_attention_enabled():
+    CrossAttentionMM = CrossAttentionPytorch
+else:
+    if args.use_split_cross_attention:
+        CrossAttentionMM = CrossAttentionDoggettx
+    else:
+        CrossAttentionMM = CrossAttentionBirchSan
+
+
 
 ##################################################################################
 # Injection-related classes and functions
 MM_INJECTED_ATTR = "_mm_injected"
 
 class InjectionParams:
-    def __init__(self, video_length: int, unlimited_area_hack: bool) -> None:
+    def __init__(self, video_length: int, unlimited_area_hack: bool, beta_schedule: str) -> None:
         self.video_length = video_length
         self.unlimited_area_hack = unlimited_area_hack
+        self.beta_schedule = beta_schedule
         self.context_frames: int = None
         self.context_stride: int = None
         self.context_overlap: int = None
@@ -22,8 +42,8 @@ class InjectionParams:
         self.closed_loop: bool = False
     
     @classmethod
-    def init_with_context(cls, video_length: int, unlimited_area_hack: bool, context_frames: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool) -> 'InjectionParams':
-        params = InjectionParams(video_length=video_length, unlimited_area_hack=unlimited_area_hack)
+    def init_with_context(cls, video_length: int, unlimited_area_hack: bool, beta_schedule: str, context_frames: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool) -> 'InjectionParams':
+        params = InjectionParams(video_length=video_length, unlimited_area_hack=unlimited_area_hack, beta_schedule=beta_schedule)
         params.context_frames = context_frames
         params.context_stride = context_stride
         params.context_overlap = context_overlap
@@ -380,7 +400,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-class VersatileAttention(CrossAttention):
+class VersatileAttention(CrossAttentionMM):
     def __init__(
         self,
         attention_mode=None,
