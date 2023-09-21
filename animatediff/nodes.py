@@ -487,11 +487,14 @@ class AnimateDiffCombine:
         ) = folder_paths.get_save_image_path(filename_prefix, output_dir)
 
         metadata = PngInfo()
+        video_metadata = {}
         if prompt is not None:
             metadata.add_text("prompt", json.dumps(prompt))
+            video_metadata["prompt"] = prompt
         if extra_pnginfo is not None:
             for x in extra_pnginfo:
                 metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+                video_metadata[x] = extra_pnginfo[x]
 
         # save first frame as png to keep metadata
         file = f"{filename}_{counter:05}_.png"
@@ -533,7 +536,7 @@ class AnimateDiffCombine:
             dimensions = f"{frames[0].width}x{frames[0].height}"
             args = [ffmpeg_path, "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
                     "-s", dimensions, "-r", str(frame_rate), "-i", "-"] \
-                    + video_format['main_pass'] + [file_path]
+                    + video_format['main_pass'] + ["-metadata", "comment=" + json.dumps(video_metadata), file_path]
 
             env=os.environ.copy()
             if  "environment" in video_format:
