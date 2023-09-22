@@ -107,8 +107,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             return orig_comfy_sample(model, *args, **kwargs)
         # otherwise, injection time
         try:
-            # get params
-            params = get_injected_mm_params(model)
+            # get params - clone to keep from resetting values on cached model
+            params = get_injected_mm_params(model).clone()
             # get amount of latents passed in, and inject into model
             latents = args[-1]
             params.video_length = latents.size(0)
