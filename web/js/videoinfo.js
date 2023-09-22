@@ -13,32 +13,53 @@ function getVideoMetadata(file) {
             if (dataView.getUint32(0) == 0x1A45DFA3) {
                 //webm
                 //see http://wiki.webmproject.org/webm-metadata/global-metadata
-                //and maybe https://www.webmproject.org/docs/container/
-                console.log("parsing webm");
+                //and https://www.matroska.org/technical/elements.html
                 //contrary to specs, tag seems consistently at start
                 //COMMENT + 0x4487 + packed length?
-                //length 0x8d9 becomes 0x48d8
+                //length 0x8d8 becomes 0x48d8
+                //
+                //description for variable length ints https://github.com/ietf-wg-cellar/ebml-specification/blob/master/specification.markdown
                 let offset = 4 + 8; //COMMENT is 7 chars + 1 to realign
-                while(offset < videoData.length) {
+                while(offset < videoData.length-16) {
                     //Check for text tags
                     if (dataView.getUint16(offset) == 0x4487) {
                         //check that name of tag is COMMENT
                         const name = String.fromCharCode(...videoData.slice(offset-7,offset));
                         if (name === "COMMENT") {
-                            console.log("found comment");
-                            let length = dataView.getUint16(offset+2) & 0x3FFF;
-                            console.log(length);
-                            const content = String.fromCharCode(...videoData.slice(offset+4, offset+4+length));
-                            console.log(content);
-                            r(JSON.parse(content));
-                            return;
+                            let vint = dataView.getUint32(offset+2);
+                            let n_octets = Math.clz32(vint)+1;
+                            if (n_octets < 4) {//250MB sanity cutoff
+                                let length = (vint >> (8*(4-n_octets))) & ~(1 << (7*n_octets));
+                                const content = String.fromCharCode(...videoData.slice(offset+2+n_octets, offset+2+n_octets+length));
+                                const json = JSON.parse(content);
+                                r(json);
+                                return;
+                            }
                         }
                     }
-                    offset+=2;
+                    offset+=1;
                 }
             } else if (dataView.getUint32(4) == 0x66747970 && dataView.getUint32(8) == 0x69736F6D) {
                 //mp4
-                console.error("not yet implemented")
+                //see https://developer.apple.com/documentation/quicktime-file-format
+                //Seems to make no guarantee for alignment
+                let offset = videoData.length-4;
+                while (offset > 16) {//rough safe guess
+                    if (dataView.getUint32(offset) == 0x64617461) {//any data tag
+                        if (dataView.getUint32(offset - 8) == 0xa9636d74) {//cmt data tag
+                            let type = dataView.getUint32(offset+4); //seemingly 1
+                            let locale = dataView.getUint32(offset+8); //seemingly 0
+                            let size = dataView.getUint32(offset-4) - 4*4;
+                            const content = String.fromCharCode(...videoData.slice(offset+12, offset+12+size));
+                            const json = JSON.parse(content);
+                            console.log(json);
+                            r(json);
+                            return;
+                        }
+                    }
+
+                    offset-=1;
+                }
             } else {
                 console.error("Unknown magic: " + dataView.getUint32(0))
                 r();
@@ -62,13 +83,11 @@ function isVideoFile(file) {
 }
 
 async function handleFile(file) {
-    console.log("intercepted file call");
-    if (file.type.startsWith("video/") || isVideoFile(file)) {
-        console.log("got video");
+    if (file.type?.startsWith("video/") || isVideoFile(file)) {
         const videoInfo = await getVideoMetadata(file);
         if (videoInfo) {
             if (videoInfo.workflow) {
-                console.log("loading workflow");
+
                 app.loadGraphData(videoInfo.workflow);
             }
             //Potentially check for/parse A1111 metadata here.
@@ -80,7 +99,7 @@ async function handleFile(file) {
 }
 
 //Storing the original function in app is probably a major no-no
-//But it's the only way I've found to maintain keep the 'this' reference
+//But it's the only way I've found to keep the 'this' reference
 app.originalHandleFile = app.handleFile;
 app.handleFile = handleFile;
 //hijack comfy-file-input to allow webm/mp4
