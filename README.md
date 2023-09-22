@@ -51,7 +51,7 @@ Outputs:
 - MODEL: model injected to perform AnimateDiff functions
 
 ### Usage
-To use, just plug in your model into the AnimateDiff Loader. The output model (and any derivative of it in this pathway) is passed into a sampling node, AnimateDiff will function.
+To use, just plug in your model into the AnimateDiff Loader. When the output model (and any derivative of it in this pathway) is passed into a sampling node, AnimateDiff will do its thing.
 
 The desired animation length is determined by the latents passed into the sampler. **With context_options connected, there is no limit to the amount of latents you can pass in, AKA unlimited animation length.** When no context_options are connected, the sweetspot is 16 latents passed in for best results, with a limit of 24 or 32 based on motion model loaded. **These same rules apply to Uniform Context Option's context_length**.
 ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/08cc9da9-a21c-469b-8ed6-6153845f80b9)
@@ -66,16 +66,22 @@ TODO: fill this out
 
 ### txt2img
 
-![txt2image_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/16e5b590-1c49-4d3a-9ed1-dddb813506f7)
+![t2i_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/b2a86e3f-1eaf-4609-8c29-8226c32985fe)
 
-![AA_gif_00002_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/91933fb2-5b0b-4f41-a57a-ebebb604bd9d)
+![aaa_readme_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/adf2d591-85c4-4d84-9a6f-f7296b5b7f76)
+
+[aaa_readme_00003_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/974c77ea-47a2-422f-bea5-b080549fb17c)
 
 
-### txt2img - 48 frame animation with 16 frame window
 
-![txt2image_sliding_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/c0135530-1bd3-43b6-ba7a-f9e75eb65be3)
+### txt2img - 48 frame animation with 16 context_length (uniform)
 
-![txt2image_sliding](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/7d14075d-fbd1-48dc-81b3-2fa0ff68adc8)
+![t2i_context_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/8dd62a63-0907-4691-9964-37c2d5eb226f)
+
+![aaa_readme_00017_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/3033dc45-2876-4d14-9546-ab59a00d8ca9)
+
+[aaa_readme_00018_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9b3b5d7d-07da-4b5c-80bc-b3cd82475c71)
+
 
 
 ### txt2img w/ latent upscale (partial denoise on upscale)
