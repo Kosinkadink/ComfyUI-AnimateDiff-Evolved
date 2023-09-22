@@ -220,6 +220,20 @@ class InjectionParams:
         self.context_overlap = None
         self.context_schedule = None
         self.closed_loop = False
+    
+    def clone(self) -> 'InjectionParams':
+        new_params = InjectionParams(
+            self.video_length, self.unlimited_area_hack, 
+            self.beta_schedule, self.injector, self.model_name
+            )
+        new_params.version = self.version
+        new_params.set_context(
+            context_length=self.context_length, context_stride=self.context_stride,
+            context_overlap=self.context_overlap, context_schedule=self.context_schedule,
+            closed_loop=self.closed_loop
+            )
+        return new_params
+        
 
 # Injected Param Functions
 def is_injected_mm_params(model: ModelPatcher) -> bool:
