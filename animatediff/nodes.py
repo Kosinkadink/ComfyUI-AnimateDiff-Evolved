@@ -453,6 +453,28 @@ class AnimateDiffCombine:
     CATEGORY = "Animate Diff"
     FUNCTION = "generate_gif"
 
+    def save_with_tempfile(self, args, metadata, file_path, frames, env):
+        #Ensure temp directory exists
+        os.makedirs(folder_paths.get_temp_directory(), exist_ok=True)
+
+        metadata_path = os.path.join(folder_paths.get_temp_directory(), "metadata.txt")
+        #metadata from file should  escape = ; # \ and newline
+        #From my testing, though, only backslashes need escapes and = in particular causes problems
+        #It is likely better to prioritize future compatibility with containers that don't support
+        #or shouldn't use the comment tag for embedding metadata
+        metadata = metadata.replace("\\","\\\\")
+        metadata = metadata.replace(";","\\;")
+        metadata = metadata.replace("#","\\#")
+        #metadata = metadata.replace("=","\\=")
+        metadata = metadata.replace("\n","\\\n")
+        with open(metadata_path, "w") as f:
+            f.write(";FFMETADATA1\n")
+            f.write(metadata)
+        args = args[:1] + ["-i", metadata_path] + args[1:] + [file_path]
+        with subprocess.Popen(args, stdin=subprocess.PIPE, env=env) as proc:
+            for frame in frames:
+                proc.stdin.write(frame.tobytes())
+
     def generate_gif(
         self,
         images,
@@ -539,24 +561,39 @@ class AnimateDiffCombine:
                     "-s", dimensions, "-r", str(frame_rate), "-i", "-"] \
                     + video_format['main_pass']
             # On linux, max arg length is Pagesize * 32 -> 131072
-            # On windows, this around 32767 and includes ALL arguments
+            # On windows, this around 32767 but seems to vary wildly by > 500
+            # in a manor not solely related to other arguments
             if os.name == 'posix':
                 max_arg_length = 4096*32
             else:
-                max_arg_length = 32767 - len(" ".join(args + metadata_args[0] + [file_path])) - 1
+                max_arg_length = 32767 - len(" ".join(args + [metadata_args[0]] + [file_path])) - 1
             #test max limit
             #metadata_args[1] = metadata_args[1] + "a"*(max_arg_length - len(metadata_args[1])-1)
-            if len(metadata_args[1]) >= max_arg_length:
-                logger.warn(f"Metadata was too long to be embedded in video output: {len(metadata_args[1])}/{max_arg_length}")
-                metadata_args = []
-            args = args + metadata_args + [file_path]
 
             env=os.environ.copy()
             if  "environment" in video_format:
                 env.update(video_format["environment"])
-            with subprocess.Popen(args, stdin=subprocess.PIPE, env=env) as proc:
-                for frame in frames:
-                    proc.stdin.write(frame.tobytes())
+            if len(metadata_args[1]) >= max_arg_length:
+                logger.info(f"Using fallback file for extremely long metadata: {len(metadata_args[1])}/{max_arg_length}")
+                self.save_with_tempfile(args, metadata_args[1], file_path, frames, env)
+            else:
+                try:
+                    with subprocess.Popen(args + metadata_args + [file_path],
+                                          stdin=subprocess.PIPE, env=env) as proc:
+                        for frame in frames:
+                            proc.stdin.write(frame.tobytes())
+                except FileNotFoundError as e:
+                    if "winerror" in dir(e) and e.winerror == 206:
+                        logger.warn("Metadata was too long. Retrying with fallback file")
+                        self.save_with_tempfile(args, metadata_args[1], file_path, frames, env)
+                    else:
+                        raise
+                except OSError as e:
+                    if "errno" in dir(e) and e.errno == 7:
+                        logger.warn("Metadata was too long. Retrying with fallback file")
+                        self.save_with_tempfile(args, metadata_args[1], file_path, frames, env)
+                    else:
+                        raise
 
         previews = [
             {
