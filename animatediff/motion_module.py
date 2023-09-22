@@ -4,75 +4,260 @@ from torch import Tensor, nn
 import math
 from einops import rearrange, repeat
 
-from comfy.ldm.modules.attention import FeedForward, CrossAttention
-from model_patcher import ModelPatcher
+from comfy.ldm.modules.attention import CrossAttentionBirchSan, CrossAttentionDoggettx, CrossAttentionPytorch, FeedForward, CrossAttention, MemoryEfficientCrossAttention
+from ldm.modules.diffusionmodules import openaimodel
+import comfy.model_patcher as comfy_model_patcher
+from comfy.model_patcher import ModelPatcher
+import comfy.model_management as model_management
+from comfy.cli_args import args
+from comfy.utils import calculate_parameters, load_torch_file
 
+from .model_utils import Folders, calculate_file_hash, get_full_path, is_checkpoint_sd1_5
+from .logger import logger
+
+
+CrossAttentionMM = CrossAttention
+# until xformers bug is fixed, do not use xformers for VersatileAttention! TODO: change this when fix is out
+# logic for choosing CrossAttention method taken from comfy/ldm/modules/attention.py
+if model_management.xformers_enabled():
+    pass
+    # CrossAttentionMM = MemoryEfficientCrossAttention
+if model_management.pytorch_attention_enabled():
+    CrossAttentionMM = CrossAttentionPytorch
+else:
+    if args.use_split_cross_attention:
+        CrossAttentionMM = CrossAttentionDoggettx
+    else:
+        CrossAttentionMM = CrossAttentionBirchSan
+
+
+# inject into ModelPatcher.clone to carry over injected params over to cloned ModelPatcher
+orig_modelpatcher_clone = comfy_model_patcher.ModelPatcher.clone
+def clone_injection(self, *args, **kwargs):
+    model = orig_modelpatcher_clone(self, *args, **kwargs)
+    if is_checkpoint_sd1_5(model) and is_injected_mm_params(self):
+         set_injected_mm_params(model, get_injected_mm_params(self))
+    return model
+comfy_model_patcher.ModelPatcher.clone = clone_injection
+
+
+# cache loaded motion modules
+motion_modules: dict[str, 'MotionWrapper'] = {}
+
+
+def load_motion_module(model_name: str):
+    # if already loaded, return it
+    model_path = get_full_path(Folders.MODELS, model_name)
+    model_hash = calculate_file_hash(model_path)
+
+    if model_hash in motion_modules:
+        return motion_modules[model_hash]
+
+    logger.info(f"Loading motion module {model_name}")
+    mm_state_dict = load_torch_file(model_path)
+    motion_module = MotionWrapper(mm_state_dict=mm_state_dict, mm_name=model_name)
+
+    parameters = calculate_parameters(mm_state_dict, "")
+    usefp16 = model_management.should_use_fp16(model_params=parameters)
+    if usefp16:
+        logger.info("Using fp16, converting motion module to fp16")
+        motion_module.half()
+    offload_device = model_management.unet_offload_device()
+    motion_module = motion_module.to(offload_device)
+    motion_module.load_state_dict(mm_state_dict)
+
+    # add to motion_module cache
+    motion_modules[model_hash] = motion_module
+    return motion_module
+
+
+##################################################################################
 ##################################################################################
 # Injection-related classes and functions
-MM_INJECTED_ATTR = "_mm_injected"
+def inject_params_into_model(model: ModelPatcher, params: 'InjectionParams') -> ModelPatcher:
+    model = model.clone()
+    # clean unet, if necessary
+    clean_contained_unet(model)
+    set_injected_mm_params(model, params)
+    return model
+
+
+def eject_params_from_model(model: ModelPatcher) -> ModelPatcher:
+    model = model.clone()
+    # clean unet, if necessary
+    clean_contained_unet(model)
+    del_injected_mm_params(model)
+    return model
+    
+
+def inject_motion_module(model: ModelPatcher, motion_module: 'MotionWrapper', params: 'InjectionParams'):
+    if params.context_length and params.video_length > params.context_length:
+        logger.info(f"Sliding context window activated - latents passed in ({params.video_length}) greater than context_length {params.context_length}.")
+    else:
+        logger.info(f"Regular AnimateDiff activated - latents passed in ({params.video_length}) less or equal to context_length {params.context_length}.")
+        params.reset_context()
+    # if no context_length, treat video length as intended AD frame window
+    if not params.context_length:
+        if params.video_length > motion_module.encoding_max_len:
+            raise ValueError(f"Without a context window, AnimateDiff model {motion_module.mm_name} has upper limit of {motion_module.encoding_max_len} frames, but received {params.video_length} latents.")
+        motion_module.set_video_length(params.video_length)
+    # otherwise, treat context_length as intended AD frame window
+    else:
+        if params.context_length > motion_module.encoding_max_len:
+            raise ValueError(f"AnimateDiff model {motion_module.mm_name} has upper limit of {motion_module.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
+        motion_module.set_video_length(params.context_length)
+    # inject model
+    params.set_version(motion_module)
+    logger.info(f"Injecting motion module {motion_module.mm_name} version {motion_module.version}.")
+    injectors[params.injector](model, motion_module)
+
+
+def eject_motion_module(model: ModelPatcher):
+    try:
+        # handle injected params
+        if is_injected_mm_params(model):
+            params = get_injected_mm_params(model)
+            logger.info(f"Ejecting motion module {params.model_name} version {params.version}.")
+        else:
+            logger.info(f"Motion module not injected, skip unloading.")
+        # clean unet, just in case
+    finally:
+        clean_contained_unet(model)
+
+
+def clean_contained_unet(model: ModelPatcher):
+    if is_injected_unet_version(model):
+        logger.info("Cleaning motion module from unet.")
+        injector = get_injected_unet_version(model)
+        ejectors[injector](model)
+
+
+def _inject_motion_module_to_unet(model: ModelPatcher, motion_module: 'MotionWrapper'):
+    unet: openaimodel.UNetModel = model.model.diffusion_model
+    for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
+        mm_idx0, mm_idx1 = mm_idx // 2, mm_idx % 2
+        unet.input_blocks[unet_idx].append(
+            motion_module.down_blocks[mm_idx0].motion_modules[mm_idx1]
+        )
+
+    for unet_idx in range(12):
+        mm_idx0, mm_idx1 = unet_idx // 3, unet_idx % 3
+        if unet_idx % 3 == 2 and unet_idx != 11:
+            unet.output_blocks[unet_idx].insert(
+                -1, motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
+            )
+        else:
+            unet.output_blocks[unet_idx].append(
+                motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
+            )
+
+    if motion_module.mid_block is not None:
+        unet.middle_block.insert(-1, motion_module.mid_block.motion_modules[0]) # only 1 VanillaTemporalModule
+    # keep track of if unet blocks actually affected
+    set_injected_unet_version(model, InjectorVersion.V1_V2)
+
+
+def _eject_motion_module_from_unet(model: ModelPatcher):
+    unet: openaimodel.UNetModel = model.model.diffusion_model
+    for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
+        unet.input_blocks[unet_idx].pop(-1)
+
+    for unet_idx in range(12):
+        if unet_idx % 3 == 2 and unet_idx != 11:
+            unet.output_blocks[unet_idx].pop(-2)
+        else:
+            unet.output_blocks[unet_idx].pop(-1)
+    
+    if len(unet.middle_block) > 3: # SD1.5 UNet has 3 expected middle_blocks - more means injected
+        unet.middle_block.pop(-2)
+    # remove attr; ejected
+    del_injected_unet_version(model)
+
+
+class InjectorVersion:
+    V1_V2 = "v1/v2"
+
+
+injectors = {
+    InjectorVersion.V1_V2: _inject_motion_module_to_unet,
+}
+
+ejectors = {
+    InjectorVersion.V1_V2: _eject_motion_module_from_unet,
+}
+
+
+MM_INJECTED_ATTR = "_mm_injected_params"
+MM_UNET_INJECTION_ATTR = "_mm_is_unet_injected"
 
 class InjectionParams:
-    def __init__(self, video_length: int, unlimited_area_hack: bool) -> None:
+    def __init__(self, video_length: int, unlimited_area_hack: bool, beta_schedule: str, injector: str, model_name: str) -> None:
         self.video_length = video_length
         self.unlimited_area_hack = unlimited_area_hack
-        self.context_frames: int = None
+        self.beta_schedule = beta_schedule
+        self.injector = injector
+        self.model_name = model_name
+        self.context_length: int = None
         self.context_stride: int = None
         self.context_overlap: int = None
         self.context_schedule: str = None
         self.closed_loop: bool = False
+        self.version: str = None
     
-    @classmethod
-    def init_with_context(cls, video_length: int, unlimited_area_hack: bool, context_frames: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool) -> 'InjectionParams':
-        params = InjectionParams(video_length=video_length, unlimited_area_hack=unlimited_area_hack)
-        params.context_frames = context_frames
-        params.context_stride = context_stride
-        params.context_overlap = context_overlap
-        params.context_schedule = context_schedule
-        params.closed_loop = closed_loop
-        return params
+    def set_version(self, motion_module: 'MotionWrapper'):
+        self.version = motion_module.version
+
+    def set_context(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool):
+        self.context_length = context_length
+        self.context_stride = context_stride
+        self.context_overlap = context_overlap
+        self.context_schedule = context_schedule
+        self.closed_loop = closed_loop
+    
+    def reset_context(self):
+        self.context_length = None
+        self.context_stride = None
+        self.context_overlap = None
+        self.context_schedule = None
+        self.closed_loop = False
+
+# Injected Param Functions
+def is_injected_mm_params(model: ModelPatcher) -> bool:
+    return hasattr(model, MM_INJECTED_ATTR)
+
+def get_injected_mm_params(model: ModelPatcher) -> InjectionParams:
+    if is_injected_mm_params(model):
+        return getattr(model, MM_INJECTED_ATTR)
+    return None
+
+def set_injected_mm_params(model: ModelPatcher, injection_params: InjectionParams):
+    setattr(model, MM_INJECTED_ATTR, injection_params)
+
+def del_injected_mm_params(model: ModelPatcher):
+    if is_injected_mm_params(model):
+        delattr(model, MM_INJECTED_ATTR)
+    
+# Injected Unet Functions
+def is_injected_unet_version(model: ModelPatcher) -> bool:
+    if is_checkpoint_sd1_5(model):
+        return hasattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR)
+
+def get_injected_unet_version(model: ModelPatcher) -> str:
+    if is_checkpoint_sd1_5(model):
+        if is_injected_unet_version(model):
+            return getattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR) 
+
+def set_injected_unet_version(model: ModelPatcher, value: str):
+    if is_checkpoint_sd1_5(model):
+        setattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR, value)
+
+def del_injected_unet_version(model: ModelPatcher):
+    if is_checkpoint_sd1_5(model):
+        if is_injected_unet_version(model):
+            delattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR)
 
 
-def is_mm_injected_into_model(model: ModelPatcher):
-    return hasattr(model.model.diffusion_model, MM_INJECTED_ATTR)
-
-def get_mm_injected_params(model: ModelPatcher) -> InjectionParams:
-    return getattr(model.model.diffusion_model, MM_INJECTED_ATTR)
-
-def set_mm_injected_params(model: ModelPatcher, injection_params: InjectionParams):
-    setattr(model.model.diffusion_model, MM_INJECTED_ATTR, injection_params)
 ##################################################################################
-
-
-##################################################################################
-# Global variable to use to more conveniently hack variable access into samplers
-class AnimateDiffHelper_GlobalState:
-    def __init__(self):
-        self.reset()
-    
-    def reset(self):
-        self.start_step: int = 0
-        self.last_step: int = 0
-        self.current_step: int = 0
-        self.total_steps: int = 0
-        self.video_length: int  = 0
-        self.context_frames: int = None
-        self.context_stride: int = None
-        self.context_overlap: int = None
-        self.context_schedule: str = None
-        self.closed_loop: bool = False
-    
-    def update_with_inject_params(self, params: InjectionParams):
-        self.video_length = params.video_length
-        self.context_frames = params.context_frames
-        self.context_stride = params.context_stride
-        self.context_overlap = params.context_overlap
-        self.context_schedule = params.context_schedule
-        self.closed_loop = params.closed_loop
-
-    def is_using_sliding_context(self):
-        return self.context_frames is not None
-
-ANIMATEDIFF_GLOBALSTATE = AnimateDiffHelper_GlobalState()
 ##################################################################################
 
 
@@ -106,22 +291,24 @@ def has_mid_block(mm_state_dict: dict[str, Tensor]):
 
 
 class MotionWrapper(nn.Module):
-    def __init__(self, mm_state_dict: dict[str, Tensor], mm_type: str="mm_sd_v15.ckpt"):
+    def __init__(self, mm_state_dict: dict[str, Tensor], mm_name: str="mm_sd_v15.ckpt"):
         super().__init__()
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
         self.mid_block = None
-        self.encoding_max_len = get_temporal_position_encoding_max_len(mm_state_dict, mm_type)
+        self.encoding_max_len = get_temporal_position_encoding_max_len(mm_state_dict, mm_name)
         for c in (320, 640, 1280, 1280):
             self.down_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.DOWN))
         for c in (1280, 1280, 640, 320):
             self.up_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.UP))
         if has_mid_block(mm_state_dict):
             self.mid_block = MotionModule(1280, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.MID)
-        self.mm_type = mm_type
+        self.mm_name = mm_name
         self.version = "v1" if self.mid_block is None else "v2"
+        self.AD_video_length: int = 24
     
     def set_video_length(self, video_length: int):
+        self.AD_video_length = video_length
         for block in self.down_blocks:
             block.set_video_length(video_length)
         for block in self.up_blocks:
@@ -380,7 +567,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-class VersatileAttention(CrossAttention):
+class VersatileAttention(CrossAttentionMM):
     def __init__(
         self,
         attention_mode=None,

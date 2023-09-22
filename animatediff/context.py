@@ -4,12 +4,34 @@ from typing import Callable, Optional
 import numpy as np
 
 
+class ContextType:
+    UNIFORM_WINDOW = "uniform window"
+
+
+class ContextOptions:
+    CONTEXT_TYPE = None
+
+    def __init__(self):
+        pass
+
+
+class UniformContextOptions(ContextOptions):
+    CONTEXT_TYPE = ContextType.UNIFORM_WINDOW
+
+    def __init__(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool):
+        self.context_length = context_length
+        self.context_stride = context_stride
+        self.context_overlap = context_overlap
+        self.context_schedule = context_schedule
+        self.closed_loop = closed_loop
+
+
 class ContextSchedules:
     UNIFORM = "uniform"
     UNIFORM_CONSTANT = "uniform_constant"
     UNIFORM_V2 = "uniform v2"
 
-    CONTEXT_SCHEDULE_LIST = [UNIFORM, UNIFORM_V2]
+    CONTEXT_SCHEDULE_LIST = [UNIFORM] # only include somewhat functional contexts here
 
 
 # Returns fraction that has denominator that is a power of 2
@@ -140,19 +162,22 @@ def uniform_constant(
                 continue
             # yield if not skipped
             yield to_yield
-    
 
 
+# This needs to stay here below the context functions
+UNIFORM_CONTEXT_MAPPING = {
+    ContextSchedules.UNIFORM: uniform,
+    ContextSchedules.UNIFORM_CONSTANT: uniform_constant,
+    ContextSchedules.UNIFORM_V2: uniform_v2,
+}
+
+
+# TODO: expand to support other context window types (future feature)
 def get_context_scheduler(name: str) -> Callable:
-    match name:
-        case ContextSchedules.UNIFORM:
-            return uniform
-        case ContextSchedules.UNIFORM_CONSTANT:
-            return uniform_constant
-        case ContextSchedules.UNIFORM_V2:
-            return uniform_v2
-        case _:
-            raise ValueError(f"Unknown context_overlap policy {name}")
+    context_func = UNIFORM_CONTEXT_MAPPING.get(name, None)
+    if not context_func:
+        raise ValueError(f"Unknown context_overlap policy {name}")
+    return context_func
 
 
 def get_total_steps(
