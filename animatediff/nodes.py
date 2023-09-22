@@ -39,7 +39,6 @@ class AnimateDiffLoaderWithContext:
         return {
             "required": {
                 "model": ("MODEL",),
-                "latents": ("LATENT",),
                 "model_name": (get_available_motion_models(),),
                 "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
             },
@@ -48,25 +47,22 @@ class AnimateDiffLoaderWithContext:
             }
         }
     
-    RETURN_TYPES = ("MODEL", "LATENT")
+    RETURN_TYPES = ("MODEL",)
     CATEGORY = "Animate Diff"
     FUNCTION = "load_mm_and_inject_params"
 
 
     def load_mm_and_inject_params(self,
         model: ModelPatcher,
-        latents: Dict[str, torch.Tensor],
         model_name: str, beta_schedule: str,
         context_options: ContextOptions=None,
     ):
         raise_if_not_checkpoint_sd1_5(model)
         # load motion module
         load_motion_module(model_name)
-        # get total frames
-        init_frames_len = len(latents["samples"])
         # set injection params
         injection_params = InjectionParams(
-                video_length=init_frames_len,
+                video_length=None,
                 unlimited_area_hack=False,
                 beta_schedule=beta_schedule,
                 injector=InjectorVersion.V1_V2,
@@ -85,7 +81,7 @@ class AnimateDiffLoaderWithContext:
         # inject for use in sampling code
         model = inject_params_into_model(model, injection_params)
 
-        return (model, latents)
+        return (model,)
 
 
 class AnimateDiffUniformContextOptions:

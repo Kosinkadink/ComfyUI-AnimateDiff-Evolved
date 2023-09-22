@@ -18,7 +18,7 @@ import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
 
 from .logger import logger
-from .motion_module import InjectionParams, VanillaTemporalModule, eject_motion_module, inject_motion_module, load_motion_module
+from .motion_module import InjectionParams, VanillaTemporalModule, eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
 from .context import get_context_scheduler
 from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
@@ -107,7 +107,12 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             return orig_comfy_sample(model, *args, **kwargs)
         # otherwise, injection time
         try:
-            model = model.clone()
+            # get params
+            params = get_injected_mm_params(model)
+            # get amount of latents passed in, and inject into model
+            latents = args[-1]
+            params.video_length = latents.size(0)
+            model = inject_params_into_model(model, params)
             # reset global state
             ADGS.reset()
             ##############################################
@@ -120,8 +125,6 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_beta_cache = BetaScheduleCache(model)
             ##############################################
 
-            # get params
-            params = get_injected_mm_params(model)
 
             ##############################################
             # Inject Functions
