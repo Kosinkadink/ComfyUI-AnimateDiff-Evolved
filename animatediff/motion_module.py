@@ -159,11 +159,9 @@ def _inject_motion_module_to_unet(model: ModelPatcher, motion_module: 'MotionWra
 
 def _eject_motion_module_from_unet(model: ModelPatcher):
     unet: openaimodel.UNetModel = model.model.diffusion_model
-    logger.info(f"Ejecting motion module from UNet input blocks.")
     for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
         unet.input_blocks[unet_idx].pop(-1)
 
-    logger.info(f"Ejecting motion module from UNet output blocks.")
     for unet_idx in range(12):
         if unet_idx % 3 == 2 and unet_idx != 11:
             unet.output_blocks[unet_idx].pop(-2)
@@ -171,7 +169,6 @@ def _eject_motion_module_from_unet(model: ModelPatcher):
             unet.output_blocks[unet_idx].pop(-1)
     
     if len(unet.middle_block) > 3: # SD1.5 UNet has 3 expected middle_blocks - more means injected
-        logger.info(f"Ejecting motion module from UNet middle blocks.")
         unet.middle_block.pop(-2)
     # remove attr; ejected
     del_injected_unet_version(model)

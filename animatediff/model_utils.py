@@ -60,7 +60,7 @@ class BetaScheduleCache:
         self.linear_end = model.model.linear_end
 
     def use_cached_beta_schedule_and_clean(self, model: ModelPatcher):
-        model.model.register_schedule(given_betas=self.betas, linear_start=self.linear_start, linear_end=self.linear_end)
+        model.model.register_schedule(given_betas=self.betas.clone().detach(), linear_start=self.linear_start, linear_end=self.linear_end)
         self.clean()
 
     def clean(self):
@@ -85,30 +85,30 @@ folder_names_and_paths[Folders.MODELS] = ([MODEL_DIR], folder_paths.supported_pt
 
 filename_list_cache = {}
 
-# Load config settings
-ADE_DIR = Path(__file__).parent.parent
-ADE_CONFIG_FILE = ADE_DIR / "ade_config.json"
+# TODO: possibly add configuration file in future when needed?
+# # Load config settings
+# ADE_DIR = Path(__file__).parent.parent
+# ADE_CONFIG_FILE = ADE_DIR / "ade_config.json"
 
-class ADE_Settings:
-    USE_XFORMERS_IN_VERSATILE_ATTENTION = "use_xformers_in_VersatileAttention"
+# class ADE_Settings:
+#     USE_XFORMERS_IN_VERSATILE_ATTENTION = "use_xformers_in_VersatileAttention"
 
-# Create ADE config if not present
-ABS_CONFIG = {
-    ADE_Settings.USE_XFORMERS_IN_VERSATILE_ATTENTION: True
-}
-if not ADE_CONFIG_FILE.exists():
-    with ADE_CONFIG_FILE.open("w") as f:
-        json.dumps(ABS_CONFIG, indent=4)
-# otherwise, load it and use values
-else:
-    loaded_values: dict = None
-    with ADE_CONFIG_FILE.open("r") as f:
-        loaded_values = json.load(f)
-    if loaded_values is not None:
-        for key, value in loaded_values.items():
-            if key in ABS_CONFIG:
-                ABS_CONFIG[key] = value
-        
+# # Create ADE config if not present
+# ABS_CONFIG = {
+#     ADE_Settings.USE_XFORMERS_IN_VERSATILE_ATTENTION: True
+# }
+# if not ADE_CONFIG_FILE.exists():
+#     with ADE_CONFIG_FILE.open("w") as f:
+#         json.dumps(ABS_CONFIG, indent=4)
+# # otherwise, load it and use values
+# else:
+#     loaded_values: dict = None
+#     with ADE_CONFIG_FILE.open("r") as f:
+#         loaded_values = json.load(f)
+#     if loaded_values is not None:
+#         for key, value in loaded_values.items():
+#             if key in ABS_CONFIG:
+#                 ABS_CONFIG[key] = value
 
 
 #Register video_formats folder
@@ -219,7 +219,7 @@ def is_checkpoint_sd1_5(model: ModelPatcher):
 
 def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
     if not is_checkpoint_sd1_5(model):
-        raise ValueError(f"For AnimateDiff, SD Checkpoint (model) is expected to be SD1.5-based (BaseModel), but was: {model_type.__name__}")
+        raise ValueError(f"For AnimateDiff, SD Checkpoint (model) is expected to be SD1.5-based (BaseModel), but was: {type(model.model).__name__}")
 
 
 # TODO: remove this filth when xformers bug gets fixed in future xformers version
@@ -232,9 +232,8 @@ def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Cal
                 return function_to_wrap(*args, **kwargs)
             except RuntimeError as e:
                 if str(e).startswith("CUDA error: invalid configuration argument"):
-                    raise RuntimeError(f"An xformers bug was encountered in AnimateDiff - to run your workflow, \
-                                       disable xformers for AD only by going to '{ADE_CONFIG_FILE}', and set \
-                                        '{ADE_Settings.USE_XFORMERS_IN_VERSATILE_ATTENTION}' to false. Reboot ComfyUI, \
-                                            and then AD will use the next-best available attention method.")
+                    raise RuntimeError(f"An xformers bug was encountered in AnimateDiff - this is unexpected, \
+                                       report this to Kosinkadink/ComfyUI-AnimateDiff-Evolved repo as an issue, \
+                                       and a workaround for now is to run ComfyUI with the --disable-xformers argument.")
                 raise
         return wrapped_function
