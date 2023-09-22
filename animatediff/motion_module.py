@@ -252,12 +252,12 @@ def get_injected_unet_version(model: ModelPatcher) -> str:
 
 def set_injected_unet_version(model: ModelPatcher, value: str):
     if is_checkpoint_sd1_5(model):
-        setattr(model, MM_UNET_INJECTION_ATTR, value)
+        setattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR, value)
 
 def del_injected_unet_version(model: ModelPatcher):
     if is_checkpoint_sd1_5(model):
         if is_injected_unet_version(model):
-            delattr(model, MM_UNET_INJECTION_ATTR)
+            delattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR)
 
 
 ##################################################################################
