@@ -1,147 +1,175 @@
+import sys
+from typing import Callable
 import torch
 from torch import Tensor
 import math
+from einops import rearrange
+from torch.nn.functional import group_norm
 
-import comfy.utils
-import comfy.sample
-import comfy.samplers
 from comfy.samplers import lcm
 import comfy.samplers as comfy_samplers
 import comfy.model_management as model_management
 from controlnet import ControlBase
-import latent_preview
 
 from model_patcher import ModelPatcher
 
+from comfy.ldm.modules.attention import SpatialTransformer
+import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
+import comfy.model_management as model_management
+
 from .logger import logger
-from .motion_module import ANIMATEDIFF_GLOBALSTATE as ADGS
-from .motion_module import is_mm_injected_into_model, get_mm_injected_params
+from .motion_module import InjectionParams, VanillaTemporalModule, eject_motion_module, inject_motion_module, load_motion_module
+from .motion_module import is_injected_mm_params, get_injected_mm_params
 from .context import get_context_scheduler
-from .model_utils import BetaSchedules, wrap_function_to_inject_xformers_bug_info
+from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
 
 
-orig_sampling_function = comfy_samplers.sampling_function
-orig_KSampler_sample = comfy_samplers.KSampler.sample
+##################################################################################
+######################################################################
+# Global variable to use to more conveniently hack variable access into samplers
+class AnimateDiffHelper_GlobalState:
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        self.start_step: int = 0
+        self.last_step: int = 0
+        self.current_step: int = 0
+        self.total_steps: int = 0
+        self.video_length: int  = 0
+        self.context_frames: int = None
+        self.context_stride: int = None
+        self.context_overlap: int = None
+        self.context_schedule: str = None
+        self.closed_loop: bool = False
+    
+    def update_with_inject_params(self, params: InjectionParams):
+        self.video_length = params.video_length
+        self.context_frames = params.context_length
+        self.context_stride = params.context_stride
+        self.context_overlap = params.context_overlap
+        self.context_schedule = params.context_schedule
+        self.closed_loop = params.closed_loop
+
+    def is_using_sliding_context(self):
+        return self.context_frames is not None
+
+ADGS = AnimateDiffHelper_GlobalState()
+######################################################################
+##################################################################################
 
 
-# Purpose of this injection is to support sliding context window
-def inject_sampling_function():
-    comfy_samplers.sampling_function = sliding_sampling_function
-
-def eject_sampling_function():
-    comfy_samplers.sampling_function = orig_sampling_function
-
-
-# Goal of this injection is to support changing beta schedulers
-def inject_KSampler_sample(beta_schedule_name: str):
-    comfy_samplers.KSampler.sample = KSampler_sample_factory(beta_schedule_name)
-
-def eject_KSampler_sample():
-    comfy_samplers.KSampler.sample = orig_KSampler_sample
-
-
-class BetaScheduleCache:
-    def __init__(self, model): 
-        self.betas = model.betas.clone().cpu()
-        self.linear_start = model.linear_start
-        self.linear_end = model.linear_end
-
-    def use_cached_beta_schedule_and_clean(self, model):
-        model.register_schedule(given_betas=self.betas.to(model.get_device()), linear_start=self.linear_start, linear_end=self.linear_end)
-        self.clean()
-
-    def clean(self):
-        self.betas = None
-        self.linear_start = None
-        self.linear_end = None
-
-
-def KSampler_sample_factory(beta_schedule_name: str):
-    def KSampler_sample_wrapper(*args, **kwargs):
-        try:
-            # get real_model from KSampler - self
-            self: comfy_samplers.KSampler = args[0]
-            # cache previous beta schedule
-            beta_cache = BetaScheduleCache(self.model)
-            # apply suggested beta schedule
-            #self.model.register_schedule(given_betas=None, beta_schedule=beta_schedule_name, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
-            # perform original function
-            return orig_KSampler_sample(*args, **kwargs)
-        finally:
-            pass
-            # reapply previous beta schedule
-            #beta_cache.use_cached_beta_schedule_and_clean(self.model)
-
-    return KSampler_sample_wrapper
-        
-
-
-def sliding_common_ksampler(model: ModelPatcher, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent, denoise=1.0, disable_noise=False, start_step=None, last_step=None, force_full_denoise=False):
-    try:
-        beta_cache = None
-        if is_mm_injected_into_model(model):
-            params = get_mm_injected_params(model)
-            ADGS.update_with_inject_params(params)
-            # inject sliding_sampling_function as sampling_function
-            inject_sampling_function()
-            # register chosen beta schedule on model - convert to beta_schedule name recognized by ComfyUI
-            inject_KSampler_sample(BetaSchedules.to_name(params.beta_schedule))
-
-        device = comfy.model_management.get_torch_device()
-        latent_image = latent["samples"]
-
-        if disable_noise:
-            noise = torch.zeros(latent_image.size(), dtype=latent_image.dtype, layout=latent_image.layout, device="cpu")
+##################################################################################
+#### Code Injection ##################################################
+def forward_timestep_embed(
+    ts, x, emb, context=None, transformer_options={}, output_shape=None
+):
+    for layer in ts:
+        if isinstance(layer, openaimodel.TimestepBlock):
+            x = layer(x, emb)
+        elif isinstance(layer, VanillaTemporalModule):
+            x = layer(x, context)
+        elif isinstance(layer, SpatialTransformer):
+            x = layer(x, context, transformer_options)
+            transformer_options["current_index"] += 1
+        elif isinstance(layer, openaimodel.Upsample):
+            x = layer(x, output_shape=output_shape)
         else:
-            batch_inds = latent["batch_index"] if "batch_index" in latent else None
-            noise = comfy.sample.prepare_noise(latent_image, seed, batch_inds)
+            x = layer(x)
+    return x
 
-        noise_mask = None
-        if "noise_mask" in latent:
-            noise_mask = latent["noise_mask"]
-
-        preview_format = "JPEG"
-        if preview_format not in ["JPEG", "PNG"]:
-            preview_format = "JPEG"
-
-        previewer = latent_preview.get_previewer(device, model.model.latent_format)
-
-        # TODO: make steps reported in progress bar conform to total contexts evaluated?
-
-        # update GLOBALSTATE
-        if start_step is not None:
-            ADGS.start_step = start_step
-            ADGS.current_step = start_step
-        if last_step is not None:
-            ADGS.last_step = last_step
-
-        pbar = comfy.utils.ProgressBar(steps)
-        def callback(step, x0, x, total_steps):
-            preview_bytes = None
-            if previewer:
-                preview_bytes = previewer.decode_latent_to_preview_image(preview_format, x0)
-            pbar.update_absolute(step + 1, total_steps, preview_bytes)
-            # update GLOBALSTATE for next iteration
-            ADGS.current_step = ADGS.start_step + step + 1
-
-        samples = comfy.sample.sample(model, noise, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
-                                    denoise=denoise, disable_noise=disable_noise, start_step=start_step, last_step=last_step,
-                                    force_full_denoise=force_full_denoise, noise_mask=noise_mask, callback=callback, seed=seed)
-        out = latent.copy()
-        out["samples"] = samples
-        return (out, )
-    finally:
-        # eject sliding_sampling_function from sampling_function
-        eject_sampling_function()
-        # eject KSampler sample injection from KSampler sample function
-        eject_KSampler_sample
-        # return cached beta_scheduler settings to model
-        # if beta_cache is not None:
-        #     beta_cache.use_cached_beta_schedule_and_clean(model)
+def unlimited_batch_area():
+    return int(sys.maxsize)
 
 
-# wrap it so we can throw more useful error if needed for xformers bug
-sliding_common_ksampler = wrap_function_to_inject_xformers_bug_info(sliding_common_ksampler)
+def groupnorm_mm_factory(params: InjectionParams):
+    def groupnorm_mm_forward(self, input: Tensor) -> Tensor:
+        # axes_factor normalizes batch based on total conds and unconds passed in batch;
+        # the conds and unconds per batch can change based on VRAM optimizations that may kick in
+        if not ADGS.is_using_sliding_context():
+            axes_factor = input.size(0)//params.video_length
+        else:
+            axes_factor = input.size(0)//params.context_length
+
+        input = rearrange(input, "(b f) c h w -> b c f h w", b=axes_factor)
+        input = group_norm(input, self.num_groups, self.weight, self.bias, self.eps)
+        input = rearrange(input, "b c f h w -> (b f) c h w", b=axes_factor)
+        return input
+    return groupnorm_mm_forward
+######################################################################
+##################################################################################
+
+
+def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
+    def animatediff_sample(model: ModelPatcher, *args, **kwargs):
+        # check if model has params - if not, no need to do anything
+        if not is_injected_mm_params(model):
+            return orig_comfy_sample(model, *args, **kwargs)
+        # otherwise, injection time
+        try:
+            # reset global state
+            ADGS.reset()
+            ##############################################
+            # Save Original Functions
+            orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
+            orig_maximum_batch_area = model_management.maximum_batch_area # allows for "unlimited area hack" to prevent halving of conds/unconds
+            orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
+            orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
+            # save original beta schedule settings
+            #orig_beta_cache = BetaScheduleCache(model)
+            ##############################################
+
+            # get params
+            params = get_injected_mm_params(model)
+
+            ##############################################
+            # Inject Functions
+            openaimodel.forward_timestep_embed = forward_timestep_embed
+            if params.unlimited_area_hack:
+                model_management.maximum_batch_area = unlimited_batch_area
+            torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
+            comfy_samplers.sampling_function = sliding_sampling_function
+            ##############################################
+
+            # try to load motion module
+            motion_module = load_motion_module(params.model_name)
+            # inject motion module into unet
+            inject_motion_module(model=model, motion_module=motion_module, params=params)
+
+            # apply suggested beta schedule
+            beta_schedule = BetaSchedules.to_name(params.beta_schedule)
+            #model.model.register_schedule(given_betas=None, beta_schedule=beta_schedule, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
+
+            # handle GLOBALSTATE vars and step tally
+            ADGS.update_with_inject_params(params)
+            ADGS.start_step = kwargs.get("start_step") or 0
+            ADGS.current_step = ADGS.start_step
+            ADGS.last_step = kwargs.get("last_step") or 0
+
+            original_callback = kwargs.get("callback", None)
+            def ad_callback(step, x0, x, total_steps):
+                if original_callback is not None:
+                    original_callback(step, x0, x, total_steps)
+                # update GLOBALSTATE for next iteration
+                ADGS.current_step = ADGS.start_step + step + 1
+            kwargs["callback"] = ad_callback
+
+            return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, *args, **kwargs)
+        finally:
+            # attempt to eject motion module
+            eject_motion_module(model=model)
+            ##############################################
+            # Restoration
+            model_management.maximum_batch_area = orig_maximum_batch_area
+            openaimodel.forward_timestep_embed = orig_forward_timestep_embed
+            torch.nn.GroupNorm.forward = orig_groupnorm_forward
+            comfy_samplers.sampling_function = orig_sampling_function
+            # reapply previous beta schedule
+            #orig_beta_cache.use_cached_beta_schedule_and_clean(model)
+            # reset global state
+            ADGS.reset()
+            ##############################################
+    return animatediff_sample
 
 
 def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_scale, cond_concat=None, model_options={}, seed=None):
@@ -491,7 +519,6 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
         if math.isclose(cond_scale, 1.0):
             uncond = None
 
-        timestep.to(x.get_device())
         if not ADGS.is_using_sliding_context():
             cond, uncond = calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, cond_concat, model_options)
         else:

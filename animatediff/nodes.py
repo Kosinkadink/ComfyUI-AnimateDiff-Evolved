@@ -1,34 +1,29 @@
 import os
-import sys
 import json
 import subprocess
 import shutil
-import hashlib
+import sys
 import torch
-from torch import Tensor
-from torch.nn.functional import group_norm
 import numpy as np
-from typing import Callable, Dict, List, Tuple
+from typing import Dict, List
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-from einops import rearrange
 
 import folder_paths
-import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
-import comfy.model_management as model_management
-import comfy.sample as comfy_sample
 
-from comfy.ldm.modules.attention import SpatialTransformer
-from comfy.utils import load_torch_file, calculate_parameters
 from comfy.sd import load_checkpoint_guess_config
 from comfy.model_patcher import ModelPatcher
 from .logger import logger
-from .motion_module import MotionWrapper, VanillaTemporalModule, ANIMATEDIFF_GLOBALSTATE
-from .motion_module import InjectionParams, is_mm_injected_into_model, get_mm_injected_params, set_mm_injected_params, MM_INJECTED_ATTR
-from .model_utils import Folders, get_available_models, get_full_path, BetaSchedules, raise_if_not_checkpoint_sd1_5, wrap_function_to_inject_xformers_bug_info
-from .sliding_context_sampling import sliding_common_ksampler
+from .motion_module import InjectorVersion, eject_params_from_model, inject_params_into_model, load_motion_module
+from .motion_module import InjectionParams
+from .model_utils import IsChangedHelper, get_available_motion_models, BetaSchedules, raise_if_not_checkpoint_sd1_5
 from .context import ContextSchedules
+from .sampling import animatediff_sample_factory
 
+import comfy.sample as comfy_sample
+
+# override comfy_sample.sample with animatediff-support version
+comfy_sample.sample = animatediff_sample_factory(comfy_sample.sample)
 
 # Need to inject common_ksampler function all the way in ComfyUI's base directory
 # Go from '../ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/animatediff/nodes.py' -> '../ComfyUI'
@@ -36,177 +31,6 @@ from .context import ContextSchedules
 from pathlib import Path
 sys.path.insert(0, Path(__file__).parent.parent.parent.parent)
 import nodes as comfy_nodes
-
-
-#############################################
-#### Code Injection #########################
-orig_comfy_sample = comfy_sample.sample # wrapper will go around this to inject/eject GroupNorm hack
-orig_comfy_common_ksampler = wrap_function_to_inject_xformers_bug_info(comfy_nodes.common_ksampler)
-orig_maximum_batch_area = model_management.maximum_batch_area # allows for "unlimited area hack" to prevent halving of conds/unconds
-orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
-orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
-
-
-def forward_timestep_embed(
-    ts, x, emb, context=None, transformer_options={}, output_shape=None
-):
-    for layer in ts:
-        if isinstance(layer, openaimodel.TimestepBlock):
-            x = layer(x, emb)
-        elif isinstance(layer, VanillaTemporalModule):
-            x = layer(x, context)
-        elif isinstance(layer, SpatialTransformer):
-            x = layer(x, context, transformer_options)
-            transformer_options["current_index"] += 1
-        elif isinstance(layer, openaimodel.Upsample):
-            x = layer(x, output_shape=output_shape)
-        else:
-            x = layer(x)
-    return x
-
-# inject forward_timestep embed
-openaimodel.forward_timestep_embed = forward_timestep_embed
-
-
-def unlimited_batch_area():
-    return int(sys.maxsize)
-
-
-def groupnorm_mm_factory(params: InjectionParams):
-    def groupnorm_mm_forward(self, input: Tensor) -> Tensor:
-        # axes_factor normalizes batch based on total conds and unconds passed in batch;
-        # the conds and unconds per batch can change based on VRAM optimizations that may kick in
-        if not ANIMATEDIFF_GLOBALSTATE.is_using_sliding_context():
-            axes_factor = input.size(0)//params.video_length
-        else:
-            axes_factor = input.size(0)//params.context_frames
-
-        input = rearrange(input, "(b f) c h w -> b c f h w", b=axes_factor)
-        input = group_norm(input, self.num_groups, self.weight, self.bias, self.eps)
-        input = rearrange(input, "b c f h w -> (b f) c h w", b=axes_factor)
-        return input
-    return groupnorm_mm_forward
-
-
-def sample_wrapper_factory(sampling_func: Callable):
-    def sample_wrapper(model, *args, **kwargs):
-        # check if model is currently injected
-        if is_mm_injected_into_model(model):
-            params = get_mm_injected_params(model)
-            if params.unlimited_area_hack:
-                logger.info(f"Hacking model_management.maximum_batch_area function.")
-                model_management.maximum_batch_area = unlimited_batch_area
-            logger.info(f"Hacking torch.nn.GroupNorm forward function.")
-            torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
-        try:
-            # call requested sampling function
-            return sampling_func(model, *args, **kwargs)
-        except:
-            raise
-        finally:
-            # maintain functions present prior to sampling
-            model_management.maximum_batch_area = orig_maximum_batch_area
-            torch.nn.GroupNorm.forward = orig_groupnorm_forward
-            # reset GlobalState for good measure
-            ANIMATEDIFF_GLOBALSTATE.reset()
-    return sample_wrapper
-
-# inject sample_wrapper to wrap original sample function
-comfy_sample.sample = sample_wrapper_factory(orig_comfy_sample)
-# inject sliding_common_ksampler into common_ksampler
-comfy_nodes.common_ksampler = sliding_common_ksampler
-
-motion_modules: Dict[str, MotionWrapper] = {}
-original_model_hashs = set()
-injected_model_hashs: Dict[str, Tuple[str, str]] = {}
-
-
-def calculate_model_hash(unet):
-    t = unet.input_blocks[1]
-    m = hashlib.sha256()
-    for buf in t.buffers():
-        m.update(buf.cpu().numpy().view(np.uint8))
-    return m.hexdigest()
-
-
-def load_motion_module(model_name: str):
-    model_path = get_full_path(Folders.MODELS, model_name)
-
-    logger.info(f"Loading motion module {model_name}")
-    mm_state_dict = load_torch_file(model_path)
-    motion_module = MotionWrapper(mm_state_dict=mm_state_dict, mm_type=model_name)
-
-    parameters = calculate_parameters(mm_state_dict, "")
-    usefp16 = model_management.should_use_fp16(model_params=parameters)
-    if usefp16:
-        logger.info("Using fp16, converting motion module to fp16")
-        motion_module.half()
-    offload_device = model_management.unet_offload_device()
-    motion_module = motion_module.to(offload_device)
-    motion_module.load_state_dict(mm_state_dict)
-
-    return motion_module
-
-
-def inject_motion_module_to_unet(unet: openaimodel.UNetModel, motion_module: MotionWrapper, injection_params: InjectionParams):
-    logger.info(f"Injecting motion module into UNet input blocks.")
-    for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
-        mm_idx0, mm_idx1 = mm_idx // 2, mm_idx % 2
-        unet.input_blocks[unet_idx].append(
-            motion_module.down_blocks[mm_idx0].motion_modules[mm_idx1]
-        )
-
-    logger.info(f"Injecting motion module into UNet output blocks.")
-    for unet_idx in range(12):
-        mm_idx0, mm_idx1 = unet_idx // 3, unet_idx % 3
-        if unet_idx % 3 == 2 and unet_idx != 11:
-            unet.output_blocks[unet_idx].insert(
-                -1, motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
-            )
-        else:
-            unet.output_blocks[unet_idx].append(
-                motion_module.up_blocks[mm_idx0].motion_modules[mm_idx1]
-            )
-
-    if motion_module.mid_block is not None:
-        logger.info(f"Injecting motion module into UNet middle blocks.")
-        unet.middle_block.insert(-1, motion_module.mid_block.motion_modules[0]) # only 1 VanillaTemporalModule
-    setattr(unet, MM_INJECTED_ATTR, injection_params)
-
-
-def eject_motion_module_from_unet(unet: openaimodel.UNetModel):
-    logger.info(f"Ejecting motion module from UNet input blocks.")
-    for unet_idx in [1, 2, 4, 5, 7, 8, 10, 11]:
-        unet.input_blocks[unet_idx].pop(-1)
-
-    logger.info(f"Ejecting motion module from UNet output blocks.")
-    for unet_idx in range(12):
-        if unet_idx % 3 == 2 and unet_idx != 11:
-            unet.output_blocks[unet_idx].pop(-2)
-        else:
-            unet.output_blocks[unet_idx].pop(-1)
-    
-    if len(unet.middle_block) > 3: # SD1.5 UNet has 3 expected middle_blocks - more means injected
-        logger.info(f"Ejecting motion module from UNet middle blocks.")
-        unet.middle_block.pop(-2)
-    delattr(unet, MM_INJECTED_ATTR)
-    injected_model_hashs.pop(calculate_model_hash(unet))
-
-
-class InjectorVersion:
-    LEGACY = "legacy"
-    V1_V2 = "v1/v2"
-
-
-injectors = {
-    InjectorVersion.V1_V2: inject_motion_module_to_unet,
-}
-
-ejectors = {
-    InjectorVersion.V1_V2: eject_motion_module_from_unet,
-}
-#############################################
-#############################################
 
 
 class AnimateDiffLoader:
@@ -219,17 +43,10 @@ class AnimateDiffLoader:
             "required": {
                 "model": ("MODEL",),
                 "latents": ("LATENT",),
-                "model_name": (get_available_models(),),
-                "unlimited_area_hack": ("BOOLEAN", {"default": False},),
+                "model_name": (get_available_motion_models(),),
                 "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
             },
         }
-
-    @classmethod
-    def IS_CHANGED(s, model: ModelPatcher, _):
-        unet = model.model.diffusion_model
-        logger.info(f"load IS_CHANGED: {calculate_model_hash(unet) not in injected_model_hashs}")
-        return calculate_model_hash(unet) not in injected_model_hashs
 
     RETURN_TYPES = ("MODEL", "LATENT")
     CATEGORY = "Animate Diff"
@@ -239,50 +56,23 @@ class AnimateDiffLoader:
         self,
         model: ModelPatcher,
         latents: Dict[str, torch.Tensor],
-        model_name: str, unlimited_area_hack: bool, beta_schedule: str,
+        model_name: str, beta_schedule: str,
     ):
         raise_if_not_checkpoint_sd1_5(model)
-
-        if model_name not in motion_modules:
-            motion_modules[model_name] = load_motion_module(model_name)
-
-        motion_module = motion_modules[model_name]
-        # check that latents don't exceed max frame size
+        # load motion module
+        load_motion_module(model_name)
+        # get total frames
         init_frames_len = len(latents["samples"])
-        if init_frames_len > motion_module.encoding_max_len:
-            # TODO: warning and cutoff frames instead of error
-            raise ValueError(f"AnimateDiff model {model_name} has upper limit of {motion_module.encoding_max_len} frames, but received {init_frames_len} latents.")
-        # set motion_module's video_length to match latent length
-        motion_module.set_video_length(init_frames_len)
-
-        model = model.clone()
-        unet = model.model.diffusion_model
-        unet_hash = calculate_model_hash(unet)
-        need_inject = unet_hash not in injected_model_hashs
-
+        # set injection params
         injection_params = InjectionParams(
-            video_length=init_frames_len,
-            unlimited_area_hack=unlimited_area_hack,
-            beta_schedule=beta_schedule,
+                video_length=init_frames_len,
+                unlimited_area_hack=False,
+                beta_schedule=beta_schedule,
+                injector=self.version,
+                model_name=model_name,
         )
-
-        if unet_hash in injected_model_hashs:
-            (mm_type, version) = injected_model_hashs[unet_hash]
-            if version != self.version or mm_type != motion_module.mm_type:
-                # injected by another motion module, unload first
-                logger.info(f"Ejecting motion module {mm_type} version {version} - {motion_module.version}.")
-                ejectors[version](unet)
-                need_inject = True
-            else:
-                logger.info(f"Motion module already injected, only injecting params.")
-                set_mm_injected_params(model, injection_params)
-
-        if need_inject:
-            logger.info(f"Injecting motion module {model_name} version {motion_module.version}.")
-            
-            injectors[self.version](unet, motion_module, injection_params)
-            unet_hash = calculate_model_hash(unet)
-            injected_model_hashs[unet_hash] = (motion_module.mm_type, self.version)
+        # inject for use in sampling code
+        model = inject_params_into_model(model, injection_params)
 
         return (model, latents)
 
@@ -297,8 +87,7 @@ class AnimateDiffLoaderAdvanced:
             "required": {
                 "model": ("MODEL",),
                 "latents": ("LATENT",),
-                "model_name": (get_available_models(),),
-                "unlimited_area_hack": ("BOOLEAN", {"default": False},),
+                "model_name": (get_available_motion_models(),),
                 "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
                 "context_stride": ("INT", {"default": 1, "min": 1, "max": 1000}),
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
@@ -308,117 +97,59 @@ class AnimateDiffLoaderAdvanced:
             },
         }
 
-    # @classmethod
-    # def IS_CHANGED(s, model: ModelPatcher, _):
-    #     unet = model.model.diffusion_model
-    #     logger.info(f"load IS_CHANGED: {calculate_model_hash(unet) not in injected_model_hashs}")
-    #     return calculate_model_hash(unet) not in injected_model_hashs
-
     RETURN_TYPES = ("MODEL", "LATENT")
     CATEGORY = "Animate Diff"
-    FUNCTION = "inject_motion_modules"
+    FUNCTION = "load_mm_and_inject_params"
 
-    def inject_motion_modules(
-        self,
-        model: ModelPatcher,
-        latents: Dict[str, torch.Tensor],
-        model_name: str, unlimited_area_hack: bool,
-        context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool,
-        beta_schedule: str,
-    ):
+    def load_mm_and_inject_params(self,
+            model: ModelPatcher,
+            latents: Dict[str, torch.Tensor],
+            model_name: str,
+            context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool,
+            beta_schedule: str,
+        ):
         raise_if_not_checkpoint_sd1_5(model)
-
-        if model_name not in motion_modules:
-            motion_modules[model_name] = load_motion_module(model_name)
-
-        motion_module = motion_modules[model_name]
-        
+        # load motion module
+        load_motion_module(model_name)
+        # get total frames
         init_frames_len = len(latents["samples"])
-        # if latents exceed context_length, use sliding window
-        if init_frames_len > context_length and context_length > 0:
-            logger.info("Criteria for sliding context met.")
-            # check that context_length don't exceed max frame size
-            if context_length > motion_module.encoding_max_len:
-                raise ValueError(f"AnimateDiff model {model_name} has upper limit of {motion_module.encoding_max_len} frames, but received context frames of {context_length} latents.")
-            # set motion_module's video_length to match context length
-            motion_module.set_video_length(context_length)
-            injection_params = InjectionParams.init_with_context(
+        # set injection params
+        injection_params = InjectionParams(
                 video_length=init_frames_len,
-                unlimited_area_hack=unlimited_area_hack,
+                unlimited_area_hack=False,
                 beta_schedule=beta_schedule,
-                context_frames=context_length,
+                injector=self.version,
+                model_name=model_name,
+        )
+        # set context settings
+        injection_params.set_context(
+                context_length=context_length,
                 context_stride=context_stride,
                 context_overlap=context_overlap,
                 context_schedule=context_schedule,
                 closed_loop=closed_loop
-            )
-        # otherwise, do normal AnimateDiff operation
-        else:
-            logger.info("Criteria for sliding context not met - will do full-latent sampling.")
-            if init_frames_len > motion_module.encoding_max_len:
-                # TODO: warning and cutoff frames instead of error
-                raise ValueError(f"AnimateDiff model {model_name} has upper limit of {motion_module.encoding_max_len} frames, but received {init_frames_len} latents.")
-            # set motion_module's video_length to match latent amount
-            motion_module.set_video_length(init_frames_len)
-            injection_params = InjectionParams(
-                video_length=init_frames_len,
-                unlimited_area_hack=unlimited_area_hack,
-                beta_schedule=beta_schedule,
-            )
-
-        model = model.clone()
-        unet = model.model.diffusion_model
-        unet_hash = calculate_model_hash(unet)
-        need_inject = unet_hash not in injected_model_hashs
-
-        if unet_hash in injected_model_hashs:
-            (mm_type, version) = injected_model_hashs[unet_hash]
-            if version != self.version or mm_type != motion_module.mm_type:
-                # injected by another motion module, unload first
-                logger.info(f"Ejecting motion module {mm_type} version {version} - {motion_module.version}.")
-                ejectors[version](unet)
-                need_inject = True
-            else:
-                logger.info(f"Motion module already injected, only injecting params.")
-                set_mm_injected_params(model, injection_params)
-
-        if need_inject:
-            logger.info(f"Injecting motion module {model_name} version {motion_module.version}.")
-            
-            injectors[self.version](unet, motion_module, injection_params)
-            unet_hash = calculate_model_hash(unet)
-            injected_model_hashs[unet_hash] = (motion_module.mm_type, self.version)
+        )
+        # inject for use in sampling code
+        model = inject_params_into_model(model, injection_params)
 
         return (model, latents)
 
 
 class AnimateDiffUnload:
+    def __init__(self) -> None:
+        self.change = IsChangedHelper()
+
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {"model": ("MODEL",)}}
-
-    # @classmethod
-    # def IS_CHANGED(s, model: ModelPatcher):
-    #     unet = model.model.diffusion_model
-    #     return calculate_model_hash(unet) in injected_model_hashs
 
     RETURN_TYPES = ("MODEL",)
     CATEGORY = "Animate Diff"
     FUNCTION = "unload_motion_modules"
 
     def unload_motion_modules(self, model: ModelPatcher):
-        model = model.clone()
-        unet = model.model.diffusion_model
-        model_hash = calculate_model_hash(unet)
-        if model_hash in injected_model_hashs:
-            (model_name, version) = injected_model_hashs[model_hash]
-            logger.info(f"Ejecting motion module {model_name} version {version}.")
-            ejectors[version](unet)
-            # just in case (is done automatically on mm eject anyway)
-            torch.nn.GroupNorm.forward = orig_groupnorm_forward
-            model_management.maximum_batch_area = orig_maximum_batch_area
-        else:
-            logger.info(f"Motion module not injected, skip unloading.")
+        # return model clone with ejected params
+        model = eject_params_from_model(model)
 
         return (model,)
 

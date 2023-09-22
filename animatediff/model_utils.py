@@ -1,13 +1,27 @@
+import hashlib
 import os
 from pathlib import Path
 import time
 import json
 from typing import Callable
 
+import numpy as np
+
 import folder_paths
 from comfy.model_base import BaseModel
 from comfy.model_patcher import ModelPatcher
 from comfy.model_management import xformers_enabled
+
+
+class IsChangedHelper:
+    def __init__(self):
+        self.val = 0
+    
+    def no_change(self):
+        return self.val
+    
+    def change(self):
+        self.val = (self.val + 1) % 100
 
 
 class BetaSchedules:
@@ -37,6 +51,22 @@ class BetaSchedules:
         element_index = new_list.index(first_element)
         new_list[0], new_list[element_index] = new_list[element_index], new_list[0]
         return new_list
+
+
+class BetaScheduleCache:
+    def __init__(self, model: ModelPatcher): 
+        self.betas = model.model.betas.cpu().clone().detach()
+        self.linear_start = model.model.linear_start
+        self.linear_end = model.model.linear_end
+
+    def use_cached_beta_schedule_and_clean(self, model: ModelPatcher):
+        model.model.register_schedule(given_betas=self.betas, linear_start=self.linear_start, linear_end=self.linear_end)
+        self.clean()
+
+    def clean(self):
+        self.betas = None
+        self.linear_start = None
+        self.linear_end = None
 
 
 class Folders:
@@ -152,13 +182,43 @@ def get_full_path(folder_name, filename):
     return None
 
 
-def get_available_models():
+def get_available_motion_models():
     return get_filename_list(Folders.MODELS)
 
 
-def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
+# modified from https://stackoverflow.com/questions/22058048/hashing-a-file-in-python
+def calculate_file_hash(filename: str):
+    h = hashlib.sha256()
+    b = bytearray(1024*1024)
+    mv = memoryview(b)
+    with open(filename, 'rb', buffering=0) as f:
+        i = 0
+        # don't hash entire file, only portions of it
+        while n := f.readinto(mv):
+            if i%50 == 0:
+                h.update(mv[:n])
+            i += 1
+    return h.hexdigest()
+
+
+def calculate_model_hash(model: ModelPatcher):
+    unet = model.model.diff
+    t = unet.input_blocks[1]
+    m = hashlib.sha256()
+    for buf in t.buffers():
+        m.update(buf.cpu().numpy().view(np.uint8))
+    return m.hexdigest()
+
+
+def is_checkpoint_sd1_5(model: ModelPatcher):
+    if model is None:
+        return False
     model_type = type(model.model)
-    if model_type != BaseModel:
+    return model_type == BaseModel
+
+
+def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
+    if not is_checkpoint_sd1_5(model):
         raise ValueError(f"For AnimateDiff, SD Checkpoint (model) is expected to be SD1.5-based (BaseModel), but was: {model_type.__name__}")
 
 
