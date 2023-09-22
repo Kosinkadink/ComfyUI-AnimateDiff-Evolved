@@ -535,20 +535,21 @@ class AnimateDiffCombine:
             file_path = os.path.join(full_output_folder, file)
             dimensions = f"{frames[0].width}x{frames[0].height}"
             metadata_args = ["-metadata", "comment=" + json.dumps(video_metadata)]
+            args = [ffmpeg_path, "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                    "-s", dimensions, "-r", str(frame_rate), "-i", "-"] \
+                    + video_format['main_pass']
             # On linux, max arg length is Pagesize * 32 -> 131072
-            # On windows, this may be as low as 32767
-            if os.uname().sysname == 'Linux':
+            # On windows, this around 32767 and includes ALL arguments
+            if os.name == 'posix':
                 max_arg_length = 4096*32
             else:
-                max_arg_length = 32767
+                max_arg_length = 32767 - len(" ".join(args + metadata_args[0] + [file_path])) - 1
             #test max limit
             #metadata_args[1] = metadata_args[1] + "a"*(max_arg_length - len(metadata_args[1])-1)
             if len(metadata_args[1]) >= max_arg_length:
                 logger.warn(f"Metadata was too long to be embedded in video output: {len(metadata_args[1])}/{max_arg_length}")
                 metadata_args = []
-            args = [ffmpeg_path, "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-                    "-s", dimensions, "-r", str(frame_rate), "-i", "-"] \
-                    + video_format['main_pass'] + metadata_args + [file_path]
+            args = args + metadata_args + [file_path]
 
             env=os.environ.copy()
             if  "environment" in video_format:
