@@ -52,7 +52,6 @@ function getVideoMetadata(file) {
                             let size = dataView.getUint32(offset-4) - 4*4;
                             const content = String.fromCharCode(...videoData.slice(offset+12, offset+12+size));
                             const json = JSON.parse(content);
-                            console.log(json);
                             r(json);
                             return;
                         }
@@ -72,10 +71,10 @@ function getVideoMetadata(file) {
     });
 }
 function isVideoFile(file) {
-    if (file.name?.endsWith(".webm")) {
+    if (file?.name?.endsWith(".webm")) {
         return true;
     }
-    if (file.name?.endsWith(".mp4")) {
+    if (file?.name?.endsWith(".mp4")) {
         return true;
     }
 
@@ -83,7 +82,7 @@ function isVideoFile(file) {
 }
 
 async function handleFile(file) {
-    if (file.type?.startsWith("video/") || isVideoFile(file)) {
+    if (file?.type?.startsWith("video/") || isVideoFile(file)) {
         const videoInfo = await getVideoMetadata(file);
         if (videoInfo) {
             if (videoInfo.workflow) {
@@ -93,7 +92,6 @@ async function handleFile(file) {
             //Potentially check for/parse A1111 metadata here.
         }
     } else {
-        console.log("calling original HandleFile");
         await app.originalHandleFile(file);
     }
 }
