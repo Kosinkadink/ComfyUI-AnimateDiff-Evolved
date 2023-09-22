@@ -22,7 +22,7 @@ class ColoredFormatter(logging.Formatter):
 
 
 # Create a new logger
-logger = logging.getLogger("AnimateDiff")
+logger = logging.getLogger("AnimateDiffEvo")
 logger.propagate = False
 
 # Add handler if we don't have one.

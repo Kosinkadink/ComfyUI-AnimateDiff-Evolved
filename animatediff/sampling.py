@@ -107,6 +107,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             return orig_comfy_sample(model, *args, **kwargs)
         # otherwise, injection time
         try:
+            model = model.clone()
             # reset global state
             ADGS.reset()
             ##############################################
@@ -116,7 +117,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
             orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
             # save original beta schedule settings
-            #orig_beta_cache = BetaScheduleCache(model)
+            orig_beta_cache = BetaScheduleCache(model)
             ##############################################
 
             # get params
@@ -138,7 +139,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
 
             # apply suggested beta schedule
             beta_schedule = BetaSchedules.to_name(params.beta_schedule)
-            #model.model.register_schedule(given_betas=None, beta_schedule=beta_schedule, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
+            model.model.register_schedule(given_betas=None, beta_schedule=beta_schedule, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
 
             # handle GLOBALSTATE vars and step tally
             ADGS.update_with_inject_params(params)
@@ -165,7 +166,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             torch.nn.GroupNorm.forward = orig_groupnorm_forward
             comfy_samplers.sampling_function = orig_sampling_function
             # reapply previous beta schedule
-            #orig_beta_cache.use_cached_beta_schedule_and_clean(model)
+            orig_beta_cache.use_cached_beta_schedule_and_clean(model)
             # reset global state
             ADGS.reset()
             ##############################################

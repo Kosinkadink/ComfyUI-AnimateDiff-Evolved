@@ -17,7 +17,7 @@ from .logger import logger
 from .motion_module import InjectorVersion, eject_params_from_model, inject_params_into_model, load_motion_module
 from .motion_module import InjectionParams
 from .model_utils import IsChangedHelper, get_available_motion_models, BetaSchedules, raise_if_not_checkpoint_sd1_5
-from .context import ContextSchedules
+from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .sampling import animatediff_sample_factory
 
 import comfy.sample as comfy_sample
@@ -25,7 +25,7 @@ import comfy.sample as comfy_sample
 # override comfy_sample.sample with animatediff-support version
 comfy_sample.sample = animatediff_sample_factory(comfy_sample.sample)
 
-# Need to inject common_ksampler function all the way in ComfyUI's base directory
+# Need to access max size variables all the way in ComfyUI's base directory
 # Go from '../ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/animatediff/nodes.py' -> '../ComfyUI'
 # Yes, this is wacky, but if it works, it works
 from pathlib import Path
@@ -33,10 +33,7 @@ sys.path.insert(0, Path(__file__).parent.parent.parent.parent)
 import nodes as comfy_nodes
 
 
-class AnimateDiffLoader:
-    def __init__(self) -> None:
-        self.version = InjectorVersion.V1_V2
-
+class AnimateDiffLoaderWithContext:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -46,17 +43,21 @@ class AnimateDiffLoader:
                 "model_name": (get_available_motion_models(),),
                 "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
             },
+            "optional": {
+                "context_options": ("CONTEXT_OPTIONS",)
+            }
         }
-
+    
     RETURN_TYPES = ("MODEL", "LATENT")
     CATEGORY = "Animate Diff"
-    FUNCTION = "inject_motion_modules"
+    FUNCTION = "load_mm_and_inject_params"
 
-    def inject_motion_modules(
-        self,
+
+    def load_mm_and_inject_params(self,
         model: ModelPatcher,
         latents: Dict[str, torch.Tensor],
         model_name: str, beta_schedule: str,
+        context_options: ContextOptions=None,
     ):
         raise_if_not_checkpoint_sd1_5(model)
         # load motion module
@@ -68,7 +69,88 @@ class AnimateDiffLoader:
                 video_length=init_frames_len,
                 unlimited_area_hack=False,
                 beta_schedule=beta_schedule,
-                injector=self.version,
+                injector=InjectorVersion.V1_V2,
+                model_name=model_name,
+        )
+        if context_options:
+            # set context settings TODO: make this dynamic for future purposes
+            if type(context_options) == UniformContextOptions:
+                injection_params.set_context(
+                        context_length=context_options.context_length,
+                        context_stride=context_options.context_stride,
+                        context_overlap=context_options.context_overlap,
+                        context_schedule=context_options.context_schedule,
+                        closed_loop=context_options.closed_loop
+                )
+        # inject for use in sampling code
+        model = inject_params_into_model(model, injection_params)
+
+        return (model, latents)
+
+
+class AnimateDiffUniformContextOptions:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
+                "context_stride": ("INT", {"default": 1, "min": 1, "max": 1000}),
+                "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
+                "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
+                "closed_loop": ("BOOLEAN", {"default": False},),
+            },
+        }
+    
+    RETURN_TYPES = ("CONTEXT_OPTIONS",)
+    CATEGORY = "Animate Diff"
+    FUNCTION = "create_options"
+
+    def create_options(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool):
+        context_options = UniformContextOptions(
+            context_length=context_length,
+            context_stride=context_stride,
+            context_overlap=context_overlap,
+            context_schedule=context_schedule,
+            closed_loop=closed_loop,
+            )
+        return (context_options,)
+
+
+
+class AnimateDiffLoader_Deprecated:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "latents": ("LATENT",),
+                "model_name": (get_available_motion_models(),),
+                "unlimited_area_hack": ("BOOLEAN", {"default": False},),
+                "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
+            },
+        }
+
+    RETURN_TYPES = ("MODEL", "LATENT")
+    CATEGORY = "Animate Diff/deprecated"
+    FUNCTION = "load_mm_and_inject_params"
+
+    def load_mm_and_inject_params(
+        self,
+        model: ModelPatcher,
+        latents: Dict[str, torch.Tensor],
+        model_name: str, unlimited_area_hack: bool, beta_schedule: str,
+    ):
+        raise_if_not_checkpoint_sd1_5(model)
+        # load motion module
+        load_motion_module(model_name)
+        # get total frames
+        init_frames_len = len(latents["samples"])
+        # set injection params
+        injection_params = InjectionParams(
+                video_length=init_frames_len,
+                unlimited_area_hack=unlimited_area_hack,
+                beta_schedule=beta_schedule,
+                injector=InjectorVersion.V1_V2,
                 model_name=model_name,
         )
         # inject for use in sampling code
@@ -77,10 +159,7 @@ class AnimateDiffLoader:
         return (model, latents)
 
 
-class AnimateDiffLoaderAdvanced:
-    def __init__(self) -> None:
-        self.version = InjectorVersion.V1_V2
-
+class AnimateDiffLoaderAdvanced_Deprecated:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -88,6 +167,7 @@ class AnimateDiffLoaderAdvanced:
                 "model": ("MODEL",),
                 "latents": ("LATENT",),
                 "model_name": (get_available_motion_models(),),
+                "unlimited_area_hack": ("BOOLEAN", {"default": False},),
                 "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
                 "context_stride": ("INT", {"default": 1, "min": 1, "max": 1000}),
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
@@ -98,13 +178,13 @@ class AnimateDiffLoaderAdvanced:
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff"
+    CATEGORY = "Animate Diff/deprecated"
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(self,
             model: ModelPatcher,
             latents: Dict[str, torch.Tensor],
-            model_name: str,
+            model_name: str, unlimited_area_hack: bool,
             context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool,
             beta_schedule: str,
         ):
@@ -116,9 +196,9 @@ class AnimateDiffLoaderAdvanced:
         # set injection params
         injection_params = InjectionParams(
                 video_length=init_frames_len,
-                unlimited_area_hack=False,
+                unlimited_area_hack=unlimited_area_hack,
                 beta_schedule=beta_schedule,
-                injector=self.version,
+                injector=InjectorVersion.V1_V2,
                 model_name=model_name,
         )
         # set context settings
@@ -299,7 +379,7 @@ class CheckpointLoaderSimpleWithNoiseSelect:
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
     FUNCTION = "load_checkpoint"
 
-    CATEGORY = "Animate Diff"
+    CATEGORY = "Animate Diff/loaders"
 
     def load_checkpoint(self, ckpt_name, beta_schedule, output_vae=True, output_clip=True):
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
@@ -330,21 +410,22 @@ class EmptyLatentImageLarge:
 
 
 NODE_CLASS_MAPPINGS = {
-    "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
-    "AnimateDiffLoaderV1": AnimateDiffLoader,
-    "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced,
+    "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
+    "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_AnimateDiffCombine": AnimateDiffCombine,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
+    "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
+    "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
+    "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select",
-    "AnimateDiffLoaderV1": "AnimateDiff Loader",
-    "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced)",
+    "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options",
+    "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader",
     "ADE_AnimateDiffUnload": "AnimateDiff Unload",
     "ADE_AnimateDiffCombine": "AnimateDiff Combine",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch)",
-    # AnimateDiff-specific
-    "ADE_AnimateDiffLoaderLegacy": "[DEPRECATED] AnimateDiff Loader Legacy",
-    
+    "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select",
+    "AnimateDiffLoaderV1": "AnimateDiff Loader [Deprecated]",
+    "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [Deprecated]",
 }

@@ -76,12 +76,16 @@ def load_motion_module(model_name: str):
 # Injection-related classes and functions
 def inject_params_into_model(model: ModelPatcher, params: 'InjectionParams') -> ModelPatcher:
     model = model.clone()
+    # clean unet, if necessary
+    clean_contained_unet(model)
     set_injected_mm_params(model, params)
     return model
 
 
 def eject_params_from_model(model: ModelPatcher) -> ModelPatcher:
     model = model.clone()
+    # clean unet, if necessary
+    clean_contained_unet(model)
     del_injected_mm_params(model)
     return model
     
@@ -95,12 +99,12 @@ def inject_motion_module(model: ModelPatcher, motion_module: 'MotionWrapper', pa
     # if no context_length, treat video length as intended AD frame window
     if not params.context_length:
         if params.video_length > motion_module.encoding_max_len:
-            raise ValueError(f"AnimateDiff model {motion_module.mm_name} has upper limit of {motion_module.encoding_max_len} frames, but received {params.video_length} latents.")
+            raise ValueError(f"Without a context window, AnimateDiff model {motion_module.mm_name} has upper limit of {motion_module.encoding_max_len} frames, but received {params.video_length} latents.")
         motion_module.set_video_length(params.video_length)
     # otherwise, treat context_length as intended AD frame window
     else:
         if params.context_length > motion_module.encoding_max_len:
-            raise ValueError(f"AnimateDiff model {motion_module.mm_name} has upper limit of {motion_module.encoding_max_len} frames, but received context frames of {params.context_length} latents.")
+            raise ValueError(f"AnimateDiff model {motion_module.mm_name} has upper limit of {motion_module.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
         motion_module.set_video_length(params.context_length)
     # inject model
     params.set_version(motion_module)
@@ -109,24 +113,33 @@ def inject_motion_module(model: ModelPatcher, motion_module: 'MotionWrapper', pa
 
 
 def eject_motion_module(model: ModelPatcher):
-    if is_injected_mm_params(model):
-        params = get_injected_mm_params(model)
-        logger.info(f"Ejecting motion module {params.model_name} version {params.version}.")
-        ejectors[params.injector](model)
-    else:
-        logger.info(f"Motion module not injected, skip unloading.")
+    try:
+        # handle injected params
+        if is_injected_mm_params(model):
+            params = get_injected_mm_params(model)
+            logger.info(f"Ejecting motion module {params.model_name} version {params.version}.")
+        else:
+            logger.info(f"Motion module not injected, skip unloading.")
+        # clean unet, just in case
+    finally:
+        clean_contained_unet(model)
+
+
+def clean_contained_unet(model: ModelPatcher):
+    if is_injected_unet_version(model):
+        logger.info("Cleaning motion module from unet.")
+        injector = get_injected_unet_version(model)
+        ejectors[injector](model)
 
 
 def _inject_motion_module_to_unet(model: ModelPatcher, motion_module: 'MotionWrapper'):
     unet: openaimodel.UNetModel = model.model.diffusion_model
-    logger.info(f"Injecting motion module into UNet input blocks.")
     for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
         mm_idx0, mm_idx1 = mm_idx // 2, mm_idx % 2
         unet.input_blocks[unet_idx].append(
             motion_module.down_blocks[mm_idx0].motion_modules[mm_idx1]
         )
 
-    logger.info(f"Injecting motion module into UNet output blocks.")
     for unet_idx in range(12):
         mm_idx0, mm_idx1 = unet_idx // 3, unet_idx % 3
         if unet_idx % 3 == 2 and unet_idx != 11:
@@ -139,8 +152,9 @@ def _inject_motion_module_to_unet(model: ModelPatcher, motion_module: 'MotionWra
             )
 
     if motion_module.mid_block is not None:
-        logger.info(f"Injecting motion module into UNet middle blocks.")
         unet.middle_block.insert(-1, motion_module.mid_block.motion_modules[0]) # only 1 VanillaTemporalModule
+    # keep track of if unet blocks actually affected
+    set_injected_unet_version(model, InjectorVersion.V1_V2)
 
 
 def _eject_motion_module_from_unet(model: ModelPatcher):
@@ -159,6 +173,8 @@ def _eject_motion_module_from_unet(model: ModelPatcher):
     if len(unet.middle_block) > 3: # SD1.5 UNet has 3 expected middle_blocks - more means injected
         logger.info(f"Ejecting motion module from UNet middle blocks.")
         unet.middle_block.pop(-2)
+    # remove attr; ejected
+    del_injected_unet_version(model)
 
 
 class InjectorVersion:
@@ -175,6 +191,7 @@ ejectors = {
 
 
 MM_INJECTED_ATTR = "_mm_injected_params"
+MM_UNET_INJECTION_ATTR = "_mm_is_unet_injected"
 
 class InjectionParams:
     def __init__(self, video_length: int, unlimited_area_hack: bool, beta_schedule: str, injector: str, model_name: str) -> None:
@@ -207,12 +224,14 @@ class InjectionParams:
         self.context_schedule = None
         self.closed_loop = False
 
-
+# Injected Param Functions
 def is_injected_mm_params(model: ModelPatcher) -> bool:
     return hasattr(model, MM_INJECTED_ATTR)
 
 def get_injected_mm_params(model: ModelPatcher) -> InjectionParams:
-    return getattr(model, MM_INJECTED_ATTR)
+    if is_injected_mm_params(model):
+        return getattr(model, MM_INJECTED_ATTR)
+    return None
 
 def set_injected_mm_params(model: ModelPatcher, injection_params: InjectionParams):
     setattr(model, MM_INJECTED_ATTR, injection_params)
@@ -220,6 +239,26 @@ def set_injected_mm_params(model: ModelPatcher, injection_params: InjectionParam
 def del_injected_mm_params(model: ModelPatcher):
     if is_injected_mm_params(model):
         delattr(model, MM_INJECTED_ATTR)
+    
+# Injected Unet Functions
+def is_injected_unet_version(model: ModelPatcher) -> bool:
+    if is_checkpoint_sd1_5(model):
+        return hasattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR)
+
+def get_injected_unet_version(model: ModelPatcher) -> str:
+    if is_checkpoint_sd1_5(model):
+        if is_injected_unet_version(model):
+            return getattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR) 
+
+def set_injected_unet_version(model: ModelPatcher, value: str):
+    if is_checkpoint_sd1_5(model):
+        setattr(model, MM_UNET_INJECTION_ATTR, value)
+
+def del_injected_unet_version(model: ModelPatcher):
+    if is_checkpoint_sd1_5(model):
+        if is_injected_unet_version(model):
+            delattr(model, MM_UNET_INJECTION_ATTR)
+
 
 ##################################################################################
 ##################################################################################
