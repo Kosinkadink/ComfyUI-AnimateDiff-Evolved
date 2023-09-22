@@ -83,6 +83,7 @@ TODO: fill this out
 [aaa_readme_00018_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9b3b5d7d-07da-4b5c-80bc-b3cd82475c71)
 
 
+# The rest of these workflows I haven't had the chance to rerun - will update this in a few hours
 
 ### txt2img w/ latent upscale (partial denoise on upscale)
 
