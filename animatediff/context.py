@@ -31,7 +31,7 @@ class ContextSchedules:
     UNIFORM_CONSTANT = "uniform_constant"
     UNIFORM_V2 = "uniform v2"
 
-    CONTEXT_SCHEDULE_LIST = [UNIFORM, UNIFORM_V2] # only include somewhat functional contexts here
+    CONTEXT_SCHEDULE_LIST = [UNIFORM] # only include somewhat functional contexts here
 
 
 # Returns fraction that has denominator that is a power of 2
