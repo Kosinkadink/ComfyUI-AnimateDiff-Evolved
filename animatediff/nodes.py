@@ -93,9 +93,9 @@ class AnimateDiffUniformContextOptions:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
-                "context_stride": ("INT", {"default": 1, "min": 1, "max": 1000}),
-                "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
+                "context_length": ("INT", {"default": 16, "min": 1, "max": 32}), # keep an eye on these max values
+                "context_stride": ("INT", {"default": 1, "min": 1, "max": 32}),  # would need to be updated
+                "context_overlap": ("INT", {"default": 4, "min": 0, "max": 32}), # if new motion modules come out
                 "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
             },
