@@ -541,7 +541,9 @@ class AnimateDiffCombine:
                 max_arg_length = 4096*32
             else:
                 max_arg_length = 32767
-            if len(metadata_args[1]) > max_arg_length:
+            #test max limit
+            #metadata_args[1] = metadata_args[1] + "a"*(max_arg_length - len(metadata_args[1])-1)
+            if len(metadata_args[1]) >= max_arg_length:
                 logger.warn(f"Metadata was too long to be embedded in video output: {len(metadata_args[1])}/{max_arg_length}")
                 metadata_args = []
             args = [ffmpeg_path, "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
