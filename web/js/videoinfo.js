@@ -8,7 +8,7 @@ function getVideoMetadata(file) {
             const videoData = new Uint8Array(event.target.result);
             const dataView = new DataView(videoData.buffer);
 
-            let txt = "";
+            let decoder = new TextDecoder();
             // Check for known valid magic strings
             if (dataView.getUint32(0) == 0x1A45DFA3) {
                 //webm
@@ -30,7 +30,7 @@ function getVideoMetadata(file) {
                             let n_octets = Math.clz32(vint)+1;
                             if (n_octets < 4) {//250MB sanity cutoff
                                 let length = (vint >> (8*(4-n_octets))) & ~(1 << (7*n_octets));
-                                const content = String.fromCharCode(...videoData.slice(offset+2+n_octets, offset+2+n_octets+length));
+                                const content = decoder.decode(videoData.slice(offset+2+n_octets, offset+2+n_octets+length));
                                 const json = JSON.parse(content);
                                 r(json);
                                 return;
@@ -50,7 +50,7 @@ function getVideoMetadata(file) {
                             let type = dataView.getUint32(offset+4); //seemingly 1
                             let locale = dataView.getUint32(offset+8); //seemingly 0
                             let size = dataView.getUint32(offset-4) - 4*4;
-                            const content = String.fromCharCode(...videoData.slice(offset+12, offset+12+size));
+                            const content = decoder.decode(videoData.slice(offset+12, offset+12+size));
                             const json = JSON.parse(content);
                             r(json);
                             return;
