@@ -12,7 +12,7 @@ import comfy.model_management as model_management
 from comfy.cli_args import args
 from comfy.utils import calculate_parameters, load_torch_file
 
-from .model_utils import Folders, calculate_file_hash, get_full_path, is_checkpoint_sd1_5
+from .model_utils import calculate_file_hash, get_motion_model_path, is_checkpoint_sd1_5
 from .logger import logger
 
 
@@ -47,7 +47,7 @@ motion_modules: dict[str, 'MotionWrapper'] = {}
 
 def load_motion_module(model_name: str):
     # if already loaded, return it
-    model_path = get_full_path(Folders.MODELS, model_name)
+    model_path = get_motion_model_path(model_name)
     model_hash = calculate_file_hash(model_path)
 
     if model_hash in motion_modules:

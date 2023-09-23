@@ -70,45 +70,15 @@ class BetaScheduleCache:
 
 
 class Folders:
-    MODELS = "models"
+    ANIMATEDIFF_MODELS = "AnimateDiffEvolved_Models"
 
 
-# create and handle directories for models
-CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
-MODEL_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "../models"))
-
-if not os.path.exists(MODEL_DIR):
-    os.makedirs(MODEL_DIR)
-
-folder_names_and_paths = {}
-folder_names_and_paths[Folders.MODELS] = ([MODEL_DIR], folder_paths.supported_pt_extensions)
-
-filename_list_cache = {}
-
-# TODO: possibly add configuration file in future when needed?
-# # Load config settings
-# ADE_DIR = Path(__file__).parent.parent
-# ADE_CONFIG_FILE = ADE_DIR / "ade_config.json"
-
-# class ADE_Settings:
-#     USE_XFORMERS_IN_VERSATILE_ATTENTION = "use_xformers_in_VersatileAttention"
-
-# # Create ADE config if not present
-# ABS_CONFIG = {
-#     ADE_Settings.USE_XFORMERS_IN_VERSATILE_ATTENTION: True
-# }
-# if not ADE_CONFIG_FILE.exists():
-#     with ADE_CONFIG_FILE.open("w") as f:
-#         json.dumps(ABS_CONFIG, indent=4)
-# # otherwise, load it and use values
-# else:
-#     loaded_values: dict = None
-#     with ADE_CONFIG_FILE.open("r") as f:
-#         loaded_values = json.load(f)
-#     if loaded_values is not None:
-#         for key, value in loaded_values.items():
-#             if key in ABS_CONFIG:
-#                 ABS_CONFIG[key] = value
+folder_paths.folder_names_and_paths[Folders.ANIMATEDIFF_MODELS] = (
+    [
+        str(Path(__file__).parent.parent / "models")
+    ],
+    folder_paths.supported_pt_extensions
+)
 
 
 #Register video_formats folder
@@ -119,71 +89,13 @@ folder_paths.folder_names_and_paths["video_formats"] = (
     [".json"]
 )
 
-def get_filename_list_(folder_name):
-    global folder_names_and_paths
-    output_list = set()
-    folders = folder_names_and_paths[folder_name]
-    output_folders = {}
-    for x in folders[0]:
-        files, folders_all = folder_paths.recursive_search(x)
-        output_list.update(folder_paths.filter_files_extensions(files, folders[1]))  # folders[1] is extensions
-        output_folders = {**output_folders, **folders_all}
-
-    return (sorted(list(output_list)), output_folders, time.perf_counter())
-
-
-def cached_filename_list_(folder_name):
-    global filename_list_cache
-    global folder_names_and_paths
-    if folder_name not in filename_list_cache:
-        return None
-    out = filename_list_cache[folder_name]
-    if time.perf_counter() < (out[2] + 0.5):
-        return out
-    for x in out[1]:
-        time_modified = out[1][x]
-        folder = x
-        if os.path.getmtime(folder) != time_modified:
-            return None
-        
-    folders = folder_names_and_paths[folder_name]
-    for x in folders[0]:
-        if os.path.isdir(x):
-            if not x in out[1]:
-                return None
-            
-    return out
-
-
-def get_filename_list(folder_name):
-    out = cached_filename_list_(folder_name)
-    if out is None:
-        out = get_filename_list_(folder_name)
-        global filename_list_cache
-        filename_list_cache[folder_name] = out
-    return list(out[0])
-
-
-def get_folder_path(folder_name):
-    return folder_names_and_paths.get(folder_name, ([""],set()))[0][0]
-
-
-def get_full_path(folder_name, filename):
-    global folder_names_and_paths
-    if folder_name not in folder_names_and_paths:
-        return None
-    folders = folder_names_and_paths[folder_name]
-    filename = os.path.relpath(os.path.join("/", filename), "/")
-    for path in folders[0]:
-        full_path = os.path.join(path, filename)
-        if os.path.isfile(full_path):
-            return full_path
-        
-    return None
-
 
 def get_available_motion_models():
-    return get_filename_list(Folders.MODELS)
+    return folder_paths.get_filename_list(Folders.ANIMATEDIFF_MODELS)
+
+
+def get_motion_model_path(model_name: str):
+    return folder_paths.get_full_path(Folders.ANIMATEDIFF_MODELS, model_name)
 
 
 # modified from https://stackoverflow.com/questions/22058048/hashing-a-file-in-python
@@ -237,3 +149,29 @@ def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Cal
                                        and a workaround for now is to run ComfyUI with the --disable-xformers argument.")
                 raise
         return wrapped_function
+
+
+# TODO: possibly add configuration file in future when needed?
+# # Load config settings
+# ADE_DIR = Path(__file__).parent.parent
+# ADE_CONFIG_FILE = ADE_DIR / "ade_config.json"
+
+# class ADE_Settings:
+#     USE_XFORMERS_IN_VERSATILE_ATTENTION = "use_xformers_in_VersatileAttention"
+
+# # Create ADE config if not present
+# ABS_CONFIG = {
+#     ADE_Settings.USE_XFORMERS_IN_VERSATILE_ATTENTION: True
+# }
+# if not ADE_CONFIG_FILE.exists():
+#     with ADE_CONFIG_FILE.open("w") as f:
+#         json.dumps(ABS_CONFIG, indent=4)
+# # otherwise, load it and use values
+# else:
+#     loaded_values: dict = None
+#     with ADE_CONFIG_FILE.open("r") as f:
+#         loaded_values = json.load(f)
+#     if loaded_values is not None:
+#         for key, value in loaded_values.items():
+#             if key in ABS_CONFIG:
+#                 ABS_CONFIG[key] = value
