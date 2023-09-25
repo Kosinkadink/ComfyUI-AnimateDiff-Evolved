@@ -21,6 +21,7 @@ Examples shown here will also often make use of two helpful set of nodes:
 1. Download motion modules. You will need at least 1. Different modules produce different results.
    - Original models ```mm_sd_v14```, ```mm_sd_v15```, and ```mm_sd_v15_v2```: [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836) | [Baidu NetDisk](https://pan.baidu.com/s/18ZpcSM6poBqxWNHtnyMcxg?pwd=et8y).
    - Stabilized finetunes of mm_sd_v14, ```mm-Stabilized_mid``` and ```mm-Stabilized_high```, by **manshoety**: [HuggingFace](https://huggingface.co/manshoety/AD_Stabilized_Motion/tree/main)
+   - Finetunes of mm_sd_v15_v2, ```mm-p_0.5.pth``` and ```mm-p_0.75.pth```, by **manshoety**: [HuggingFace](https://huggingface.co/manshoety/beta_testing_models/tree/main)
    - Higher resolution finetune,```temporaldiff-v1-animatediff```  by **CiaraRowles**: [HuggingFace](https://huggingface.co/CiaraRowles/TemporalDiff/tree/main)
 2. Place models in ```ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/models```. They can be renamed if you want.
 3. Optionally, you can use Motion LoRAs to influence movement of v2-based motion models like mm_sd_v15_v2.
@@ -33,7 +34,7 @@ Examples shown here will also often make use of two helpful set of nodes:
 - Compatible with a variety of samplers, vanilla KSampler nodes and KSampler (Effiecient) nodes.
 - ControlNet support - both per-frame, or "interpolating" between frames; can kind of use this as img2video (see workflows below)
 - Infinite animation length support using sliding context windows **(introduced 9/17/23)**
-- Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models (like mm_sd_v15_v2). Perhaps can be trained for v1 motion modules too, or will lead to more finetunes of mm_sd_v15_v2 in the community. **(introduced 9/25/23)**
+- Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth``` **(introduced 9/25/23)**
 
 # Upcoming features:
 - Prompt travel, and in general more control over per-frame conditioning (working on it now)
@@ -61,12 +62,33 @@ Outputs:
 To use, just plug in your model into the AnimateDiff Loader. When the output model (and any derivative of it in this pathway) is passed into a sampling node, AnimateDiff will do its thing.
 
 The desired animation length is determined by the latents passed into the sampler. **With context_options connected, there is no limit to the amount of latents you can pass in, AKA unlimited animation length.** When no context_options are connected, the sweetspot is 16 latents passed in for best results, with a limit of 24 or 32 based on motion model loaded. **These same rules apply to Uniform Context Option's context_length**.
-![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/08cc9da9-a21c-469b-8ed6-6153845f80b9)
-![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/7d9a21aa-59ee-47ec-8949-8f6a746e7bd7)
+
+You can also connect AnimateDiff LoRA Loader nodes to influence the overall movement in the image - currently, only works well on motion model v2 like ss
+
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/524ba030-97aa-47a5-a0fd-ecffbbf5e439)
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/908d1848-13d4-4e86-bdb0-f6870fd28b06)
+
 
 
 ## Uniform Context Options
 TODO: fill this out
+
+## AnimateDiff LoRA Loader
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/11159b61-7077-4cb1-864c-078bfe82ece3)
+
+Allows plugging in Motion LoRAs into motion models. Current Motion LoRAs only properly support v2-based motion models. Does not affect sampling speed, as the values are frozen after model load. **If you experience slowdowns for using LoRAs, please open an issue so I can resolve it.**
+
+Inputs:
+- lora_name: name of Motion LoRAs placed in ```ComfyUI/custom_node/ComfyUI-AnimateDiff-Evolved/motion-lora``` directory.
+- strength: how strong (or weak) effect of Motion LoRA should be. Too high a value can lead to artifacts in final render.
+- prev_motion_lora: optional input allowing to stack LoRAs together.
+
+Outputs:
+- MOTION_LORA: motion_lora object storing the names of all the LoRAs that were chained behind it - can be plugged into the back of another AnimateDiff LoRA Loader, or into AniamateDiff Loader's motion_lora input.
+
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/5e46261d-fe87-4daa-8ac3-3ef615f4619d)
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/21ec6fa6-4874-4312-bd41-477307c9ebf8)
+
 
 
 ## Samples (download or drag images of the workflows into ComfyUI to instantly load the corresponding workflows!)
