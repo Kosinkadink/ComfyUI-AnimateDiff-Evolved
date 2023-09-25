@@ -4,7 +4,7 @@ Improved [AnimateDiff](https://github.com/guoyww/AnimateDiff/) integration for C
 
 Examples shown here will also often make use of two helpful set of nodes:
 - [ComfyUI-Advanced-ControlNet](https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet) for loading files in batches and controlling which latents should be affected by the ControlNet inputs (work in progress, will include more advance workflows + features for AnimateDiff usage later).
-- [comfy_controlnet_preprocessors](https://github.com/Fannovel16/comfy_controlnet_preprocessors) for ControlNet preprocessors not present in vanilla ComfyUI; this repo is archived, and future development by the dev will happen here: [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux). While most preprocessors are common between the two, some give different results. Workflows linked here use the archived version, comfy_controlnet_preprocessors. (TODO: I'll reinvestigate with more recent changes and update as needed)
+- [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux) for ControlNet preprocessors not present in vanilla ComfyUI. NOTE: If you previously used [comfy_controlnet_preprocessors](https://github.com/Fannovel16/comfy_controlnet_preprocessors), ***you will need to remove comfy_controlnet_preprocessors*** to avoid possible compatibility issues between the two. Actively maintained by Fannovel16.
 
 # Installation
 
@@ -83,27 +83,37 @@ TODO: fill this out
 [aaa_readme_00018_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9b3b5d7d-07da-4b5c-80bc-b3cd82475c71)
 
 
-# The rest of these workflows I haven't had the chance to rerun - will update this in a few hours
 
 ### txt2img w/ latent upscale (partial denoise on upscale)
 
-![txt2image_upscale_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/82a9ba7b-6da1-4eee-bead-8aca55943fb9)
+![t2i_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/6fc7acc0-337d-40c9-a7bd-3c37c0496ba0)
 
-![AA_upscale_gif_00007_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/0cb2ca7e-8666-4abc-86f2-f24a20ff4bed)
+![aaa_readme_up_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f4199e25-c839-41ed-8986-fb7dbbe2ac52)
+
+[aaa_readme_up_00002_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/2f44342f-3fd8-4863-8e3d-360377d608b7)
 
 
-### txt2img w/ latent upscale (partial denoise on upscale) - 48 frame animation with 16 frame window
+### txt2img w/ latent upscale (partial denoise on upscale) - 48 frame animation with 16 context_length (uniform)
 
-![txt2image_sliding_upscale_partialdenoise_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9980e9dc-dde3-421f-8c90-319b71616fdc)
+![t2i_context_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f0c736ee-d491-4c1d-9224-098576ca6cd0)
 
-TODO: add generated image here (gif is too big for github)
+[aaa_readme_up_00009_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f7a45f81-e700-4bfe-9fdd-fbcaa4fa8a4e)
 
 
 ### txt2img w/ latent upscale (full denoise on upscale)
 
-![txt2image_upscale_workflow](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/ce9f4883-dc8f-47ff-976d-e73a65d7ba07)
+![t2i_lat_ups_full_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/2d635a9c-634a-41d3-b358-837a6d956f19)
 
-![AA_upscale_gif_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff/assets/7365912/4ca8abd2-0b48-41d6-9eea-ed1467a68f5f)
+![aaa_readme_up_00010_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/804610de-18ec-43af-9af2-4a83cf31d16b)
+
+[aaa_readme_up_00012_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/3eb575cf-92dd-434a-b3db-1a2064ff0033)
+
+
+### txt2img w/ latent upscale (full denoise on upscale) - 48 frame animation with 16 context_length (uniform)
+
+![t2i_context_lat_ups_full_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9ee6ec0b-c5f8-4b21-a0af-9cd5c0b40061)
+
+[aaa_readme_up_00014_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/034aff4c-f814-4b87-b5d1-407b1089af0d)
 
 
 ### txt2img w/ ControlNet-stabilized latent-upscale (partial denoise on upscale, Scaled Soft ControlNet Weights)
