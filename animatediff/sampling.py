@@ -18,7 +18,7 @@ import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
 
 from .logger import logger
-from .motion_module import InjectionParams, VanillaTemporalModule, eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module
+from .motion_module import InjectionParams, VanillaTemporalModule, eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module, unload_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
 from .context import get_context_scheduler
 from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
@@ -136,7 +136,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             ##############################################
 
             # try to load motion module
-            motion_module = load_motion_module(params.model_name)
+            motion_module = load_motion_module(params.model_name, params.loras)
             # inject motion module into unet
             inject_motion_module(model=model, motion_module=motion_module, params=params)
 
@@ -162,6 +162,10 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
         finally:
             # attempt to eject motion module
             eject_motion_module(model=model)
+            # if loras are present, remove model so it can be re-loaded next time with fresh weights
+            if motion_module.has_loras():
+                unload_motion_module(motion_module)
+                del motion_module
             ##############################################
             # Restoration
             model_management.maximum_batch_area = orig_maximum_batch_area

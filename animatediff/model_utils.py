@@ -71,11 +71,21 @@ class BetaScheduleCache:
 
 class Folders:
     ANIMATEDIFF_MODELS = "AnimateDiffEvolved_Models"
+    MOTION_LORA = "AnimateDiffMotion_LoRA"
 
 
+# register motion models folder(s)
 folder_paths.folder_names_and_paths[Folders.ANIMATEDIFF_MODELS] = (
     [
         str(Path(__file__).parent.parent / "models")
+    ],
+    folder_paths.supported_pt_extensions
+)
+
+# register motion LoRA folder(s)
+folder_paths.folder_names_and_paths[Folders.MOTION_LORA] = (
+    [
+        str(Path(__file__).parent.parent / "motion_lora")
     ],
     folder_paths.supported_pt_extensions
 )
@@ -98,8 +108,16 @@ def get_motion_model_path(model_name: str):
     return folder_paths.get_full_path(Folders.ANIMATEDIFF_MODELS, model_name)
 
 
+def get_available_motion_loras():
+    return folder_paths.get_filename_list(Folders.MOTION_LORA)
+
+
+def get_motion_lora_path(lora_name: str):
+    return folder_paths.get_full_path(Folders.MOTION_LORA, lora_name)
+
+
 # modified from https://stackoverflow.com/questions/22058048/hashing-a-file-in-python
-def calculate_file_hash(filename: str):
+def calculate_file_hash(filename: str, hash_every_n: int = 50):
     h = hashlib.sha256()
     b = bytearray(1024*1024)
     mv = memoryview(b)
@@ -107,7 +125,7 @@ def calculate_file_hash(filename: str):
         i = 0
         # don't hash entire file, only portions of it
         while n := f.readinto(mv):
-            if i%50 == 0:
+            if i%hash_every_n == 0:
                 h.update(mv[:n])
             i += 1
     return h.hexdigest()
