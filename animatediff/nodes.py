@@ -34,13 +34,13 @@ sys.path.insert(0, Path(__file__).parent.parent.parent.parent)
 import nodes as comfy_nodes
 
 
-class AnimateDiffLoraLoader:
+class AnimateDiffLoRALoader:
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
                 "lora_name": (get_available_motion_loras(),),
-                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0}),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001}),
             },
             "optional": {
                 "prev_motion_lora": ("MOTION_LORA",),
@@ -442,7 +442,7 @@ class EmptyLatentImageLarge:
 NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
-    "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
+    "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_AnimateDiffCombine": AnimateDiffCombine,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
