@@ -12,7 +12,8 @@ import comfy.model_management as model_management
 from comfy.cli_args import args
 from comfy.utils import calculate_parameters, load_torch_file
 
-from .model_utils import calculate_file_hash, get_motion_model_path, is_checkpoint_sd1_5
+from .motion_lora import MotionLoRAList, MotionLoRAWrapper, MotionLoRAInfo
+from .model_utils import calculate_file_hash, get_motion_lora_path, get_motion_model_path, is_checkpoint_sd1_5
 from .logger import logger
 
 
@@ -41,21 +42,97 @@ def clone_injection(self, *args, **kwargs):
 comfy_model_patcher.ModelPatcher.clone = clone_injection
 
 
-# cache loaded motion modules
+# cached motion modules
 motion_modules: dict[str, 'MotionWrapper'] = {}
+# cached motion loras
+motion_loras: dict[str, MotionLoRAWrapper] = {}
 
 
-def load_motion_module(model_name: str):
+# adapted from https://github.com/guoyww/AnimateDiff/blob/main/animatediff/utils/convert_lora_safetensor_to_diffusers.py
+# Example LoRA keys:
+# down_blocks.0.motion_modules.0.temporal_transformer.transformer_blocks.0.attention_blocks.0.processor.to_q_lora.down.weight
+# down_blocks.0.motion_modules.0.temporal_transformer.transformer_blocks.0.attention_blocks.0.processor.to_q_lora.up.weight
+#
+# Example model keys: 
+# down_blocks.0.motion_modules.0.temporal_transformer.transformer_blocks.0.attention_blocks.0.to_q.weight
+#
+def apply_lora_to_mm_state_dict(model_dict: dict[str, Tensor], lora: MotionLoRAWrapper):
+    model_has_midblock = has_mid_block(model_dict)
+    lora_has_midblock = has_mid_block(lora.state_dict)
+
+    def get_version(has_midblock: bool):
+        return "v2" if has_midblock else "v1"
+
+    logger.info(f"Applying a {get_version(lora_has_midblock)} LoRA ({lora.info.name}) to a {get_version(model_has_midblock)} motion model.")
+
+    for key in lora.state_dict:
+        # if motion model doesn't have a mid_block, skip mid_block entries
+        if not model_has_midblock:
+            if "mid_block" in key: continue
+        # only process lora down key (we will process up at the same time as down)
+        if "up." in key: continue
+        
+        # key to get up value
+        up_key = key.replace(".down.", ".up.")
+        # adapt key to match model_dict format - remove 'processor.', '_lora', 'down.', and 'up.'
+        model_key = key.replace("processor.", "").replace("_lora", "").replace("down.", "").replace("up.", "")
+        # model keys have a '0.' after all 'to_out.' weight keys
+        model_key = model_key.replace("to_out.", "to_out.0.")
+
+        weight_down = lora.state_dict[key]
+        weight_up = lora.state_dict[up_key]
+        # apply weights to model_dict - multiply strength by matrix multiplication of up and down weights
+        model_dict[model_key] += lora.info.strength * torch.mm(weight_up, weight_down).to(model_dict[model_key].device)
+
+
+def load_motion_lora(lora_name: str) -> MotionLoRAWrapper:
+    # if already loaded, return it
+    lora_path = get_motion_lora_path(lora_name)
+    lora_hash = calculate_file_hash(lora_path, hash_every_n=3)
+
+    if lora_hash in motion_loras:
+        return motion_loras[lora_hash]
+    
+    logger.info(f"Loading motion LoRA {lora_name}")
+    l_state_dict = load_torch_file(lora_path)
+    lora = MotionLoRAWrapper(l_state_dict, lora_hash)
+    # add motion LoRA to cache
+    motion_loras[lora_hash] = lora
+    return lora
+
+
+def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None) -> 'MotionWrapper':
     # if already loaded, return it
     model_path = get_motion_model_path(model_name)
-    model_hash = calculate_file_hash(model_path)
+    model_hash = calculate_file_hash(model_path, hash_every_n=50)
 
+    # load lora, if present
+    loras = []
+    if motion_lora is not None:
+        for lora_info in motion_lora.loras:
+            lora = load_motion_lora(lora_info.name)
+            lora.set_info(lora_info)
+            loras.append(lora)
+        loras.sort(key=lambda x: x.hash)
+        # use lora hashes with model hash
+        for lora in loras:
+            model_hash += lora.hash
+        model_hash = str(hash(model_hash))
+
+    # models are determined by combo self + applied loras
     if model_hash in motion_modules:
         return motion_modules[model_hash]
 
     logger.info(f"Loading motion module {model_name}")
     mm_state_dict = load_torch_file(model_path)
-    motion_module = MotionWrapper(mm_state_dict=mm_state_dict, mm_name=model_name)
+
+    # load lora state dicts if exist
+    if len(loras) > 0:
+        for lora in loras:
+            # apply LoRA to mm_state_dict
+            apply_lora_to_mm_state_dict(mm_state_dict, lora)
+
+    motion_module = MotionWrapper(mm_state_dict=mm_state_dict, mm_hash=model_hash, mm_name=model_name, loras=loras)
 
     parameters = calculate_parameters(mm_state_dict, "")
     usefp16 = model_management.should_use_fp16(model_params=parameters)
@@ -69,6 +146,11 @@ def load_motion_module(model_name: str):
     # add to motion_module cache
     motion_modules[model_hash] = motion_module
     return motion_module
+
+
+def unload_motion_module(motion_module: 'MotionWrapper'):
+    logger.info(f"Removing motion module {motion_module.mm_name} from cache")
+    motion_modules.pop(motion_module.mm_hash, None)
 
 
 ##################################################################################
@@ -203,6 +285,7 @@ class InjectionParams:
         self.context_schedule: str = None
         self.closed_loop: bool = False
         self.version: str = None
+        self.loras: MotionLoRAList = None
     
     def set_version(self, motion_module: 'MotionWrapper'):
         self.version = motion_module.version
@@ -213,6 +296,9 @@ class InjectionParams:
         self.context_overlap = context_overlap
         self.context_schedule = context_schedule
         self.closed_loop = closed_loop
+    
+    def set_loras(self, loras: MotionLoRAList):
+        self.loras = loras.clone()
     
     def reset_context(self):
         self.context_length = None
@@ -232,6 +318,8 @@ class InjectionParams:
             context_overlap=self.context_overlap, context_schedule=self.context_schedule,
             closed_loop=self.closed_loop
             )
+        if self.loras is not None:
+            new_params.loras = self.loras.clone()
         return new_params
         
 
@@ -305,7 +393,7 @@ def has_mid_block(mm_state_dict: dict[str, Tensor]):
 
 
 class MotionWrapper(nn.Module):
-    def __init__(self, mm_state_dict: dict[str, Tensor], mm_name: str="mm_sd_v15.ckpt"):
+    def __init__(self, mm_state_dict: dict[str, Tensor], mm_hash: str, mm_name: str="mm_sd_v15.ckpt" , loras: list[MotionLoRAInfo]=None):
         super().__init__()
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
@@ -317,9 +405,14 @@ class MotionWrapper(nn.Module):
             self.up_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.UP))
         if has_mid_block(mm_state_dict):
             self.mid_block = MotionModule(1280, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.MID)
+        self.mm_hash = mm_hash
         self.mm_name = mm_name
         self.version = "v1" if self.mid_block is None else "v2"
         self.AD_video_length: int = 24
+        self.loras = loras
+    
+    def has_loras(self):
+        return self.loras is not None
     
     def set_video_length(self, video_length: int):
         self.AD_video_length = video_length

@@ -14,9 +14,10 @@ import folder_paths
 from comfy.sd import load_checkpoint_guess_config
 from comfy.model_patcher import ModelPatcher
 from .logger import logger
-from .motion_module import InjectorVersion, eject_params_from_model, inject_params_into_model, load_motion_module
-from .motion_module import InjectionParams
-from .model_utils import IsChangedHelper, get_available_motion_models, BetaSchedules, raise_if_not_checkpoint_sd1_5
+from .motion_lora import MotionLoRAInfo, MotionLoRAList
+from .motion_module import InjectorVersion, eject_params_from_model, get_injected_mm_params, inject_params_into_model, load_motion_lora, load_motion_module
+from .motion_module import InjectionParams, is_injected_mm_params
+from .model_utils import IsChangedHelper, get_available_motion_loras, get_available_motion_models, BetaSchedules, raise_if_not_checkpoint_sd1_5
 from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .sampling import animatediff_sample_factory
 
@@ -33,6 +34,36 @@ sys.path.insert(0, Path(__file__).parent.parent.parent.parent)
 import nodes as comfy_nodes
 
 
+class AnimateDiffLoRALoader:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "lora_name": (get_available_motion_loras(),),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001}),
+            },
+            "optional": {
+                "prev_motion_lora": ("MOTION_LORA",),
+            }
+        }
+    
+    RETURN_TYPES = ("MOTION_LORA",)
+    CATEGORY = "Animate Diff"
+    FUNCTION = "load_motion_lora"
+
+    def load_motion_lora(self, lora_name: str, strength: float, prev_motion_lora: MotionLoRAList=None):
+        if prev_motion_lora is None:
+            prev_motion_lora = MotionLoRAList()
+        else:
+            prev_motion_lora = prev_motion_lora.clone()
+        # load lora
+        lora = load_motion_lora(lora_name)
+        lora_info = MotionLoRAInfo(name=lora_name, strength=strength, hash=lora.hash)
+        prev_motion_lora.add_lora(lora_info)
+
+        return (prev_motion_lora,)
+
+
 class AnimateDiffLoaderWithContext:
     @classmethod
     def INPUT_TYPES(s):
@@ -43,7 +74,8 @@ class AnimateDiffLoaderWithContext:
                 "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
             },
             "optional": {
-                "context_options": ("CONTEXT_OPTIONS",)
+                "context_options": ("CONTEXT_OPTIONS",),
+                "motion_lora": ("MOTION_LORA",),
             }
         }
     
@@ -55,11 +87,11 @@ class AnimateDiffLoaderWithContext:
     def load_mm_and_inject_params(self,
         model: ModelPatcher,
         model_name: str, beta_schedule: str,
-        context_options: ContextOptions=None,
+        context_options: ContextOptions=None, motion_lora: MotionLoRAList=None,
     ):
         raise_if_not_checkpoint_sd1_5(model)
         # load motion module
-        load_motion_module(model_name)
+        load_motion_module(model_name, motion_lora)
         # set injection params
         injection_params = InjectionParams(
                 video_length=None,
@@ -78,6 +110,8 @@ class AnimateDiffLoaderWithContext:
                         context_schedule=context_options.context_schedule,
                         closed_loop=context_options.closed_loop
                 )
+        if motion_lora:
+            injection_params.set_loras(motion_lora)
         # inject for use in sampling code
         model = inject_params_into_model(model, injection_params)
 
@@ -408,6 +442,7 @@ class EmptyLatentImageLarge:
 NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
+    "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_AnimateDiffCombine": AnimateDiffCombine,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -418,6 +453,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader",
+    "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader",
     "ADE_AnimateDiffUnload": "AnimateDiff Unload",
     "ADE_AnimateDiffCombine": "AnimateDiff Combine",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch)",
