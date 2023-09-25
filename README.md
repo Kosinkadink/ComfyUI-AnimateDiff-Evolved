@@ -63,7 +63,7 @@ To use, just plug in your model into the AnimateDiff Loader. When the output mod
 
 The desired animation length is determined by the latents passed into the sampler. **With context_options connected, there is no limit to the amount of latents you can pass in, AKA unlimited animation length.** When no context_options are connected, the sweetspot is 16 latents passed in for best results, with a limit of 24 or 32 based on motion model loaded. **These same rules apply to Uniform Context Option's context_length**.
 
-You can also connect AnimateDiff LoRA Loader nodes to influence the overall movement in the image - currently, only works well on motion model v2 like ss
+You can also connect AnimateDiff LoRA Loader nodes to influence the overall movement in the image - currently, only works well on motion v2-based models.
 
 ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/524ba030-97aa-47a5-a0fd-ecffbbf5e439)
 ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/908d1848-13d4-4e86-bdb0-f6870fd28b06)
@@ -72,11 +72,14 @@ You can also connect AnimateDiff LoRA Loader nodes to influence the overall move
 
 ## Uniform Context Options
 TODO: fill this out
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/426a2f07-fdcd-477c-bd87-48cf17d91cd0)
+
+
 
 ## AnimateDiff LoRA Loader
 ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/11159b61-7077-4cb1-864c-078bfe82ece3)
 
-Allows plugging in Motion LoRAs into motion models. Current Motion LoRAs only properly support v2-based motion models. Does not affect sampling speed, as the values are frozen after model load. **If you experience slowdowns for using LoRAs, please open an issue so I can resolve it.**
+Allows plugging in Motion LoRAs into motion models. Current Motion LoRAs only properly support v2-based motion models. Does not affect sampling speed, as the values are frozen after model load. **If you experience slowdowns for using LoRAs, please open an issue so I can resolve it.** Currently, the three models that I know are v2-based are ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth```.
 
 Inputs:
 - lora_name: name of Motion LoRAs placed in ```ComfyUI/custom_node/ComfyUI-AnimateDiff-Evolved/motion-lora``` directory.
@@ -95,7 +98,7 @@ Outputs:
 
 ### txt2img
 
-![t2i_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/b2a86e3f-1eaf-4609-8c29-8226c32985fe)
+![t2i_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/37eabd35-265e-4f36-8389-85c68f7fd938)
 
 ![aaa_readme_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/adf2d591-85c4-4d84-9a6f-f7296b5b7f76)
 
@@ -105,21 +108,39 @@ Outputs:
 
 ### txt2img - 48 frame animation with 16 context_length (uniform)
 
-![t2i_context_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/8dd62a63-0907-4691-9964-37c2d5eb226f)
+![t2i_context_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/5f755695-04d6-4ad0-8cf9-60858d783617)
 
 ![aaa_readme_00017_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/3033dc45-2876-4d14-9546-ab59a00d8ca9)
 
 [aaa_readme_00018_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9b3b5d7d-07da-4b5c-80bc-b3cd82475c71)
 
 
+### txt2img - 32 frame animation with 16 context_length (uniform) - PanLeft and ZoomOut Motion LoRAs
+
+![t2i_context_mlora_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9d2e0f07-f742-47b6-9cc8-9ce1ba5a1097)
+
+![aaa_readme_00094_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/14abee9a-5500-4d14-8632-15ac77ba5709)
+
+[aaa_readme_00095_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/d730ae2e-188c-4a61-8a6d-bd48f60a2d07)
+
 
 ### txt2img w/ latent upscale (partial denoise on upscale)
 
-![t2i_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/6fc7acc0-337d-40c9-a7bd-3c37c0496ba0)
+![t2i_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/e61ce55c-c31d-4b2b-8711-5cc02bb91132)
 
 ![aaa_readme_up_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f4199e25-c839-41ed-8986-fb7dbbe2ac52)
 
 [aaa_readme_up_00002_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/2f44342f-3fd8-4863-8e3d-360377d608b7)
+
+
+
+### txt2img w/ latent upscale (partial denoise on upscale) - PanLeft and ZoomOut Motion LoRAs
+
+![t2i_mlora_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/713d16c7-ebdf-4a3a-8304-08d95ce93df5)
+
+![aaa_readme_up_00023_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/e2ca5c0c-b5d9-42de-b877-4ed29db81eb9)
+
+[aaa_readme_up_00024_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/414c16d8-231c-422f-8dfc-a93d4b68ffcc)
 
 
 
@@ -128,6 +149,8 @@ Outputs:
 ![t2i_context_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f0c736ee-d491-4c1d-9224-098576ca6cd0)
 
 [aaa_readme_up_00009_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f7a45f81-e700-4bfe-9fdd-fbcaa4fa8a4e)
+
+
 
 
 
