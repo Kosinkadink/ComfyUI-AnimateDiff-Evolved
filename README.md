@@ -23,28 +23,34 @@ Examples shown here will also often make use of two helpful set of nodes:
    - Stabilized finetunes of mm_sd_v14, ```mm-Stabilized_mid``` and ```mm-Stabilized_high```, by **manshoety**: [HuggingFace](https://huggingface.co/manshoety/AD_Stabilized_Motion/tree/main)
    - Higher resolution finetune,```temporaldiff-v1-animatediff```  by **CiaraRowles**: [HuggingFace](https://huggingface.co/CiaraRowles/TemporalDiff/tree/main)
 2. Place models in ```ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/models```. They can be renamed if you want.
-3. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Masking the conditioning of ControlNets to only affect part of the animation? Sure. Try stuff and you will be surprised by what you can do. Samples with workflows are included below.
+3. Optionally, you can use Motion LoRAs to influence movement of v2-based motion models like mm_sd_v15_v2.
+   - [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI?usp=sharing) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836/animatediff-motion-modules)
+   - Place Motion LoRAs in ```ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/motion-lora```. They can be renamed if you want.
+5. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Masking the conditioning of ControlNets to only affect part of the animation? Sure. Try stuff and you will be surprised by what you can do. Samples with workflows are included below.
+
 
 # Features:
 - Compatible with a variety of samplers, vanilla KSampler nodes and KSampler (Effiecient) nodes.
 - ControlNet support - both per-frame, or "interpolating" between frames; can kind of use this as img2video (see workflows below)
-- Infinite animation length support using sliding context windows (introduced 9/17/23)
+- Infinite animation length support using sliding context windows **(introduced 9/17/23)**
+- Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models (like mm_sd_v15_v2). Perhaps can be trained for v1 motion modules too, or will lead to more finetunes of mm_sd_v15_v2 in the community. **(introduced 9/25/23)**
 
 # Upcoming features:
 - Prompt travel, and in general more control over per-frame conditioning (working on it now)
-- Motion LoRA support (working on it now)
 - Alternate context schedulers and context types
 
 # Core Nodes:
 
 ## AnimateDiff Loader
-![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/eb07560b-5270-4fc0-9016-311a0327c413)
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/232ef170-30e0-4119-ace2-4cc9a842d1ac)
+
 
 The ***only required node to use AnimateDiff***, the Loader outputs a model that will perform AnimateDiff functionality when passed into a sampling node.
 
 Inputs:
 - model: model to setup for AnimateDiff usage. ***Must be a SD1.5-derived model.***
 - context_options: optional context window to use while sampling; if passed in, total animation length has no limit. If not passed in, animation length will be limited to either 24 or 32 frames, depending on motion model.
+- motion_lora: optional motion LoRA input; if passed in, can influence movement.
 - model_name: motion model to use with AnimateDiff.
 - beta_schedule: noise scheduler for SD. ```sqrt_linear``` is the intended way to use AnimateDiff, with expected saturation. However, ```linear``` can give useful results as well, so feel free to experiment.
 
