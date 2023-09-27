@@ -478,21 +478,25 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                         if isinstance(cond_item, Tensor):
                             # check that tensor is the expected length - x.size(0)
                             if cond_item.size(0) == x.size(0):
-                                pass
                                 # if so, it's subsetting time - tell controls the expected indeces so they can handle them
                                 actual_cond_item = cond_item[full_idxs]
                                 resized_actual_cond.append(actual_cond_item)
                             else:
                                 resized_actual_cond.append(cond_item)
                         elif isinstance(cond_item, dict):
-                            # when in dictionary, look for control
-                            if "control" in cond_item:
-                                control_item = cond_item["control"]
-                                if hasattr(control_item, "sub_idxs"):
-                                    prepare_control_objects(control_item, full_idxs)
-                                else:
-                                    raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; use Control objects from Kosinkadink/Advanced-ControlNet nodes.")
-                            resized_actual_cond.append(cond_item)
+                            new_cond_item = cond_item.copy()
+                            # when in dictionary, look for control and tensors
+                            for cond_key, cond_value in new_cond_item.items():
+                                if cond_key == "control":
+                                    control_item = cond_value
+                                    if hasattr(control_item, "sub_idxs"):
+                                        prepare_control_objects(control_item, full_idxs)
+                                    else:
+                                        raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; use Control objects from Kosinkadink/Advanced-ControlNet nodes.")
+                                elif isinstance(cond_value, Tensor):
+                                    if cond_value.size(0) == x.size(0):
+                                        new_cond_item[cond_key] = cond_value[full_idxs]
+                            resized_actual_cond.append(new_cond_item)
                         else:
                             resized_actual_cond.append(cond_item)
                     resized_cond.append(resized_actual_cond)
