@@ -21,30 +21,37 @@ Examples shown here will also often make use of two helpful set of nodes:
 1. Download motion modules. You will need at least 1. Different modules produce different results.
    - Original models ```mm_sd_v14```, ```mm_sd_v15```, and ```mm_sd_v15_v2```: [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836) | [Baidu NetDisk](https://pan.baidu.com/s/18ZpcSM6poBqxWNHtnyMcxg?pwd=et8y).
    - Stabilized finetunes of mm_sd_v14, ```mm-Stabilized_mid``` and ```mm-Stabilized_high```, by **manshoety**: [HuggingFace](https://huggingface.co/manshoety/AD_Stabilized_Motion/tree/main)
+   - Finetunes of mm_sd_v15_v2, ```mm-p_0.5.pth``` and ```mm-p_0.75.pth```, by **manshoety**: [HuggingFace](https://huggingface.co/manshoety/beta_testing_models/tree/main)
    - Higher resolution finetune,```temporaldiff-v1-animatediff```  by **CiaraRowles**: [HuggingFace](https://huggingface.co/CiaraRowles/TemporalDiff/tree/main)
 2. Place models in ```ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/models```. They can be renamed if you want.
-3. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Masking the conditioning of ControlNets to only affect part of the animation? Sure. Try stuff and you will be surprised by what you can do. Samples with workflows are included below.
+3. Optionally, you can use Motion LoRAs to influence movement of v2-based motion models like mm_sd_v15_v2.
+   - [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI?usp=sharing) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836/animatediff-motion-modules)
+   - Place Motion LoRAs in ```ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/motion-lora```. They can be renamed if you want.
+5. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Masking the conditioning of ControlNets to only affect part of the animation? Sure. Try stuff and you will be surprised by what you can do. Samples with workflows are included below.
+
 
 # Features:
 - Compatible with a variety of samplers, vanilla KSampler nodes and KSampler (Effiecient) nodes.
 - ControlNet support - both per-frame, or "interpolating" between frames; can kind of use this as img2video (see workflows below)
-- Infinite animation length support using sliding context windows (introduced 9/17/23)
+- Infinite animation length support using sliding context windows **(introduced 9/17/23)**
+- Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth``` **(introduced 9/25/23)**
 
 # Upcoming features:
 - Prompt travel, and in general more control over per-frame conditioning (working on it now)
-- Motion LoRA support (working on it now)
 - Alternate context schedulers and context types
 
 # Core Nodes:
 
 ## AnimateDiff Loader
-![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/eb07560b-5270-4fc0-9016-311a0327c413)
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/232ef170-30e0-4119-ace2-4cc9a842d1ac)
+
 
 The ***only required node to use AnimateDiff***, the Loader outputs a model that will perform AnimateDiff functionality when passed into a sampling node.
 
 Inputs:
 - model: model to setup for AnimateDiff usage. ***Must be a SD1.5-derived model.***
 - context_options: optional context window to use while sampling; if passed in, total animation length has no limit. If not passed in, animation length will be limited to either 24 or 32 frames, depending on motion model.
+- motion_lora: optional motion LoRA input; if passed in, can influence movement.
 - model_name: motion model to use with AnimateDiff.
 - beta_schedule: noise scheduler for SD. ```sqrt_linear``` is the intended way to use AnimateDiff, with expected saturation. However, ```linear``` can give useful results as well, so feel free to experiment.
 
@@ -55,19 +62,43 @@ Outputs:
 To use, just plug in your model into the AnimateDiff Loader. When the output model (and any derivative of it in this pathway) is passed into a sampling node, AnimateDiff will do its thing.
 
 The desired animation length is determined by the latents passed into the sampler. **With context_options connected, there is no limit to the amount of latents you can pass in, AKA unlimited animation length.** When no context_options are connected, the sweetspot is 16 latents passed in for best results, with a limit of 24 or 32 based on motion model loaded. **These same rules apply to Uniform Context Option's context_length**.
-![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/08cc9da9-a21c-469b-8ed6-6153845f80b9)
-![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/7d9a21aa-59ee-47ec-8949-8f6a746e7bd7)
+
+You can also connect AnimateDiff LoRA Loader nodes to influence the overall movement in the image - currently, only works well on motion v2-based models.
+
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/524ba030-97aa-47a5-a0fd-ecffbbf5e439)
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/908d1848-13d4-4e86-bdb0-f6870fd28b06)
+
 
 
 ## Uniform Context Options
 TODO: fill this out
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/426a2f07-fdcd-477c-bd87-48cf17d91cd0)
+
+
+
+## AnimateDiff LoRA Loader
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/11159b61-7077-4cb1-864c-078bfe82ece3)
+
+Allows plugging in Motion LoRAs into motion models. Current Motion LoRAs only properly support v2-based motion models. Does not affect sampling speed, as the values are frozen after model load. **If you experience slowdowns for using LoRAs, please open an issue so I can resolve it.** Currently, the three models that I know are v2-based are ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth```.
+
+Inputs:
+- lora_name: name of Motion LoRAs placed in ```ComfyUI/custom_node/ComfyUI-AnimateDiff-Evolved/motion-lora``` directory.
+- strength: how strong (or weak) effect of Motion LoRA should be. Too high a value can lead to artifacts in final render.
+- prev_motion_lora: optional input allowing to stack LoRAs together.
+
+Outputs:
+- MOTION_LORA: motion_lora object storing the names of all the LoRAs that were chained behind it - can be plugged into the back of another AnimateDiff LoRA Loader, or into AniamateDiff Loader's motion_lora input.
+
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/5e46261d-fe87-4daa-8ac3-3ef615f4619d)
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/21ec6fa6-4874-4312-bd41-477307c9ebf8)
+
 
 
 ## Samples (download or drag images of the workflows into ComfyUI to instantly load the corresponding workflows!)
 
 ### txt2img
 
-![t2i_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/b2a86e3f-1eaf-4609-8c29-8226c32985fe)
+![t2i_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/37eabd35-265e-4f36-8389-85c68f7fd938)
 
 ![aaa_readme_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/adf2d591-85c4-4d84-9a6f-f7296b5b7f76)
 
@@ -77,21 +108,39 @@ TODO: fill this out
 
 ### txt2img - 48 frame animation with 16 context_length (uniform)
 
-![t2i_context_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/8dd62a63-0907-4691-9964-37c2d5eb226f)
+![t2i_context_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/5f755695-04d6-4ad0-8cf9-60858d783617)
 
 ![aaa_readme_00017_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/3033dc45-2876-4d14-9546-ab59a00d8ca9)
 
 [aaa_readme_00018_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9b3b5d7d-07da-4b5c-80bc-b3cd82475c71)
 
 
+### txt2img - 32 frame animation with 16 context_length (uniform) - PanLeft and ZoomOut Motion LoRAs
+
+![t2i_context_mlora_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9d2e0f07-f742-47b6-9cc8-9ce1ba5a1097)
+
+![aaa_readme_00094_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/14abee9a-5500-4d14-8632-15ac77ba5709)
+
+[aaa_readme_00095_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/d730ae2e-188c-4a61-8a6d-bd48f60a2d07)
+
 
 ### txt2img w/ latent upscale (partial denoise on upscale)
 
-![t2i_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/6fc7acc0-337d-40c9-a7bd-3c37c0496ba0)
+![t2i_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/e61ce55c-c31d-4b2b-8711-5cc02bb91132)
 
 ![aaa_readme_up_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f4199e25-c839-41ed-8986-fb7dbbe2ac52)
 
 [aaa_readme_up_00002_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/2f44342f-3fd8-4863-8e3d-360377d608b7)
+
+
+
+### txt2img w/ latent upscale (partial denoise on upscale) - PanLeft and ZoomOut Motion LoRAs
+
+![t2i_mlora_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/713d16c7-ebdf-4a3a-8304-08d95ce93df5)
+
+![aaa_readme_up_00023_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/e2ca5c0c-b5d9-42de-b877-4ed29db81eb9)
+
+[aaa_readme_up_00024_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/414c16d8-231c-422f-8dfc-a93d4b68ffcc)
 
 
 
@@ -100,6 +149,8 @@ TODO: fill this out
 ![t2i_context_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f0c736ee-d491-4c1d-9224-098576ca6cd0)
 
 [aaa_readme_up_00009_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f7a45f81-e700-4bfe-9fdd-fbcaa4fa8a4e)
+
+
 
 
 
