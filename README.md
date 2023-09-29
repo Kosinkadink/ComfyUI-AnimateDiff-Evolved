@@ -2,8 +2,10 @@
 
 Improved [AnimateDiff](https://github.com/guoyww/AnimateDiff/) integration for ComfyUI, initially adapted from [sd-webui-animatediff](https://github.com/continue-revolution/sd-webui-animatediff) but changed greatly since then. Please read the AnimateDiff repo README for more information about how it works at its core.
 
-Examples shown here will also often make use of two helpful set of nodes:
+Examples shown here will also often make use of these helpful sets of nodes:
+- [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) for prompt-travel functionality with the BatchPromptSchedule node.
 - [ComfyUI-Advanced-ControlNet](https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet) for loading files in batches and controlling which latents should be affected by the ControlNet inputs (work in progress, will include more advance workflows + features for AnimateDiff usage later).
+- [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) for loading videos, combining videos, and doing various image/latent operations like appending, splitting, duplicating, selecting, or counting.
 - [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux) for ControlNet preprocessors not present in vanilla ComfyUI. NOTE: If you previously used [comfy_controlnet_preprocessors](https://github.com/Fannovel16/comfy_controlnet_preprocessors), ***you will need to remove comfy_controlnet_preprocessors*** to avoid possible compatibility issues between the two. Actively maintained by Fannovel16.
 
 # Installation
@@ -35,10 +37,11 @@ Examples shown here will also often make use of two helpful set of nodes:
 - ControlNet support - both per-frame, or "interpolating" between frames; can kind of use this as img2video (see workflows below)
 - Infinite animation length support using sliding context windows **(introduced 9/17/23)**
 - Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth``` **(introduced 9/25/23)**
+- Prompt travel using BatchPromptSchedule node from [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) **(working since 9/27/23)**
 
 # Upcoming features:
-- Prompt travel, and in general more control over per-frame conditioning (working on it now)
-- Alternate context schedulers and context types
+- Alternate context schedulers and context types (in progress)
+- Investigate AnimateDiff inpainting or motion masking abilities
 
 # Core Nodes:
 
