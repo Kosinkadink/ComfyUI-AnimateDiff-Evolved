@@ -48,7 +48,7 @@ class AnimateDiffLoRALoader:
         }
     
     RETURN_TYPES = ("MOTION_LORA",)
-    CATEGORY = "Animate Diff"
+    CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "load_motion_lora"
 
     def load_motion_lora(self, lora_name: str, strength: float, prev_motion_lora: MotionLoRAList=None):
@@ -80,7 +80,7 @@ class AnimateDiffLoaderWithContext:
         }
     
     RETURN_TYPES = ("MODEL",)
-    CATEGORY = "Animate Diff"
+    CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "load_mm_and_inject_params"
 
 
@@ -132,7 +132,7 @@ class AnimateDiffUniformContextOptions:
         }
     
     RETURN_TYPES = ("CONTEXT_OPTIONS",)
-    CATEGORY = "Animate Diff"
+    CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "create_options"
 
     def create_options(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool):
@@ -161,7 +161,7 @@ class AnimateDiffLoader_Deprecated:
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff/deprecated"
+    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated"
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(
@@ -208,7 +208,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff/deprecated"
+    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated"
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(self,
@@ -254,7 +254,7 @@ class AnimateDiffUnload:
         return {"required": {"model": ("MODEL",)}}
 
     RETURN_TYPES = ("MODEL",)
-    CATEGORY = "Animate Diff"
+    CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "unload_motion_modules"
 
     def unload_motion_modules(self, model: ModelPatcher):
@@ -264,7 +264,7 @@ class AnimateDiffUnload:
         return (model,)
 
 
-class AnimateDiffCombine:
+class AnimateDiffCombine_Deprecated:
     @classmethod
     def INPUT_TYPES(s):
         ffmpeg_path = shutil.which("ffmpeg")
@@ -295,7 +295,7 @@ class AnimateDiffCombine:
 
     RETURN_TYPES = ("GIF",)
     OUTPUT_NODE = True
-    CATEGORY = "Animate Diff"
+    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated"
     FUNCTION = "generate_gif"
 
     def generate_gif(
@@ -409,7 +409,7 @@ class CheckpointLoaderSimpleWithNoiseSelect:
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
     FUNCTION = "load_checkpoint"
 
-    CATEGORY = "Animate Diff/loaders"
+    CATEGORY = "Animate Diff 🎭🅐🅓/extras"
 
     def load_checkpoint(self, ckpt_name, beta_schedule, output_vae=True, output_clip=True):
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
@@ -432,7 +432,7 @@ class EmptyLatentImageLarge:
     RETURN_TYPES = ("LATENT",)
     FUNCTION = "generate"
 
-    CATEGORY = "Animate Diff/latent"
+    CATEGORY = "Animate Diff 🎭🅐🅓/extras"
 
     def generate(self, width, height, batch_size=1):
         latent = torch.zeros([batch_size, 4, height // 8, width // 8])
@@ -444,20 +444,20 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
-    "ADE_AnimateDiffCombine": AnimateDiffCombine,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
+    "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options",
-    "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader",
-    "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader",
-    "ADE_AnimateDiffUnload": "AnimateDiff Unload",
-    "ADE_AnimateDiffCombine": "AnimateDiff Combine",
-    "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch)",
-    "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select",
-    "AnimateDiffLoaderV1": "AnimateDiff Loader [Deprecated]",
-    "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [Deprecated]",
+    "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
+    "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓",
+    "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader 🎭🅐🅓",
+    "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
+    "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
+    "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select 🎭🅐🅓",
+    "AnimateDiffLoaderV1": "AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
+    "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
+    "ADE_AnimateDiffCombine": "AnimateDiff Combine [DEPRECATED] 🎭🅐🅓",
 }

@@ -2,8 +2,10 @@
 
 Improved [AnimateDiff](https://github.com/guoyww/AnimateDiff/) integration for ComfyUI, initially adapted from [sd-webui-animatediff](https://github.com/continue-revolution/sd-webui-animatediff) but changed greatly since then. Please read the AnimateDiff repo README for more information about how it works at its core.
 
-Examples shown here will also often make use of two helpful set of nodes:
+Examples shown here will also often make use of these helpful sets of nodes:
+- [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) for prompt-travel functionality with the BatchPromptSchedule node.
 - [ComfyUI-Advanced-ControlNet](https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet) for loading files in batches and controlling which latents should be affected by the ControlNet inputs (work in progress, will include more advance workflows + features for AnimateDiff usage later).
+- [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) for loading videos, combining images into videos, and doing various image/latent operations like appending, splitting, duplicating, selecting, or counting.
 - [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux) for ControlNet preprocessors not present in vanilla ComfyUI. NOTE: If you previously used [comfy_controlnet_preprocessors](https://github.com/Fannovel16/comfy_controlnet_preprocessors), ***you will need to remove comfy_controlnet_preprocessors*** to avoid possible compatibility issues between the two. Actively maintained by Fannovel16.
 
 # Installation
@@ -35,10 +37,11 @@ Examples shown here will also often make use of two helpful set of nodes:
 - ControlNet support - both per-frame, or "interpolating" between frames; can kind of use this as img2video (see workflows below)
 - Infinite animation length support using sliding context windows **(introduced 9/17/23)**
 - Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth``` **(introduced 9/25/23)**
+- Prompt travel using BatchPromptSchedule node from [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) **(working since 9/27/23)**
 
 # Upcoming features:
-- Prompt travel, and in general more control over per-frame conditioning (working on it now)
-- Alternate context schedulers and context types
+- Alternate context schedulers and context types (in progress)
+- Investigate AnimateDiff inpainting or motion masking abilities
 
 # Core Nodes:
 
@@ -98,7 +101,7 @@ Outputs:
 
 ### txt2img
 
-![t2i_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/37eabd35-265e-4f36-8389-85c68f7fd938)
+![t2i_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/b1374343-7b86-453f-b6f5-9717fd8b09aa)
 
 ![aaa_readme_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/adf2d591-85c4-4d84-9a6f-f7296b5b7f76)
 
@@ -106,18 +109,38 @@ Outputs:
 
 
 
+### txt2img - (prompt travel)
+
+![t2i_prompttravel_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/54424a3b-fb05-4119-811a-727ebcf4969a)
+
+![aaa_readme_00008_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/8911cd93-be2a-4e20-a90b-b356fb2dbc59)
+
+[aaa_readme_00010_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/294c41fb-bd1f-4641-befe-b4fc0dc480c3)
+
+
+
 ### txt2img - 48 frame animation with 16 context_length (uniform)
 
-![t2i_context_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/5f755695-04d6-4ad0-8cf9-60858d783617)
+![t2i_context_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/a9232105-360d-4947-b88c-78f933af4d5a)
 
-![aaa_readme_00017_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/3033dc45-2876-4d14-9546-ab59a00d8ca9)
+![aaa_readme_00004_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/1c5433c2-e368-48ff-a3a7-dfee7b9cc7a8)
 
-[aaa_readme_00018_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9b3b5d7d-07da-4b5c-80bc-b3cd82475c71)
+[aaa_readme_00006_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f724367a-68e6-4e83-a23f-20abf692ce0c)
+
+
+
+### txt2img - (prompt travel) 48 frame animation with 16 context_length (uniform)
+
+![t2i_context_promptravel](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/d2b9cfd1-3c2f-4660-86ce-0a60db1ad4ad)
+
+![aaa_readme_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/5aad2768-1b16-4e2d-a26a-89f3c1a8954f)
+
+[aaa_readme_00002_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/129a95da-d541-489a-8eb4-d734fe22e90c)
 
 
 ### txt2img - 32 frame animation with 16 context_length (uniform) - PanLeft and ZoomOut Motion LoRAs
 
-![t2i_context_mlora_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9d2e0f07-f742-47b6-9cc8-9ce1ba5a1097)
+![t2i_context_mlora_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/41ec4141-389c-4ef4-ae3e-a963a0fa841f)
 
 ![aaa_readme_00094_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/14abee9a-5500-4d14-8632-15ac77ba5709)
 
@@ -126,7 +149,7 @@ Outputs:
 
 ### txt2img w/ latent upscale (partial denoise on upscale)
 
-![t2i_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/e61ce55c-c31d-4b2b-8711-5cc02bb91132)
+![t2i_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/521991dd-8e39-4fed-9970-514507c75067)
 
 ![aaa_readme_up_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f4199e25-c839-41ed-8986-fb7dbbe2ac52)
 
@@ -136,7 +159,7 @@ Outputs:
 
 ### txt2img w/ latent upscale (partial denoise on upscale) - PanLeft and ZoomOut Motion LoRAs
 
-![t2i_mlora_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/713d16c7-ebdf-4a3a-8304-08d95ce93df5)
+![t2i_mlora_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f34882de-7dd4-4264-8f59-e24da350be2a)
 
 ![aaa_readme_up_00023_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/e2ca5c0c-b5d9-42de-b877-4ed29db81eb9)
 
@@ -146,17 +169,15 @@ Outputs:
 
 ### txt2img w/ latent upscale (partial denoise on upscale) - 48 frame animation with 16 context_length (uniform)
 
-![t2i_context_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f0c736ee-d491-4c1d-9224-098576ca6cd0)
+![t2i_lat_ups_full_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/a1ebc14e-853e-4cda-9cda-9a7553fa3d85)
 
 [aaa_readme_up_00009_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f7a45f81-e700-4bfe-9fdd-fbcaa4fa8a4e)
 
 
 
-
-
 ### txt2img w/ latent upscale (full denoise on upscale)
 
-![t2i_lat_ups_full_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/2d635a9c-634a-41d3-b358-837a6d956f19)
+![t2i_lat_ups_full_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/5058f201-3f52-4c48-ac7e-525c3c8f3df3)
 
 ![aaa_readme_up_00010_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/804610de-18ec-43af-9af2-4a83cf31d16b)
 
@@ -166,7 +187,7 @@ Outputs:
 
 ### txt2img w/ latent upscale (full denoise on upscale) - 48 frame animation with 16 context_length (uniform)
 
-![t2i_context_lat_ups_full_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9ee6ec0b-c5f8-4b21-a0af-9cd5c0b40061)
+![t2i_context_lat_ups_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/7b9ec22b-d4e0-4083-9846-5743ed90583e)
 
 [aaa_readme_up_00014_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/034aff4c-f814-4b87-b5d1-407b1089af0d)
 
@@ -174,7 +195,7 @@ Outputs:
 
 ### txt2img w/ ControlNet-stabilized latent-upscale (partial denoise on upscale, Scaled Soft ControlNet Weights)
 
-![t2i_lat_ups_softcontrol_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/149e18ff-319a-4e55-bdeb-7261cac0b510)
+![t2i_lat_ups_softcontrol_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/c769c2bd-5aac-48d0-92b7-d73c422d4863)
 
 ![aaa_readme_up_00017_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/221954cc-95df-4e0c-8ec9-266d0108dad4)
 
@@ -184,7 +205,7 @@ Outputs:
 
 ### txt2img w/ ControlNet-stabilized latent-upscale (partial denoise on upscale, Scaled Soft ControlNet Weights) 48 frame animation with 16 context_length (uniform)
 
-![t2i_context_lat_ups_softcontrol_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/229027ef-56c0-4b3a-8fe2-bbd4b60a70a6)
+![t2i_context_lat_ups_softcontrol_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/798567a8-4ef0-4814-aeeb-4f770df8d783)
 
 [aaa_readme_up_00003_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/0f57c949-0af3-4da4-b7c4-5c1fb1549927)
 
@@ -192,26 +213,27 @@ Outputs:
 
 ### txt2img w/ Initial ControlNet input (using Normal LineArt preprocessor on first txt2img as an example)
 
-![t2i_initcn_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f0895bf3-eeaa-4fae-a181-ffbd3ec8acf1)
+![t2i_initcn_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/caa7abdf-7ba0-456c-9fa4-547944ea6e72)
 
-![aaa_readme_cn_00001_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/ddf4b18e-904b-470f-9156-b65e9a16a694)
+![aaa_readme_cn_00002_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/055ef87c-50c6-4bb9-b35e-dd97916b47cc)
 
-[aaa_readme_cn_00006_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/ef1603c8-636f-4f85-8122-bf53b553e263)
+[aaa_readme_cn_00003_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9c9d425d-2378-4af0-8464-2c6c0d1a68bf)
+
 
 
 ### txt2img w/ Initial ControlNet input (using Normal LineArt preprocessor on first txt2img 48 frame as an example) 48 frame animation with 16 context_length (uniform)
 
-![t2i_context_initcn_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/26a8ada1-cd25-4413-b90e-89f92cd749ae)
+![t2i_context_initcn_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/f9de2711-dcfd-4fea-8b3b-31e3794fbff9)
 
-![aaa_readme_cn_00009_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/09124505-3c41-46d7-abfa-0805390c23cb)
+![aaa_readme_cn_00005_](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/6bf14361-5b09-4305-b2a7-f7babad4bd14)
 
-[aaa_readme_cn_00010_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/e32097fa-8b76-455d-9e52-cb55d0e1b357)
+[aaa_readme_cn_00006_.webm](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/5d3665b7-c2da-46a1-88d8-ab43ba8eb0c6)
+
 
 
 ### txt2img w/ Initial ControlNet input (using OpenPose images) + latent upscale w/ full denoise
 
-![t2i_openpose_upscale_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/2832e93b-5afb-42d5-9eca-32a353f41a21)
-
+![t2i_openpose_upscale_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/306a40c4-0591-496d-a320-c33f0fc4b3d2)
 
 (open_pose images provided courtesy of toyxyz)
 
@@ -225,7 +247,7 @@ Outputs:
 
 ### txt2img w/ Initial ControlNet input (using OpenPose images) + latent upscale w/ full denoise, 48 frame animation with 16 context_length (uniform)
 
-![t2i_context_openpose_upscale_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/d50bc565-fc4e-482c-9b51-ff77016b6712)
+![t2i_context_openpose_upscale_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/a931af6f-bf6a-40d3-bd55-1d7bad32e665)
 
 (open_pose images provided courtesy of toyxyz)
 
