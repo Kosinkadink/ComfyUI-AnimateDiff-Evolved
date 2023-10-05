@@ -11,9 +11,12 @@ from comfy.model_patcher import ModelPatcher
 import comfy.model_management as model_management
 from comfy.cli_args import args
 from comfy.utils import calculate_parameters, load_torch_file
+from comfy.ldm.modules.diffusionmodules.openaimodel import ResBlock, SpatialTransformer
 
+from .motion_module_hsxl import HotShotXLMotionWrapper, TransformerTemporal
 from .motion_lora import MotionLoRAList, MotionLoRAWrapper, MotionLoRAInfo
-from .model_utils import calculate_file_hash, get_motion_lora_path, get_motion_model_path, is_checkpoint_sd1_5
+from .model_utils import GenericMotionWrapper, ModelTypesSD, calculate_file_hash, get_motion_lora_path, get_motion_model_path, get_sd_model_type, is_checkpoint_sd1_5
+from .model_utils import InjectorVersion
 from .logger import logger
 
 
@@ -36,14 +39,14 @@ else:
 orig_modelpatcher_clone = comfy_model_patcher.ModelPatcher.clone
 def clone_injection(self, *args, **kwargs):
     model = orig_modelpatcher_clone(self, *args, **kwargs)
-    if is_checkpoint_sd1_5(model) and is_injected_mm_params(self):
+    if is_injected_mm_params(self):
          set_injected_mm_params(model, get_injected_mm_params(self))
     return model
 comfy_model_patcher.ModelPatcher.clone = clone_injection
 
 
 # cached motion modules
-motion_modules: dict[str, 'MotionWrapper'] = {}
+motion_modules: dict[str, GenericMotionWrapper] = {}
 # cached motion loras
 motion_loras: dict[str, MotionLoRAWrapper] = {}
 
@@ -101,7 +104,7 @@ def load_motion_lora(lora_name: str) -> MotionLoRAWrapper:
     return lora
 
 
-def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None) -> 'MotionWrapper':
+def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None, model: ModelPatcher = None) -> GenericMotionWrapper:
     # if already loaded, return it
     model_path = get_motion_model_path(model_name)
     model_hash = calculate_file_hash(model_path, hash_every_n=50)
@@ -132,8 +135,28 @@ def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None) -> '
             # apply LoRA to mm_state_dict
             apply_lora_to_mm_state_dict(mm_state_dict, lora)
 
-    motion_module = MotionWrapper(mm_state_dict=mm_state_dict, mm_hash=model_hash, mm_name=model_name, loras=loras)
 
+    # determine if motion module is SD_1.5 compatible or SDXL compatible
+    sd_model_type = ModelTypesSD.SD1_5
+    if model is not None:
+        sd_model_type = get_sd_model_type(model)
+    
+    motion_module: GenericMotionWrapper = None
+    if sd_model_type == ModelTypesSD.SD1_5:
+        try:
+            motion_module = MotionWrapper(mm_state_dict=mm_state_dict, mm_hash=model_hash, mm_name=model_name, loras=loras)
+        except ValueError as e:
+            raise ValueError(f"Motion model {model_name} is not compatible with SD1.5-based model.", e)
+    elif sd_model_type == ModelTypesSD.SDXL:
+        try:
+            motion_module = HotShotXLMotionWrapper(mm_state_dict=mm_state_dict, mm_hash=model_hash, mm_name=model_name, loras=loras)
+        except ValueError as e:
+            raise ValueError(f"Motion model {model_name} is not compatible with SDXL-based model.", e)
+    else:
+        raise ValueError(f"SD model must be either SD1.5-based for AnimateDiff or SDXL-based for HotShotXL.")
+
+
+    # continue loading model
     parameters = calculate_parameters(mm_state_dict, "")
     usefp16 = model_management.should_use_fp16(model_params=parameters)
     if usefp16:
@@ -148,7 +171,7 @@ def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None) -> '
     return motion_module
 
 
-def unload_motion_module(motion_module: 'MotionWrapper'):
+def unload_motion_module(motion_module: GenericMotionWrapper):
     logger.info(f"Removing motion module {motion_module.mm_name} from cache")
     motion_modules.pop(motion_module.mm_hash, None)
 
@@ -172,7 +195,7 @@ def eject_params_from_model(model: ModelPatcher) -> ModelPatcher:
     return model
     
 
-def inject_motion_module(model: ModelPatcher, motion_module: 'MotionWrapper', params: 'InjectionParams'):
+def inject_motion_module(model: ModelPatcher, motion_module: GenericMotionWrapper, params: 'InjectionParams'):
     if params.context_length and params.video_length > params.context_length:
         logger.info(f"Sliding context window activated - latents passed in ({params.video_length}) greater than context_length {params.context_length}.")
     else:
@@ -213,7 +236,8 @@ def clean_contained_unet(model: ModelPatcher):
         injector = get_injected_unet_version(model)
         ejectors[injector](model)
 
-
+############################################################################################################
+## AnimateDiff
 def _inject_motion_module_to_unet(model: ModelPatcher, motion_module: 'MotionWrapper'):
     unet: openaimodel.UNetModel = model.model.diffusion_model
     for mm_idx, unet_idx in enumerate([1, 2, 4, 5, 7, 8, 10, 11]):
@@ -254,18 +278,97 @@ def _eject_motion_module_from_unet(model: ModelPatcher):
         unet.middle_block.pop(-2)
     # remove attr; ejected
     del_injected_unet_version(model)
+############################################################################################################
 
 
-class InjectorVersion:
-    V1_V2 = "v1/v2"
+############################################################################################################
+## HotShot XL
+def _inject_hsxl_motion_module_to_unet(model: ModelPatcher, motion_module: 'HotShotXLMotionWrapper'):
+    unet: openaimodel.UNetModel = model.model.diffusion_model
+    # inject input (down) blocks
+    # HotShotXL mm contains 3 downblocks, each with 2 TransformerTemporals - 6 in total
+    # per_block is the amount of Temporal Blocks per down block
+    _perform_hsxl_motion_module_injection(unet.input_blocks, motion_module.down_blocks, injection_goal=6, per_block=2)
+
+    # inject output (up) blocks
+    # HotShotXL mm contains 3 upblocks, each with 3 TransformerTemporals - 9 in total
+    _perform_hsxl_motion_module_injection(unet.output_blocks, motion_module.up_blocks, injection_goal=9, per_block=3)
+
+    # inject mid block, if needed (encapsulate in list to make structure compatible)
+    if motion_module.mid_block is not None:
+        _perform_hsxl_motion_module_injection(unet.middle_block, [motion_module.mid_block], injection_goal=1, per_block=1)
+
+    # keep track of if unet blocks actually affected
+    set_injected_unet_version(model, InjectorVersion.HOTSHOTXL_V1)
+
+def _perform_hsxl_motion_module_injection(unet_blocks: nn.ModuleList, mm_blocks: nn.ModuleList, injection_goal: int, per_block: int):
+    # Rules for injection:
+    # For each input/output block:
+    #     if SpatialTransformer exists in list, place next block after it
+    #     elif ResBlock exists in list, place next block after first one
+    #     else don't place block
+    injection_count = 0
+    unet_idx = 0
+    # only stop injecting when modules exhausted
+    while injection_count < injection_goal:
+        # figure out which downblock/TransformerTemporal from mm to inject
+        mm_blk_idx, mm_tt_idx = injection_count // per_block, injection_count % per_block
+        # figure out layout of unet block
+        st_idx = -1 # SpatialTransformer index
+        res_idx = -1 # first ResBlock index
+        # first, figure out indeces of relevant blocks
+        for idx, component in enumerate(unet_blocks[unet_idx]):
+            if type(component) == SpatialTransformer:
+                st_idx = idx
+            elif type(component) == ResBlock and res_idx < 0:
+                res_idx = idx
+        # if SpatialTransformer exists, inject right after
+        if st_idx >= 0:
+            logger.info(f"HSXL: injecting after ST({st_idx})")
+            unet_blocks[unet_idx].insert(st_idx+1, mm_blocks[mm_blk_idx].temporal_attentions[mm_tt_idx])
+            injection_count += 1
+        # otherwise, if only ResBlock exists, inject right after
+        elif res_idx >= 0:
+            logger.info(f"HSXL: injecting after Res({res_idx})")
+            unet_blocks[unet_idx].insert(res_idx+1, mm_blocks[mm_blk_idx].temporal_attentions[mm_tt_idx])
+            injection_count += 1
+        # increment unet_idx
+        unet_idx += 1
+
+def _eject_hsxl_motion_module_from_unet(model: ModelPatcher):
+    unet: openaimodel.UNetModel = model.model.diffusion_model
+    # remove from input blocks
+    _perform_hsxl_motion_module_ejection(unet.input_blocks)
+    # remove from output blocks
+    _perform_hsxl_motion_module_ejection(unet.output_blocks)
+    # remove from middle block (encapsulate in list to make structure compatible)
+    _perform_hsxl_motion_module_ejection([unet.middle_block])
+    # remove attr; ejected
+    del_injected_unet_version(model)
+
+def _perform_hsxl_motion_module_ejection(unet_blocks: nn.ModuleList):
+    # eject all TransformerTemporal objects from all blocks
+    for block in unet_blocks:
+        idx_to_pop = []
+        for idx, component in enumerate(block):
+            if type(component) == TransformerTemporal:
+                idx_to_pop.append(idx)
+        # pop in backwards order, as to not disturb what the indeces refer to
+        for idx in sorted(idx_to_pop, reverse=True):
+            block.pop(idx)
+        logger.info(f"HSXL: ejecting {idx_to_pop}")
+############################################################################################################
+
 
 
 injectors = {
     InjectorVersion.V1_V2: _inject_motion_module_to_unet,
+    InjectorVersion.HOTSHOTXL_V1: _inject_hsxl_motion_module_to_unet,
 }
 
 ejectors = {
     InjectorVersion.V1_V2: _eject_motion_module_from_unet,
+    InjectorVersion.HOTSHOTXL_V1: _eject_hsxl_motion_module_from_unet,
 }
 
 
@@ -287,7 +390,7 @@ class InjectionParams:
         self.version: str = None
         self.loras: MotionLoRAList = None
     
-    def set_version(self, motion_module: 'MotionWrapper'):
+    def set_version(self, motion_module: GenericMotionWrapper):
         self.version = motion_module.version
 
     def set_context(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool):
@@ -341,22 +444,18 @@ def del_injected_mm_params(model: ModelPatcher):
     
 # Injected Unet Functions
 def is_injected_unet_version(model: ModelPatcher) -> bool:
-    if is_checkpoint_sd1_5(model):
-        return hasattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR)
+    return hasattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR)
 
 def get_injected_unet_version(model: ModelPatcher) -> str:
-    if is_checkpoint_sd1_5(model):
-        if is_injected_unet_version(model):
-            return getattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR) 
+    if is_injected_unet_version(model):
+        return getattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR) 
 
 def set_injected_unet_version(model: ModelPatcher, value: str):
-    if is_checkpoint_sd1_5(model):
-        setattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR, value)
+    setattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR, value)
 
 def del_injected_unet_version(model: ModelPatcher):
-    if is_checkpoint_sd1_5(model):
-        if is_injected_unet_version(model):
-            delattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR)
+    if is_injected_unet_version(model):
+        delattr(model.model.diffusion_model, MM_UNET_INJECTION_ATTR)
 
 
 ##################################################################################
@@ -392,9 +491,9 @@ def has_mid_block(mm_state_dict: dict[str, Tensor]):
     return False
 
 
-class MotionWrapper(nn.Module):
+class MotionWrapper(GenericMotionWrapper):
     def __init__(self, mm_state_dict: dict[str, Tensor], mm_hash: str, mm_name: str="mm_sd_v15.ckpt" , loras: list[MotionLoRAInfo]=None):
-        super().__init__()
+        super().__init__(mm_hash, mm_name, loras)
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
         self.mid_block = None
@@ -408,10 +507,13 @@ class MotionWrapper(nn.Module):
         self.mm_hash = mm_hash
         self.mm_name = mm_name
         self.version = "v1" if self.mid_block is None else "v2"
+        self.injector_version = InjectorVersion.V1_V2
         self.AD_video_length: int = 24
         self.loras = loras
     
     def has_loras(self):
+        # TODO: fix this to return False if has an empty list as well
+        # but only after implementing a fix for lowvram loading
         return self.loras is not None
     
     def set_video_length(self, video_length: int):
@@ -563,6 +665,7 @@ class TemporalTransformer3DModel(nn.Module):
             hidden_states = block(
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
+                attention_mask=attention_mask,
                 video_length=self.video_length,
             )
 
@@ -645,6 +748,7 @@ class TemporalTransformerBlock(nn.Module):
                     encoder_hidden_states=encoder_hidden_states
                     if attention_block.is_cross_attention
                     else None,
+                    attention_mask=attention_mask,
                     video_length=video_length,
                 )
                 + hidden_states

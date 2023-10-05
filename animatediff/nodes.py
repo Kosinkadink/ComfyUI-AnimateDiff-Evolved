@@ -89,15 +89,14 @@ class AnimateDiffLoaderWithContext:
         model_name: str, beta_schedule: str,
         context_options: ContextOptions=None, motion_lora: MotionLoRAList=None,
     ):
-        raise_if_not_checkpoint_sd1_5(model)
         # load motion module
-        load_motion_module(model_name, motion_lora)
+        mm = load_motion_module(model_name, motion_lora, model=model)
         # set injection params
         injection_params = InjectionParams(
                 video_length=None,
                 unlimited_area_hack=False,
                 beta_schedule=beta_schedule,
-                injector=InjectorVersion.V1_V2,
+                injector=mm.injector_version,
                 model_name=model_name,
         )
         if context_options:
