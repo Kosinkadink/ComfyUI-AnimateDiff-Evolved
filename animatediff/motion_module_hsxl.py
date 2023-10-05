@@ -1,3 +1,4 @@
+# original HotShotXL components adapted from https://github.com/hotshotco/Hotshot-XL/blob/main/hotshot_xl/models/transformer_temporal.py
 from typing import Optional
 import torch
 from torch import Tensor, nn

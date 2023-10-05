@@ -303,17 +303,17 @@ def _inject_hsxl_motion_module_to_unet(model: ModelPatcher, motion_module: 'HotS
 
 def _perform_hsxl_motion_module_injection(unet_blocks: nn.ModuleList, mm_blocks: nn.ModuleList, injection_goal: int, per_block: int):
     # Rules for injection:
-    # For each input/output block:
-    #     if SpatialTransformer exists in list, place next block after it
-    #     elif ResBlock exists in list, place next block after first one
+    # For each component list in a unet block:
+    #     if SpatialTransformer exists in list, place next block after last occurrence
+    #     elif ResBlock exists in list, place next block after first occurrence
     #     else don't place block
     injection_count = 0
     unet_idx = 0
     # only stop injecting when modules exhausted
     while injection_count < injection_goal:
-        # figure out which downblock/TransformerTemporal from mm to inject
+        # figure out which TransformerTemporal from mm to inject
         mm_blk_idx, mm_tt_idx = injection_count // per_block, injection_count % per_block
-        # figure out layout of unet block
+        # figure out layout of unet block components
         st_idx = -1 # SpatialTransformer index
         res_idx = -1 # first ResBlock index
         # first, figure out indeces of relevant blocks
