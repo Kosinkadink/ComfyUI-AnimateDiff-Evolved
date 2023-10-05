@@ -6,35 +6,10 @@ from torch import Tensor, nn
 import math
 from einops import rearrange, repeat
 
-from comfy.ldm.modules.attention import CrossAttentionBirchSan, CrossAttentionDoggettx, CrossAttentionPytorch, FeedForward, CrossAttention, MemoryEfficientCrossAttention
-import comfy.model_management as model_management
-from comfy.cli_args import args
-from ldm.modules.diffusionmodules import openaimodel
-from model_patcher import ModelPatcher
+from comfy.ldm.modules.attention import FeedForward
 
-from .model_utils import GenericMotionWrapper, InjectorVersion
-from .motion_lora import MotionLoRAList, MotionLoRAWrapper, MotionLoRAInfo
-
-
-CrossAttentionMM = CrossAttention
-# until xformers bug is fixed, do not use xformers for VersatileAttention! TODO: change this when fix is out
-# logic for choosing CrossAttention method taken from comfy/ldm/modules/attention.py
-if model_management.xformers_enabled():
-    pass
-    # CrossAttentionMM = MemoryEfficientCrossAttention
-if model_management.pytorch_attention_enabled():
-    CrossAttentionMM = CrossAttentionPytorch
-else:
-    if args.use_split_cross_attention:
-        CrossAttentionMM = CrossAttentionDoggettx
-    else:
-        CrossAttentionMM = CrossAttentionBirchSan
-
-
-class BlockType:
-    UP = "up"
-    DOWN = "down"
-    MID = "mid"
+from .motion_utils import GenericMotionWrapper, InjectorVersion, BlockType, CrossAttentionMM
+from .motion_lora import MotionLoRAInfo
 
 
 def zero_module(module):

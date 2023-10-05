@@ -18,7 +18,9 @@ import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
 
 from .logger import logger
-from .motion_module import InjectionParams, VanillaTemporalModule, eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module, unload_motion_module
+
+from .motion_module_ad import VanillaTemporalModule
+from .motion_module import InjectionParams , eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module, unload_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
 from .context import get_context_scheduler
 from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
