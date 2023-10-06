@@ -28,7 +28,7 @@ class IsChangedHelper:
 
 class BetaSchedules:
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
-    LINEAR = "linear (default)"
+    LINEAR = "linear (HotshotXL/default)"
     SQRT = "sqrt"
     COSINE = "cosine"
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
