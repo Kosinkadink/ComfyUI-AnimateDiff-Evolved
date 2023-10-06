@@ -6,9 +6,11 @@ import json
 from typing import Callable
 
 import numpy as np
+import torch
+from torch import Tensor, nn
 
 import folder_paths
-from comfy.model_base import BaseModel
+from comfy.model_base import SDXL, BaseModel
 from comfy.model_patcher import ModelPatcher
 from comfy.model_management import xformers_enabled
 
@@ -140,11 +142,32 @@ def calculate_model_hash(model: ModelPatcher):
     return m.hexdigest()
 
 
+class ModelTypesSD:
+    SD1_5 = "sd1_5"
+    SDXL = "sdxl"
+
+
+def get_sd_model_type(model: ModelPatcher) -> str:
+    if model is None:
+        return None
+    if is_checkpoint_sd1_5(model):
+        return ModelTypesSD.SD1_5
+    elif is_checkpoint_sdxl(model):
+        return ModelTypesSD.SDXL
+    return False
+
+
 def is_checkpoint_sd1_5(model: ModelPatcher):
     if model is None:
         return False
     model_type = type(model.model)
     return model_type == BaseModel
+
+def is_checkpoint_sdxl(model: ModelPatcher):
+    if model is None:
+        return False
+    model_type = type(model.model)
+    return model_type == SDXL
 
 
 def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
