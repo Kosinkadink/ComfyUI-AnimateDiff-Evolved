@@ -132,7 +132,7 @@ class VanillaTemporalModule(nn.Module):
     def set_video_length(self, video_length: int):
         self.temporal_transformer.set_video_length(video_length)
 
-    def forward(self, input_tensor, encoder_hidden_states, attention_mask=None):
+    def forward(self, input_tensor, encoder_hidden_states=None, attention_mask=None):
         return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)
 
 
