@@ -12,8 +12,8 @@ Examples shown here will also often make use of these helpful sets of nodes:
 
 ## If using Comfy Manager:
 
-1. Look for ```AnimateDiff```, and be sure it is ```(Kosinkadink version)```. Install it.
-![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/10324120-aaee-460a-8ec9-57a46c1b9edc)
+1. Look for ```AnimateDiff Evolved```, and be sure the author is ```Kosinkadink```. Install it.
+![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/2c7f29e1-d024-49e1-9eb0-d38070142584)
 
 
 ## If installing manually:
@@ -38,6 +38,7 @@ Examples shown here will also often make use of these helpful sets of nodes:
 - Infinite animation length support using sliding context windows **(introduced 9/17/23)**
 - Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth``` **(introduced 9/25/23)**
 - Prompt travel using BatchPromptSchedule node from [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) **(working since 9/27/23)**
+- [HotshotXL](https://huggingface.co/hotshotco/Hotshot-XL/tree/main) support (an SDXL motion module arch), ```hsxl_temporal_layers.safetensors``` **(working since 10/05/23)** NOTE: You will need to use ```linear``` beta_schedule, the sweetspot for context_length or total frames (when not using context) is 8 frames, and you will need to use an SDXL checkpoint. Will add more documentation and example workflows soon when I have some time between working on features/other nodes.
 
 # Upcoming features:
 - Alternate context schedulers and context types (in progress)
