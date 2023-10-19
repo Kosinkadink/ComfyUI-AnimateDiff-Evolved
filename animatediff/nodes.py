@@ -72,6 +72,7 @@ class AnimateDiffLoaderWithContext:
                 "model": ("MODEL",),
                 "model_name": (get_available_motion_models(),),
                 "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
+                "apply_mm_groupnorm_hack": ("BOOLEAN", {"default": True}),
             },
             "optional": {
                 "context_options": ("CONTEXT_OPTIONS",),
@@ -86,7 +87,7 @@ class AnimateDiffLoaderWithContext:
 
     def load_mm_and_inject_params(self,
         model: ModelPatcher,
-        model_name: str, beta_schedule: str,
+        model_name: str, beta_schedule: str, apply_mm_groupnorm_hack: bool,
         context_options: ContextOptions=None, motion_lora: MotionLoRAList=None,
     ):
         # load motion module
@@ -95,6 +96,7 @@ class AnimateDiffLoaderWithContext:
         injection_params = InjectionParams(
                 video_length=None,
                 unlimited_area_hack=False,
+                apply_mm_groupnorm_hack=apply_mm_groupnorm_hack,
                 beta_schedule=beta_schedule,
                 injector=mm.injector_version,
                 model_name=model_name,
@@ -178,6 +180,7 @@ class AnimateDiffLoader_Deprecated:
         injection_params = InjectionParams(
                 video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
+                apply_mm_groupnorm_hack=True,
                 beta_schedule=beta_schedule,
                 injector=InjectorVersion.V1_V2,
                 model_name=model_name,
@@ -226,6 +229,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         injection_params = InjectionParams(
                 video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
+                apply_mm_groupnorm_hack=True,
                 beta_schedule=beta_schedule,
                 injector=InjectorVersion.V1_V2,
                 model_name=model_name,

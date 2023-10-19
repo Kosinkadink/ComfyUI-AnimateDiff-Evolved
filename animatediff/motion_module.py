@@ -359,9 +359,10 @@ MM_INJECTED_ATTR = "_mm_injected_params"
 MM_UNET_INJECTION_ATTR = "_mm_is_unet_injected"
 
 class InjectionParams:
-    def __init__(self, video_length: int, unlimited_area_hack: bool, beta_schedule: str, injector: str, model_name: str) -> None:
+    def __init__(self, video_length: int, unlimited_area_hack: bool, apply_mm_groupnorm_hack: bool, beta_schedule: str, injector: str, model_name: str) -> None:
         self.video_length = video_length
         self.unlimited_area_hack = unlimited_area_hack
+        self.apply_mm_groupnorm_hack = apply_mm_groupnorm_hack
         self.beta_schedule = beta_schedule
         self.injector = injector
         self.model_name = model_name
@@ -395,7 +396,7 @@ class InjectionParams:
     
     def clone(self) -> 'InjectionParams':
         new_params = InjectionParams(
-            self.video_length, self.unlimited_area_hack, 
+            self.video_length, self.unlimited_area_hack, self.apply_mm_groupnorm_hack,
             self.beta_schedule, self.injector, self.model_name
             )
         new_params.version = self.version

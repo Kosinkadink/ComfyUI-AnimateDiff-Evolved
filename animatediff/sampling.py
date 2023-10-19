@@ -22,6 +22,7 @@ from .logger import logger
 from .motion_module_ad import VanillaTemporalModule
 from .motion_module import InjectionParams , eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module, unload_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
+from .motion_utils import GroupNormAD
 from .context import get_context_scheduler
 from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
 
@@ -122,6 +123,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
             orig_maximum_batch_area = model_management.maximum_batch_area # allows for "unlimited area hack" to prevent halving of conds/unconds
             orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
+            orig_groupnormad_forward = GroupNormAD.forward
             orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
             # save original beta schedule settings
             orig_beta_cache = BetaScheduleCache(model)
@@ -134,6 +136,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             if params.unlimited_area_hack:
                 model_management.maximum_batch_area = unlimited_batch_area
             torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
+            if params.apply_mm_groupnorm_hack:
+                GroupNormAD.forward = groupnorm_mm_factory(params)
             comfy_samplers.sampling_function = sliding_sampling_function
             ##############################################
 
@@ -173,6 +177,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             model_management.maximum_batch_area = orig_maximum_batch_area
             openaimodel.forward_timestep_embed = orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = orig_groupnorm_forward
+            GroupNormAD.forward = orig_groupnormad_forward
             comfy_samplers.sampling_function = orig_sampling_function
             # reapply previous beta schedule
             orig_beta_cache.use_cached_beta_schedule_and_clean(model)
