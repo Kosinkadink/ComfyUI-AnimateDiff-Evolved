@@ -1,5 +1,6 @@
 import torch
 from torch import Tensor, nn
+import torch.nn.functional as F
 from abc import ABC, abstractmethod
 
 from comfy.ldm.modules.attention import attention_basic, attention_pytorch, attention_split, attention_sub_quad, attention_xformers, default
@@ -86,3 +87,13 @@ class GenericMotionWrapper(nn.Module, ABC):
     @abstractmethod
     def set_video_length(self, video_length: int):
         pass
+
+
+class GroupNormAD(torch.nn.GroupNorm):
+    def __init__(self, num_groups: int, num_channels: int, eps: float = 1e-5, affine: bool = True,
+                 device=None, dtype=None) -> None:
+        super().__init__(num_groups=num_groups, num_channels=num_channels, eps=eps, affine=affine, device=device, dtype=dtype)
+    
+    def forward(self, input: Tensor) -> Tensor:
+        return F.group_norm(
+             input, self.num_groups, self.weight, self.bias, self.eps)

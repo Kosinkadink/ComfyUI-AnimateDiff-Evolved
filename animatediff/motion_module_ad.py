@@ -6,7 +6,7 @@ from einops import rearrange, repeat
 
 from comfy.ldm.modules.attention import FeedForward
 
-from .motion_utils import GenericMotionWrapper, InjectorVersion, BlockType, CrossAttentionMM
+from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM
 from .motion_lora import MotionLoRAInfo
 from .logger import logger
 
@@ -161,7 +161,7 @@ class TemporalTransformer3DModel(nn.Module):
 
         inner_dim = num_attention_heads * attention_head_dim
 
-        self.norm = torch.nn.GroupNorm(
+        self.norm = GroupNormAD(
             num_groups=norm_num_groups, num_channels=in_channels, eps=1e-6, affine=True
         )
         self.proj_in = nn.Linear(in_channels, inner_dim)
