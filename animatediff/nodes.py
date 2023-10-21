@@ -2,7 +2,6 @@ import os
 import json
 import subprocess
 import shutil
-import sys
 import torch
 import numpy as np
 from typing import Dict, List
@@ -21,17 +20,11 @@ from .model_utils import IsChangedHelper, get_available_motion_loras, get_availa
 from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .sampling import animatediff_sample_factory
 
+import nodes as comfy_nodes
 import comfy.sample as comfy_sample
 
 # override comfy_sample.sample with animatediff-support version
 comfy_sample.sample = animatediff_sample_factory(comfy_sample.sample)
-
-# Need to access max size variables all the way in ComfyUI's base directory
-# Go from '../ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/animatediff/nodes.py' -> '../ComfyUI'
-# Yes, this is wacky, but if it works, it works
-from pathlib import Path
-sys.path.insert(0, Path(__file__).parent.parent.parent.parent)
-import nodes as comfy_nodes
 
 
 class AnimateDiffLoRALoader:
