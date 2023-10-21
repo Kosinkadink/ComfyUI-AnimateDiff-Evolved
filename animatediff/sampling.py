@@ -187,8 +187,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
     return animatediff_sample
 
 
-def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_scale, cond_concat=None, model_options={}, seed=None):
-        def get_area_and_mult(cond, x_in, cond_concat_in, timestep_in):
+def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None):
+        def get_area_and_mult(cond, x_in, timestep_in):
             area = (x_in.shape[2], x_in.shape[3], 0, 0)
             strength = 1.0
             if 'timestep_start' in cond[1]:
@@ -241,12 +241,15 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
 
             conditionning = {}
             conditionning['c_crossattn'] = cond[0]
-            if cond_concat_in is not None and len(cond_concat_in) > 0:
-                cropped = []
-                for x in cond_concat_in:
-                    cr = x[:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]]
-                    cropped.append(cr)
-                conditionning['c_concat'] = torch.cat(cropped, dim=1)
+
+            if 'concat' in cond[1]:
+                cond_concat_in = cond[1]['concat']
+                if cond_concat_in is not None and len(cond_concat_in) > 0:
+                    cropped = []
+                    for x in cond_concat_in:
+                        cr = x[:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]]
+                        cropped.append(cr)
+                    conditionning['c_concat'] = torch.cat(cropped, dim=1)
 
             if adm_cond is not None:
                 conditionning['c_adm'] = adm_cond
@@ -346,7 +349,7 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                 out['c_adm'] = torch.cat(c_adm)
             return out
 
-        def calc_cond_uncond_batch(model_function, cond, uncond, x_in, timestep, max_total_area, cond_concat_in, model_options):
+        def calc_cond_uncond_batch(model_function, cond, uncond, x_in, timestep, max_total_area, model_options):
             out_cond = torch.zeros_like(x_in)
             out_count = torch.ones_like(x_in)/100000.0
 
@@ -358,14 +361,14 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
 
             to_run = []
             for x in cond:
-                p = get_area_and_mult(x, x_in, cond_concat_in, timestep)
+                p = get_area_and_mult(x, x_in, timestep)
                 if p is None:
                     continue
 
                 to_run += [(p, COND)]
             if uncond is not None:
                 for x in uncond:
-                    p = get_area_and_mult(x, x_in, cond_concat_in, timestep)
+                    p = get_area_and_mult(x, x_in, timestep)
                     if p is None:
                         continue
 
@@ -456,7 +459,7 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
         
         # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
         # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
-        def sliding_calc_cond_uncond_batch(model_function, cond, uncond, x_in, timestep, max_total_area, cond_concat_in, model_options):
+        def sliding_calc_cond_uncond_batch(model_function, cond, uncond, x_in, timestep, max_total_area, model_options):
             # get context scheduler
             context_scheduler = get_context_scheduler(ADGS.context_schedule)
             # figure out how input is split
@@ -521,9 +524,8 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                 sub_timestep = timestep[full_idxs]
                 sub_cond = get_resized_cond(cond, full_idxs) if cond is not None else None
                 sub_uncond = get_resized_cond(uncond, full_idxs) if uncond is not None else None
-                sub_cond_concat = get_resized_cond(cond_concat, full_idxs) if cond_concat is not None else None
 
-                sub_cond_out, sub_uncond_out = calc_cond_uncond_batch(model_function, sub_cond, sub_uncond, sub_x, sub_timestep, max_total_area, sub_cond_concat, model_options)
+                sub_cond_out, sub_uncond_out = calc_cond_uncond_batch(model_function, sub_cond, sub_uncond, sub_x, sub_timestep, max_total_area, model_options)
 
                 cond_final[full_idxs] += sub_cond_out
                 uncond_final[full_idxs] += sub_uncond_out
@@ -539,9 +541,9 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
             uncond = None
 
         if not ADGS.is_using_sliding_context():
-            cond, uncond = calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, cond_concat, model_options)
+            cond, uncond = calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, model_options)
         else:
-            cond, uncond = sliding_calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, cond_concat, model_options)
+            cond, uncond = sliding_calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, model_options)
         if "sampler_cfg_function" in model_options:
             args = {"cond": cond, "uncond": uncond, "cond_scale": cond_scale, "timestep": timestep}
             return model_options["sampler_cfg_function"](args)
