@@ -80,31 +80,21 @@ class Folders:
     ANIMATEDIFF_MODELS = "AnimateDiffEvolved_Models"
     MOTION_LORA = "AnimateDiffMotion_LoRA"
 
+def _register_folder_path(folder_name: str, folder_path: str, extensions: set = None):
+    if folder_name in folder_paths.folder_names_and_paths:
+        folder_paths.folder_names_and_paths[folder_name][0].append(folder_path)
+        if extensions is not None:
+            folder_paths.folder_names_and_paths[folder_name][1].update(extensions)
+    else:
+        folder_paths.folder_names_and_paths[folder_name] = ([folder_path], extensions)
+
 
 # register motion models folder(s)
-folder_paths.folder_names_and_paths[Folders.ANIMATEDIFF_MODELS] = (
-    [
-        str(Path(__file__).parent.parent / "models")
-    ],
-    folder_paths.supported_pt_extensions
-)
-
+_register_folder_path(Folders.ANIMATEDIFF_MODELS, str(Path(__file__).parent.parent / "models"), folder_paths.supported_pt_extensions)
 # register motion LoRA folder(s)
-folder_paths.folder_names_and_paths[Folders.MOTION_LORA] = (
-    [
-        str(Path(__file__).parent.parent / "motion_lora")
-    ],
-    folder_paths.supported_pt_extensions
-)
-
-
-#Register video_formats folder
-folder_paths.folder_names_and_paths["video_formats"] = (
-    [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "video_formats"),
-    ],
-    [".json"]
-)
+_register_folder_path(Folders.MOTION_LORA, str(Path(__file__).parent.parent / "motion_lora"), folder_paths.supported_pt_extensions)
+# register video_formats folder
+_register_folder_path("video_formats", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "video_formats"), {".json"})
 
 
 def get_available_motion_models():
