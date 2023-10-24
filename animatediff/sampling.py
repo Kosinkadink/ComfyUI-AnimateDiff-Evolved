@@ -142,7 +142,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             ##############################################
 
             # try to load motion module
-            motion_module = load_motion_module(params.model_name, params.loras, model=model)
+            motion_module = load_motion_module(params.model_name, params.loras, model=model, motion_model_settings=params.motion_model_settings)
             # inject motion module into unet
             inject_motion_module(model=model, motion_module=motion_module, params=params)
 

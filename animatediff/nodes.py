@@ -14,8 +14,8 @@ from comfy.sd import load_checkpoint_guess_config
 from comfy.model_patcher import ModelPatcher
 from .logger import logger
 from .motion_lora import MotionLoRAInfo, MotionLoRAList
-from .motion_module import InjectorVersion, eject_params_from_model, get_injected_mm_params, inject_params_into_model, load_motion_lora, load_motion_module
-from .motion_module import InjectionParams, is_injected_mm_params
+from .motion_module import eject_params_from_model, inject_params_into_model, load_motion_lora, load_motion_module
+from .motion_module import InjectorVersion, InjectionParams, MotionModelSettings
 from .model_utils import IsChangedHelper, get_available_motion_loras, get_available_motion_models, BetaSchedules, raise_if_not_checkpoint_sd1_5
 from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .sampling import animatediff_sample_factory
@@ -57,6 +57,38 @@ class AnimateDiffLoRALoader:
         return (prev_motion_lora,)
 
 
+class AnimateDiffModelSettings:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "pe_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001}),
+                "attn_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001}),
+                "other_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001}),
+                "cap_initial_pe_length": ("INT", {"default": 0, "min": 0, "step": 1}),
+                "interpolate_pe_to_length": ("INT", {"default": 0, "min": 0, "step": 1}),
+                "initial_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
+            },
+        }
+    
+    RETURN_TYPES = ("MOTION_MODEL_SETTINGS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓"
+    FUNCTION = "get_motion_model_settings"
+
+    def get_motion_model_settings(self, pe_strength: float, attn_strength: float, other_strength: float,
+                                  cap_initial_pe_length: int, interpolate_pe_to_length: int, initial_pe_idx_offset: int):
+        motion_model_settings = MotionModelSettings(
+            pe_strength=pe_strength,
+            attn_strength=attn_strength,
+            other_strength=other_strength,
+            cap_initial_pe_length=cap_initial_pe_length,
+            interpolate_pe_to_length=interpolate_pe_to_length,
+            initial_pe_idx_offset=initial_pe_idx_offset
+            )
+
+        return (motion_model_settings,)
+
+
 class AnimateDiffLoaderWithContext:
     @classmethod
     def INPUT_TYPES(s):
@@ -70,6 +102,7 @@ class AnimateDiffLoaderWithContext:
             "optional": {
                 "context_options": ("CONTEXT_OPTIONS",),
                 "motion_lora": ("MOTION_LORA",),
+                "motion_model_settings": ("MOTION_MODEL_SETTINGS",),
             }
         }
     
@@ -81,10 +114,10 @@ class AnimateDiffLoaderWithContext:
     def load_mm_and_inject_params(self,
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
-        context_options: ContextOptions=None, motion_lora: MotionLoRAList=None,
+        context_options: ContextOptions=None, motion_lora: MotionLoRAList=None, motion_model_settings: MotionModelSettings=None,
     ):
         # load motion module
-        mm = load_motion_module(model_name, motion_lora, model=model)
+        mm = load_motion_module(model_name, motion_lora, model=model, motion_model_settings=motion_model_settings)
         # set injection params
         injection_params = InjectionParams(
                 video_length=None,
@@ -106,6 +139,7 @@ class AnimateDiffLoaderWithContext:
                 )
         if motion_lora:
             injection_params.set_loras(motion_lora)
+        injection_params.set_motion_model_settings(motion_model_settings)
         # inject for use in sampling code
         model = inject_params_into_model(model, injection_params)
 
@@ -439,6 +473,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
+    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettings,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
@@ -450,6 +485,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓",
     "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader 🎭🅐🅓",
+    "ADE_AnimateDiffModelSettings": "AnimateDiff Motion Model Settings 🎭🅐🅓",
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select 🎭🅐🅓",

@@ -1,5 +1,7 @@
+from einops import rearrange, repeat
 import torch
 from torch import Tensor, nn
+import torch.nn.functional as F
 
 from ldm.modules.diffusionmodules import openaimodel
 import comfy.model_patcher as comfy_model_patcher
@@ -87,7 +89,39 @@ def load_motion_lora(lora_name: str) -> MotionLoRAWrapper:
     return lora
 
 
-def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None, model: ModelPatcher = None) -> GenericMotionWrapper:
+def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: 'MotionModelSettings') -> dict[str, Tensor]:
+    if not mm_settings.has_anything_to_apply():
+        return model_dict
+    for key in model_dict:
+        if "attention_blocks" in key:
+            # apply pe_strength, if needed
+            if "pos_encoder" in key:
+                if mm_settings.has_pe_strength():
+                    model_dict[key] *= mm_settings.pe_strength
+                # apply pe_idx_offset, if needed
+                if mm_settings.has_initial_pe_idx_offset():
+                    model_dict[key] = model_dict[key][:, mm_settings.initial_pe_idx_offset:]
+                # apply artificial_max_context_length, if needed
+                if mm_settings.has_cap_initial_pe_length():
+                    model_dict[key] = model_dict[key][:, :mm_settings.cap_initial_pe_length]
+                # apply interpolate_to_length, if needed
+                if mm_settings.has_interpolate_pe_to_length():
+                    pe_shape = model_dict[key].shape
+                    temp_pe = rearrange(model_dict[key], "(t b) f d -> t b f d", t=1)
+                    temp_pe = F.interpolate(temp_pe, size=(mm_settings.interpolate_pe_to_length, pe_shape[-1]), mode="bilinear")
+                    temp_pe = rearrange(temp_pe, "t b f d -> (t b) f d", t=1)
+                    model_dict[key] = temp_pe
+                    del temp_pe
+            # apply attn_strenth, if needed
+            elif mm_settings.has_attn_strength():
+                model_dict[key] *= mm_settings.attn_strength
+        # apply other strength, if needed
+        elif mm_settings.has_other_strength():
+            model_dict[key] *= mm_settings.other_strength
+    return model_dict
+        
+
+def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None, model: ModelPatcher = None, motion_model_settings = None) -> GenericMotionWrapper:
     # if already loaded, return it
     model_path = get_motion_model_path(model_name)
     model_hash = calculate_file_hash(model_path, hash_every_n=50)
@@ -111,6 +145,9 @@ def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None, mode
 
     logger.info(f"Loading motion module {model_name}")
     mm_state_dict = load_torch_file(model_path)
+
+    if motion_model_settings != None:
+        mm_state_dict = apply_mm_settings(mm_state_dict, motion_model_settings)
 
     # load lora state dicts if exist
     if len(loras) > 0:
@@ -373,6 +410,7 @@ class InjectionParams:
         self.closed_loop: bool = False
         self.version: str = None
         self.loras: MotionLoRAList = None
+        self.motion_model_settings = MotionModelSettings()
     
     def set_version(self, motion_module: GenericMotionWrapper):
         self.version = motion_module.version
@@ -386,6 +424,12 @@ class InjectionParams:
     
     def set_loras(self, loras: MotionLoRAList):
         self.loras = loras.clone()
+    
+    def set_motion_model_settings(self, motion_model_settings: 'MotionModelSettings'):
+        if motion_model_settings is None:
+            self.motion_model_settings = MotionModelSettings()
+        else:
+            self.motion_model_settings = motion_model_settings
     
     def reset_context(self):
         self.context_length = None
@@ -407,6 +451,7 @@ class InjectionParams:
             )
         if self.loras is not None:
             new_params.loras = self.loras.clone()
+        new_params.set_motion_model_settings(self.motion_model_settings)
         return new_params
         
 
@@ -444,3 +489,41 @@ def del_injected_unet_version(model: ModelPatcher):
 
 ##################################################################################
 ##################################################################################
+
+
+class MotionModelSettings:
+    def __init__(self,
+                 pe_strength: float=1.0, attn_strength: float=1.0, other_strength: float=1.0,
+                 cap_initial_pe_length: int=0, interpolate_pe_to_length: int=0, initial_pe_idx_offset: int=0):
+        self.pe_strength = pe_strength
+        self.attn_strength = attn_strength
+        self.other_strength = other_strength
+        self.cap_initial_pe_length = cap_initial_pe_length
+        self.interpolate_pe_to_length = interpolate_pe_to_length
+        self.initial_pe_idx_offset = initial_pe_idx_offset
+
+    def has_pe_strength(self) -> bool:
+        return self.pe_strength != 1.0
+    
+    def has_attn_strength(self) -> bool:
+        return self.attn_strength != 1.0
+    
+    def has_other_strength(self) -> bool:
+        return self.other_strength != 1.0
+
+    def has_cap_initial_pe_length(self) -> bool:
+        return self.cap_initial_pe_length > 0
+    
+    def has_interpolate_pe_to_length(self) -> bool:
+        return self.interpolate_pe_to_length > 0
+    
+    def has_initial_pe_idx_offset(self) -> bool:
+        return self.initial_pe_idx_offset > 0
+
+    def has_anything_to_apply(self) -> bool:
+        return self.has_pe_strength() \
+            or self.has_attn_strength() \
+            or self.has_other_strength() \
+            or self.has_cap_initial_pe_length() \
+            or self.has_interpolate_pe_to_length() \
+            or self.has_initial_pe_idx_offset()
