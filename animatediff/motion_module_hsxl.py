@@ -50,11 +50,11 @@ class HotShotXLMotionWrapper(GenericMotionWrapper):
         self.mid_block = None
         self.encoding_max_len = get_hsxl_temporal_position_encoding_max_len(mm_state_dict, mm_name)
         for c in (320, 640, 1280):
-            self.down_blocks.append(HotShotXLMotionModule(c, block_type=BlockType.DOWN))
+            self.down_blocks.append(HotShotXLMotionModule(c, block_type=BlockType.DOWN, max_length=self.encoding_max_len))
         for c in (1280, 640, 320):
-            self.up_blocks.append(HotShotXLMotionModule(c, block_type=BlockType.UP))
+            self.up_blocks.append(HotShotXLMotionModule(c, block_type=BlockType.UP, max_length=self.encoding_max_len))
         if has_mid_block(mm_state_dict):
-            self.mid_block = HotShotXLMotionModule(1280, BlockType=BlockType.MID)
+            self.mid_block = HotShotXLMotionModule(1280, BlockType=BlockType.MID, max_length=self.encoding_max_len)
         self.mm_hash = mm_hash
         self.mm_name = mm_name
         self.version = "HSXL v1" if self.mid_block is None else "HSXL v2"
@@ -75,37 +75,41 @@ class HotShotXLMotionWrapper(GenericMotionWrapper):
             block.set_video_length(video_length)
         if self.mid_block is not None:
             self.mid_block.set_video_length(video_length)
+    
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        pass
         
 
 class HotShotXLMotionModule(nn.Module):
-    def __init__(self, in_channels, block_type: str=BlockType.DOWN):
+    def __init__(self, in_channels, block_type: str=BlockType.DOWN, max_length=24):
         super().__init__()
         if block_type == BlockType.MID:
             # mid blocks contain only a single TransformerTemporal
-            self.temporal_attentions = nn.ModuleList([get_transformer_temporal(in_channels)])
+            self.temporal_attentions = nn.ModuleList([get_transformer_temporal(in_channels, max_length)])
         else:
             # down blocks contain two TransformerTemporals
             self.temporal_attentions = nn.ModuleList(
                 [
-                    get_transformer_temporal(in_channels),
-                    get_transformer_temporal(in_channels)
+                    get_transformer_temporal(in_channels, max_length),
+                    get_transformer_temporal(in_channels, max_length)
                 ]
             )
             # up blocks contain one additional TransformerTemporal
             if block_type == BlockType.UP:
-                self.temporal_attentions.append(get_transformer_temporal(in_channels))
+                self.temporal_attentions.append(get_transformer_temporal(in_channels, max_length))
 
     def set_video_length(self, video_length: int):
         for tt in self.temporal_attentions:
             tt.set_video_length(video_length)
 
 
-def get_transformer_temporal(in_channels) -> 'TransformerTemporal':
+def get_transformer_temporal(in_channels, max_length) -> 'TransformerTemporal':
     num_attention_heads = 8
     return TransformerTemporal(
         num_attention_heads=num_attention_heads,
         attention_head_dim=in_channels // num_attention_heads,
         in_channels=in_channels,
+        max_length=max_length,
     )
 
 
@@ -122,6 +126,7 @@ class TransformerTemporal(nn.Module):
             attention_bias: bool = False,
             activation_fn: str = "geglu",
             upcast_attention: bool = False,
+            max_length = 24,
     ):
         super().__init__()
 
@@ -140,7 +145,8 @@ class TransformerTemporal(nn.Module):
                     activation_fn=activation_fn,
                     attention_bias=attention_bias,
                     upcast_attention=upcast_attention,
-                    cross_attention_dim=cross_attention_dim
+                    cross_attention_dim=cross_attention_dim,
+                    max_length=max_length,
                 )
                 for _ in range(num_layers)
             ]
@@ -194,7 +200,8 @@ class TransformerBlock(nn.Module):
             attention_bias=False,
             upcast_attention=False,
             depth=2,
-            cross_attention_dim: Optional[int] = None
+            cross_attention_dim: Optional[int] = None,
+            max_length=24
     ):
         super().__init__()
 
@@ -206,6 +213,7 @@ class TransformerBlock(nn.Module):
         for _ in range(depth):
             attention_blocks.append(
                 TemporalAttention(
+                    max_length=max_length,
                     query_dim=dim,
                     context_dim=cross_attention_dim, # called context_dim for ComfyUI impl
                     heads=num_attention_heads,
@@ -277,9 +285,9 @@ class PositionalEncoding(nn.Module):
 
 
 class TemporalAttention(CrossAttentionMM):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, max_length=24, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.pos_encoder = PositionalEncoding(kwargs["query_dim"], dropout=0)
+        self.pos_encoder = PositionalEncoding(kwargs["query_dim"], dropout=0, max_length=max_length)
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, number_of_frames=8):
         sequence_length = hidden_states.shape[1]

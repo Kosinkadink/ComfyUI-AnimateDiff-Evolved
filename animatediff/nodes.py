@@ -68,6 +68,7 @@ class AnimateDiffModelSettings:
                 "cap_initial_pe_length": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "interpolate_pe_to_length": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "initial_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
+                "final_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
             },
         }
     
@@ -76,14 +77,16 @@ class AnimateDiffModelSettings:
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float, other_strength: float,
-                                  cap_initial_pe_length: int, interpolate_pe_to_length: int, initial_pe_idx_offset: int):
+                                  cap_initial_pe_length: int, interpolate_pe_to_length: int,
+                                  initial_pe_idx_offset: int, final_pe_idx_offset: int):
         motion_model_settings = MotionModelSettings(
             pe_strength=pe_strength,
             attn_strength=attn_strength,
             other_strength=other_strength,
             cap_initial_pe_length=cap_initial_pe_length,
             interpolate_pe_to_length=interpolate_pe_to_length,
-            initial_pe_idx_offset=initial_pe_idx_offset
+            initial_pe_idx_offset=initial_pe_idx_offset,
+            final_pe_idx_offset=final_pe_idx_offset,
             )
 
         return (motion_model_settings,)
@@ -135,7 +138,8 @@ class AnimateDiffLoaderWithContext:
                         context_stride=context_options.context_stride,
                         context_overlap=context_options.context_overlap,
                         context_schedule=context_options.context_schedule,
-                        closed_loop=context_options.closed_loop
+                        closed_loop=context_options.closed_loop,
+                        sync_context_to_pe=context_options.sync_context_to_pe
                 )
         if motion_lora:
             injection_params.set_loras(motion_lora)
@@ -156,6 +160,7 @@ class AnimateDiffUniformContextOptions:
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 32}), # if new motion modules come out
                 "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
+                #"sync_context_to_pe": ("BOOLEAN", {"default": False},),
             },
         }
     
@@ -169,8 +174,9 @@ class AnimateDiffUniformContextOptions:
             context_stride=context_stride,
             context_overlap=context_overlap,
             context_schedule=context_schedule,
-            closed_loop=closed_loop,
+            closed_loop=closed_loop
             )
+        #context_options.set_sync_context_to_pe(sync_context_to_pe)
         return (context_options,)
 
 

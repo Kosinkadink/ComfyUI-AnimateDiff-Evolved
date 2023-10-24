@@ -88,6 +88,10 @@ class GenericMotionWrapper(nn.Module, ABC):
     def set_video_length(self, video_length: int):
         pass
 
+    @abstractmethod
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        pass
+
 
 class GroupNormAD(torch.nn.GroupNorm):
     def __init__(self, num_groups: int, num_channels: int, eps: float = 1e-5, affine: bool = True,

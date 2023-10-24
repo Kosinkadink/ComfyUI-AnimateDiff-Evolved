@@ -22,7 +22,7 @@ from .logger import logger
 from .motion_module_ad import VanillaTemporalModule
 from .motion_module import InjectionParams , eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module, unload_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
-from .motion_utils import GroupNormAD
+from .motion_utils import GenericMotionWrapper, GroupNormAD
 from .context import get_context_scheduler
 from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
 
@@ -32,6 +32,7 @@ from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inje
 # Global variable to use to more conveniently hack variable access into samplers
 class AnimateDiffHelper_GlobalState:
     def __init__(self):
+        self.motion_module: GenericMotionWrapper = None
         self.reset()
     
     def reset(self):
@@ -45,6 +46,11 @@ class AnimateDiffHelper_GlobalState:
         self.context_overlap: int = None
         self.context_schedule: str = None
         self.closed_loop: bool = False
+        self.sync_context_to_pe: bool = False
+        self.sub_idxs: list = None
+        if self.motion_module is not None:
+            del self.motion_module
+            self.motion_module = None
     
     def update_with_inject_params(self, params: InjectionParams):
         self.video_length = params.video_length
@@ -53,6 +59,7 @@ class AnimateDiffHelper_GlobalState:
         self.context_overlap = params.context_overlap
         self.context_schedule = params.context_schedule
         self.closed_loop = params.closed_loop
+        self.sync_context_to_pe = params.sync_context_to_pe
 
     def is_using_sliding_context(self):
         return self.context_frames is not None
@@ -151,6 +158,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             model.model.register_schedule(given_betas=None, beta_schedule=beta_schedule, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
 
             # handle GLOBALSTATE vars and step tally
+            ADGS.motion_module = motion_module
             ADGS.update_with_inject_params(params)
             ADGS.start_step = kwargs.get("start_step") or 0
             ADGS.current_step = ADGS.start_step
@@ -168,6 +176,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
         finally:
             # attempt to eject motion module
             eject_motion_module(model=model)
+            # reset motion module sub_idxs
+            motion_module.set_sub_idxs(None)
             # if loras are present, remove model so it can be re-loaded next time with fresh weights
             if motion_module.has_loras():
                 unload_motion_module(motion_module)
@@ -514,6 +524,10 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
 
             # perform calc_cond_uncond_batch per context window
             for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames, ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
+                # idxs of positional encoders in motion module to use, if needed (experimental, so disabled for now)
+                if ADGS.sync_context_to_pe:
+                    ADGS.sub_idxs = ctx_idxs
+                    ADGS.motion_module.set_sub_idxs(ADGS.sub_idxs)
                 # account for all portions of input frames
                 full_idxs = []
                 for n in range(axes_factor):
