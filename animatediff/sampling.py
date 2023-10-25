@@ -6,7 +6,7 @@ import math
 from einops import rearrange
 from torch.nn.functional import group_norm
 
-from comfy.samplers import lcm
+from comfy.conds import lcm
 import comfy.samplers as comfy_samplers
 import comfy.model_management as model_management
 from controlnet import ControlBase
