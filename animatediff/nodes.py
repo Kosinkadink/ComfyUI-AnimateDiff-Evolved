@@ -57,6 +57,27 @@ class AnimateDiffLoRALoader:
         return (prev_motion_lora,)
 
 
+class AnimateDiffModelSettingsSimple:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "motion_pe_stretch": ("INT", {"default": 0, "min": 0, "step": 1}),
+            },
+        }
+    
+    RETURN_TYPES = ("MOTION_MODEL_SETTINGS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/motion settings"
+    FUNCTION = "get_motion_model_settings"
+
+    def get_motion_model_settings(self, motion_pe_stretch: int):
+        motion_model_settings = MotionModelSettings(
+            motion_pe_stretch=motion_pe_stretch
+            )
+
+        return (motion_model_settings,)
+
+
 class AnimateDiffModelSettingsAdvanced:
     @classmethod
     def INPUT_TYPES(s):
@@ -65,6 +86,7 @@ class AnimateDiffModelSettingsAdvanced:
                 "pe_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001}),
                 "attn_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001}),
                 "other_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.0001}),
+                "motion_pe_stretch": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "cap_initial_pe_length": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "interpolate_pe_to_length": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "initial_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
@@ -73,10 +95,11 @@ class AnimateDiffModelSettingsAdvanced:
         }
     
     RETURN_TYPES = ("MOTION_MODEL_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓"
+    CATEGORY = "Animate Diff 🎭🅐🅓/motion settings"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float, other_strength: float,
+                                  motion_pe_stretch: int,
                                   cap_initial_pe_length: int, interpolate_pe_to_length: int,
                                   initial_pe_idx_offset: int, final_pe_idx_offset: int):
         motion_model_settings = MotionModelSettings(
@@ -87,6 +110,7 @@ class AnimateDiffModelSettingsAdvanced:
             interpolate_pe_to_length=interpolate_pe_to_length,
             initial_pe_idx_offset=initial_pe_idx_offset,
             final_pe_idx_offset=final_pe_idx_offset,
+            motion_pe_stretch=motion_pe_stretch
             )
 
         return (motion_model_settings,)
@@ -485,6 +509,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
+    "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
     "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -497,6 +522,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓",
     "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader 🎭🅐🅓",
+    "ADE_AnimateDiffModelSettingsSimple": "Motion Model Settings (Simple) 🎭🅐🅓",
     "ADE_AnimateDiffModelSettings": "Motion Model Settings (Advanced) 🎭🅐🅓",
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
