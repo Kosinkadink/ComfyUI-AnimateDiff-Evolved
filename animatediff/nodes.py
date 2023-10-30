@@ -8,7 +8,7 @@ from typing import Dict, List
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
-import folder_paths
+from comfy import folder_paths
 
 from comfy.sd import load_checkpoint_guess_config
 from comfy.model_patcher import ModelPatcher

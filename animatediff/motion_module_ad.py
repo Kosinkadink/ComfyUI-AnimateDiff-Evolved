@@ -8,7 +8,7 @@ from comfy.ldm.modules.attention import FeedForward
 
 from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM
 from .motion_lora import MotionLoRAInfo
-from .logger import logger
+# from .logger import logger
 
 
 def zero_module(module):

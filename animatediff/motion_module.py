@@ -1,7 +1,7 @@
 import torch
 from torch import Tensor, nn
 
-from ldm.modules.diffusionmodules import openaimodel
+from comfy.ldm.modules.diffusionmodules import openaimodel
 import comfy.model_patcher as comfy_model_patcher
 from comfy.model_patcher import ModelPatcher
 import comfy.model_management as model_management
