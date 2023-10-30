@@ -156,6 +156,9 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             beta_schedule = BetaSchedules.to_name(params.beta_schedule)
             model.model.register_schedule(given_betas=None, beta_schedule=beta_schedule, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
 
+            # apply scale multiplier, if needed
+            motion_module.set_scale_multiplier(params.motion_model_settings.attn_scale)
+
             # handle GLOBALSTATE vars and step tally
             ADGS.motion_module = motion_module
             ADGS.update_with_inject_params(params)
@@ -175,6 +178,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
         finally:
             # attempt to eject motion module
             eject_motion_module(model=model)
+            # reset motion module scale multiplier
+            motion_module.reset_scale_multiplier()
             # reset motion module sub_idxs
             motion_module.set_sub_idxs(None)
             # if loras are present, remove model so it can be re-loaded next time with fresh weights
@@ -474,6 +479,7 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                                     raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; \
                                                         use Control objects from Kosinkadink/Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
                                 resized_actual_cond[key] = control_item
+                                del control_item
                             elif isinstance(cond_item, dict):
                                 new_cond_item = cond_item.copy()
                                 # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)

@@ -1,5 +1,5 @@
 # original HotShotXL components adapted from https://github.com/hotshotco/Hotshot-XL/blob/main/hotshot_xl/models/transformer_temporal.py
-from typing import Optional
+from typing import Iterable, Optional, Union
 import torch
 from torch import Tensor, nn
 
@@ -45,9 +45,9 @@ def has_mid_block(mm_state_dict: dict[str, Tensor]):
 class HotShotXLMotionWrapper(GenericMotionWrapper):
     def __init__(self, mm_state_dict: dict[str, Tensor], mm_hash: str, mm_name: str="mm_sd_v15.ckpt", loras: list[MotionLoRAInfo]=None):
         super().__init__(mm_hash, mm_name, loras)
-        self.down_blocks = nn.ModuleList([])
-        self.up_blocks = nn.ModuleList([])
-        self.mid_block = None
+        self.down_blocks: Iterable[HotShotXLMotionModule] = nn.ModuleList([])
+        self.up_blocks: Iterable[HotShotXLMotionModule] = nn.ModuleList([])
+        self.mid_block: Union[HotShotXLMotionModule, None] = None
         self.encoding_max_len = get_hsxl_temporal_position_encoding_max_len(mm_state_dict, mm_name)
         for c in (320, 640, 1280):
             self.down_blocks.append(HotShotXLMotionModule(c, block_type=BlockType.DOWN, max_length=self.encoding_max_len))
@@ -76,6 +76,14 @@ class HotShotXLMotionWrapper(GenericMotionWrapper):
         if self.mid_block is not None:
             self.mid_block.set_video_length(video_length)
     
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        for block in self.down_blocks:
+            block.set_scale_multiplier(multiplier)
+        for block in self.up_blocks:
+            block.set_scale_multiplier(multiplier)
+        if self.mid_block is not None:
+            self.mid_block.set_scale_multiplier(multiplier)
+
     def set_sub_idxs(self, sub_idxs: list[int]):
         pass
         
@@ -85,7 +93,7 @@ class HotShotXLMotionModule(nn.Module):
         super().__init__()
         if block_type == BlockType.MID:
             # mid blocks contain only a single TransformerTemporal
-            self.temporal_attentions = nn.ModuleList([get_transformer_temporal(in_channels, max_length)])
+            self.temporal_attentions: Iterable[TransformerTemporal] = nn.ModuleList([get_transformer_temporal(in_channels, max_length)])
         else:
             # down blocks contain two TransformerTemporals
             self.temporal_attentions = nn.ModuleList(
@@ -101,6 +109,10 @@ class HotShotXLMotionModule(nn.Module):
     def set_video_length(self, video_length: int):
         for tt in self.temporal_attentions:
             tt.set_video_length(video_length)
+
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        for tt in self.temporal_attentions:
+            tt.set_scale_multiplier(multiplier)
 
 
 def get_transformer_temporal(in_channels, max_length) -> 'TransformerTemporal':
@@ -135,7 +147,7 @@ class TransformerTemporal(nn.Module):
         self.norm = GroupNormAD(num_groups=norm_num_groups, num_channels=in_channels, eps=1e-6, affine=True)
         self.proj_in = nn.Linear(in_channels, inner_dim)
 
-        self.transformer_blocks = nn.ModuleList(
+        self.transformer_blocks: Iterable[TransformerBlock] = nn.ModuleList(
             [
                 TransformerBlock(
                     dim=inner_dim,
@@ -156,6 +168,10 @@ class TransformerTemporal(nn.Module):
 
     def set_video_length(self, video_length: int):
         self.video_length = video_length
+
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        for block in self.transformer_blocks:
+            block.set_scale_multiplier(multiplier)
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
         batch, channel, height, weight = hidden_states.shape
@@ -225,11 +241,15 @@ class TransformerBlock(nn.Module):
             )
             norms.append(nn.LayerNorm(dim))
 
-        self.attention_blocks = nn.ModuleList(attention_blocks)
+        self.attention_blocks: Iterable[TemporalAttention] = nn.ModuleList(attention_blocks)
         self.norms = nn.ModuleList(norms)
 
         self.ff = FeedForward(dim, dropout=dropout, glu=(activation_fn == "geglu"))
         self.ff_norm = nn.LayerNorm(dim)
+
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        for block in self.attention_blocks:
+            block.set_scale_multiplier(multiplier)
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, number_of_frames=None):
 
@@ -288,6 +308,12 @@ class TemporalAttention(CrossAttentionMM):
     def __init__(self, max_length=24, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pos_encoder = PositionalEncoding(kwargs["query_dim"], dropout=0, max_length=max_length)
+
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        if multiplier is None or math.isclose(multiplier, 1.0):
+            self.scale = None
+        else:
+            self.scale = self.default_scale * multiplier
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, number_of_frames=8):
         sequence_length = hidden_states.shape[1]

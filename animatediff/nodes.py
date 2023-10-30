@@ -57,7 +57,7 @@ class AnimateDiffLoRALoader:
         return (prev_motion_lora,)
 
 
-class AnimateDiffModelSettings:
+class AnimateDiffModelSettingsAdvanced:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -69,6 +69,7 @@ class AnimateDiffModelSettings:
                 "interpolate_pe_to_length": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "initial_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "final_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
+                "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
             },
         }
     
@@ -78,7 +79,7 @@ class AnimateDiffModelSettings:
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float, other_strength: float,
                                   cap_initial_pe_length: int, interpolate_pe_to_length: int,
-                                  initial_pe_idx_offset: int, final_pe_idx_offset: int):
+                                  initial_pe_idx_offset: int, final_pe_idx_offset: int, motion_scale: float):
         motion_model_settings = MotionModelSettings(
             pe_strength=pe_strength,
             attn_strength=attn_strength,
@@ -87,6 +88,7 @@ class AnimateDiffModelSettings:
             interpolate_pe_to_length=interpolate_pe_to_length,
             initial_pe_idx_offset=initial_pe_idx_offset,
             final_pe_idx_offset=final_pe_idx_offset,
+            attn_scale=motion_scale,
             )
 
         return (motion_model_settings,)
@@ -479,7 +481,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
-    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettings,
+    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
@@ -491,7 +493,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓",
     "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader 🎭🅐🅓",
-    "ADE_AnimateDiffModelSettings": "AnimateDiff Motion Model Settings 🎭🅐🅓",
+    "ADE_AnimateDiffModelSettings": "Motion Model Settings (Advanced) 🎭🅐🅓",
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select 🎭🅐🅓",

@@ -500,7 +500,10 @@ class MotionModelSettings:
     def __init__(self,
                  pe_strength: float=1.0, attn_strength: float=1.0, other_strength: float=1.0,
                  cap_initial_pe_length: int=0, interpolate_pe_to_length: int=0,
-                 initial_pe_idx_offset: int=0, final_pe_idx_offset: int=0):
+                 initial_pe_idx_offset: int=0, final_pe_idx_offset: int=0,
+                 attn_scale: float=1.0,
+                 ):
+        # PE-interpolation settings
         self.pe_strength = pe_strength
         self.attn_strength = attn_strength
         self.other_strength = other_strength
@@ -508,6 +511,8 @@ class MotionModelSettings:
         self.interpolate_pe_to_length = interpolate_pe_to_length
         self.initial_pe_idx_offset = initial_pe_idx_offset
         self.final_pe_idx_offset = final_pe_idx_offset
+        # attention scale settings
+        self.attn_scale = attn_scale
 
     def has_pe_strength(self) -> bool:
         return self.pe_strength != 1.0

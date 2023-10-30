@@ -1,3 +1,4 @@
+from typing import Union
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
@@ -34,6 +35,8 @@ class CrossAttentionMM(nn.Module):
 
         self.heads = heads
         self.dim_head = dim_head
+        self.scale = None
+        self.default_scale = dim_head ** -0.5
 
         self.to_q = operations.Linear(query_dim, inner_dim, bias=False, dtype=dtype, device=device)
         self.to_k = operations.Linear(context_dim, inner_dim, bias=False, dtype=dtype, device=device)
@@ -51,6 +54,10 @@ class CrossAttentionMM(nn.Module):
         else:
             v = self.to_v(context)
 
+        # apply custom scale by multiplying k by scale factor;
+        # division by default_scale is needed to account for internal attn code multiplying by default_scale
+        if self.scale is not None:
+            k *= (self.scale / self.default_scale)
         out = optimized_attention_mm(q, k, v, self.heads, mask)
         return self.to_out(out)
 
@@ -87,6 +94,13 @@ class GenericMotionWrapper(nn.Module, ABC):
     @abstractmethod
     def set_video_length(self, video_length: int):
         pass
+
+    @abstractmethod
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        pass
+
+    def reset_scale_multiplier(self):
+        self.set_scale_multiplier(None)
 
     @abstractmethod
     def set_sub_idxs(self, sub_idxs: list[int]):
