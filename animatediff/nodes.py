@@ -225,7 +225,7 @@ class AnimateDiffLoader_Deprecated:
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated"
+    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(
@@ -273,7 +273,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated"
+    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(self,
@@ -361,7 +361,7 @@ class AnimateDiffCombine_Deprecated:
 
     RETURN_TYPES = ("GIF",)
     OUTPUT_NODE = True
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated"
+    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
     FUNCTION = "generate_gif"
 
     def generate_gif(
