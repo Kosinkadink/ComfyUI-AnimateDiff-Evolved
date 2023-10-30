@@ -24,6 +24,10 @@ class UniformContextOptions(ContextOptions):
         self.context_overlap = context_overlap
         self.context_schedule = context_schedule
         self.closed_loop = closed_loop
+        self.sync_context_to_pe = False
+    
+    def set_sync_context_to_pe(self, sync_context_to_pe: bool):
+        self.sync_context_to_pe = sync_context_to_pe
 
 
 class ContextSchedules:

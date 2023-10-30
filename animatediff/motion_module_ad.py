@@ -1,3 +1,4 @@
+from typing import Iterable, Union
 import torch
 from torch import Tensor, nn
 
@@ -37,9 +38,9 @@ def has_mid_block(mm_state_dict: dict[str, Tensor]):
 class AnimDiffMotionWrapper(GenericMotionWrapper):
     def __init__(self, mm_state_dict: dict[str, Tensor], mm_hash: str, mm_name: str="mm_sd_v15.ckpt" , loras: list[MotionLoRAInfo]=None):
         super().__init__(mm_hash, mm_name, loras)
-        self.down_blocks = nn.ModuleList([])
-        self.up_blocks = nn.ModuleList([])
-        self.mid_block = None
+        self.down_blocks: Iterable[MotionModule] = nn.ModuleList([])
+        self.up_blocks: Iterable[MotionModule] = nn.ModuleList([])
+        self.mid_block: Union[MotionModule, None] = None
         self.encoding_max_len = get_ad_temporal_position_encoding_max_len(mm_state_dict, mm_name)
         for c in (320, 640, 1280, 1280):
             self.down_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.DOWN))
@@ -67,6 +68,22 @@ class AnimDiffMotionWrapper(GenericMotionWrapper):
             block.set_video_length(video_length)
         if self.mid_block is not None:
             self.mid_block.set_video_length(video_length)
+    
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        for block in self.down_blocks:
+            block.set_scale_multiplier(multiplier)
+        for block in self.up_blocks:
+            block.set_scale_multiplier(multiplier)
+        if self.mid_block is not None:
+            self.mid_block.set_scale_multiplier(multiplier)
+
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        for block in self.down_blocks:
+            block.set_sub_idxs(sub_idxs)
+        for block in self.up_blocks:
+            block.set_sub_idxs(sub_idxs)
+        if self.mid_block is not None:
+            self.mid_block.set_sub_idxs(sub_idxs)
 
 
 class MotionModule(nn.Module):
@@ -74,7 +91,7 @@ class MotionModule(nn.Module):
         super().__init__()
         if block_type == BlockType.MID:
             # mid blocks contain only a single VanillaTemporalModule
-            self.motion_modules = nn.ModuleList([get_motion_module(in_channels, temporal_position_encoding_max_len)])
+            self.motion_modules: Iterable[VanillaTemporalModule] = nn.ModuleList([get_motion_module(in_channels, temporal_position_encoding_max_len)])
         else:
             # down blocks contain two VanillaTemporalModules
             self.motion_modules = nn.ModuleList(
@@ -90,6 +107,14 @@ class MotionModule(nn.Module):
     def set_video_length(self, video_length: int):
         for motion_module in self.motion_modules:
             motion_module.set_video_length(video_length)
+    
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        for motion_module in self.motion_modules:
+            motion_module.set_scale_multiplier(multiplier)
+    
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        for motion_module in self.motion_modules:
+            motion_module.set_sub_idxs(sub_idxs)
 
 
 def get_motion_module(in_channels, temporal_position_encoding_max_len):
@@ -131,6 +156,12 @@ class VanillaTemporalModule(nn.Module):
 
     def set_video_length(self, video_length: int):
         self.temporal_transformer.set_video_length(video_length)
+    
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        self.temporal_transformer.set_scale_multiplier(multiplier)
+    
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        self.temporal_transformer.set_sub_idxs(sub_idxs)
 
     def forward(self, input_tensor, encoder_hidden_states=None, attention_mask=None):
         return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)
@@ -166,7 +197,7 @@ class TemporalTransformer3DModel(nn.Module):
         )
         self.proj_in = nn.Linear(in_channels, inner_dim)
 
-        self.transformer_blocks = nn.ModuleList(
+        self.transformer_blocks: Iterable[TemporalTransformerBlock] = nn.ModuleList(
             [
                 TemporalTransformerBlock(
                     dim=inner_dim,
@@ -191,6 +222,14 @@ class TemporalTransformer3DModel(nn.Module):
 
     def set_video_length(self, video_length: int):
         self.video_length = video_length
+    
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        for block in self.transformer_blocks:
+            block.set_scale_multiplier(multiplier)
+
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        for block in self.transformer_blocks:
+            block.set_sub_idxs(sub_idxs)
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
         batch, channel, height, weight = hidden_states.shape
@@ -270,11 +309,19 @@ class TemporalTransformerBlock(nn.Module):
             )
             norms.append(nn.LayerNorm(dim))
 
-        self.attention_blocks = nn.ModuleList(attention_blocks)
+        self.attention_blocks: Iterable[VersatileAttention] = nn.ModuleList(attention_blocks)
         self.norms = nn.ModuleList(norms)
 
         self.ff = FeedForward(dim, dropout=dropout, glu=(activation_fn == "geglu"))
         self.ff_norm = nn.LayerNorm(dim)
+
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        for block in self.attention_blocks:
+            block.set_scale_multiplier(multiplier)
+
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        for block in self.attention_blocks:
+            block.set_sub_idxs(sub_idxs)
 
     def forward(
         self,
@@ -315,8 +362,15 @@ class PositionalEncoding(nn.Module):
         pe[0, :, 0::2] = torch.sin(position * div_term)
         pe[0, :, 1::2] = torch.cos(position * div_term)
         self.register_buffer("pe", pe)
+        self.sub_idxs = None
+
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        self.sub_idxs = sub_idxs
 
     def forward(self, x):
+        #if self.sub_idxs is not None:
+        #    x = x + self.pe[:, self.sub_idxs]
+        #else:
         x = x + self.pe[:, : x.size(1)]
         return self.dropout(x)
 
@@ -349,6 +403,16 @@ class VersatileAttention(CrossAttentionMM):
 
     def extra_repr(self):
         return f"(Module Info) Attention_Mode: {self.attention_mode}, Is_Cross_Attention: {self.is_cross_attention}"
+
+    def set_scale_multiplier(self, multiplier: Union[float, None]):
+        if multiplier is None or math.isclose(multiplier, 1.0):
+            self.scale = None
+        else:
+            self.scale = self.default_scale * multiplier
+
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        if self.pos_encoder != None:
+            self.pos_encoder.set_sub_idxs(sub_idxs)
 
     def forward(
         self,
