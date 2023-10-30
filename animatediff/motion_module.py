@@ -347,12 +347,12 @@ def _perform_hsxl_motion_module_injection(unet_blocks: nn.ModuleList, mm_blocks:
                 res_idx = idx
         # if SpatialTransformer exists, inject right after
         if st_idx >= 0:
-            logger.info(f"HSXL: injecting after ST({st_idx})")
+            #logger.info(f"HSXL: injecting after ST({st_idx})")
             unet_blocks[unet_idx].insert(st_idx+1, mm_blocks[mm_blk_idx].temporal_attentions[mm_tt_idx])
             injection_count += 1
         # otherwise, if only ResBlock exists, inject right after
         elif res_idx >= 0:
-            logger.info(f"HSXL: injecting after Res({res_idx})")
+            #logger.info(f"HSXL: injecting after Res({res_idx})")
             unet_blocks[unet_idx].insert(res_idx+1, mm_blocks[mm_blk_idx].temporal_attentions[mm_tt_idx])
             injection_count += 1
         # increment unet_idx
@@ -379,7 +379,7 @@ def _perform_hsxl_motion_module_ejection(unet_blocks: nn.ModuleList):
         # pop in backwards order, as to not disturb what the indeces refer to
         for idx in sorted(idx_to_pop, reverse=True):
             block.pop(idx)
-        logger.info(f"HSXL: ejecting {idx_to_pop}")
+        #logger.info(f"HSXL: ejecting {idx_to_pop}")
 ############################################################################################################
 
 

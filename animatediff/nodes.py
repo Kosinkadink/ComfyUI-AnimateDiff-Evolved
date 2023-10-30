@@ -69,7 +69,6 @@ class AnimateDiffModelSettingsAdvanced:
                 "interpolate_pe_to_length": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "initial_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "final_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
-                "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
             },
         }
     
@@ -79,7 +78,7 @@ class AnimateDiffModelSettingsAdvanced:
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float, other_strength: float,
                                   cap_initial_pe_length: int, interpolate_pe_to_length: int,
-                                  initial_pe_idx_offset: int, final_pe_idx_offset: int, motion_scale: float):
+                                  initial_pe_idx_offset: int, final_pe_idx_offset: int):
         motion_model_settings = MotionModelSettings(
             pe_strength=pe_strength,
             attn_strength=attn_strength,
@@ -88,7 +87,6 @@ class AnimateDiffModelSettingsAdvanced:
             interpolate_pe_to_length=interpolate_pe_to_length,
             initial_pe_idx_offset=initial_pe_idx_offset,
             final_pe_idx_offset=final_pe_idx_offset,
-            attn_scale=motion_scale,
             )
 
         return (motion_model_settings,)
@@ -108,6 +106,7 @@ class AnimateDiffLoaderWithContext:
                 "context_options": ("CONTEXT_OPTIONS",),
                 "motion_lora": ("MOTION_LORA",),
                 "motion_model_settings": ("MOTION_MODEL_SETTINGS",),
+                "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
             }
         }
     
@@ -120,6 +119,7 @@ class AnimateDiffLoaderWithContext:
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
         context_options: ContextOptions=None, motion_lora: MotionLoRAList=None, motion_model_settings: MotionModelSettings=None,
+        motion_scale: float=1.0,
     ):
         # load motion module
         mm = load_motion_module(model_name, motion_lora, model=model, motion_model_settings=motion_model_settings)
@@ -145,6 +145,10 @@ class AnimateDiffLoaderWithContext:
                 )
         if motion_lora:
             injection_params.set_loras(motion_lora)
+        # set motion_scale and motion_model_settings
+        if not motion_model_settings:
+            motion_model_settings = MotionModelSettings()
+        motion_model_settings.attn_scale = motion_scale
         injection_params.set_motion_model_settings(motion_model_settings)
         # inject for use in sampling code
         model = inject_params_into_model(model, injection_params)
