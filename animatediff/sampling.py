@@ -22,7 +22,7 @@ from .motion_module_ad import VanillaTemporalModule
 from .motion_module import InjectionParams, eject_motion_module, inject_motion_module, inject_params_into_model, \
     load_motion_module, unload_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
-from .motion_utils import GroupNormAD
+from .motion_utils import GenericMotionWrapper, GroupNormAD
 from .context import get_context_scheduler
 from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
 
@@ -32,6 +32,7 @@ from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inje
 # Global variable to use to more conveniently hack variable access into samplers
 class AnimateDiffHelper_GlobalState:
     def __init__(self):
+        self.motion_module: GenericMotionWrapper = None
         self.reset()
 
     def reset(self):
@@ -45,6 +46,11 @@ class AnimateDiffHelper_GlobalState:
         self.context_overlap: Optional[int] = None
         self.context_schedule: Optional[str] = None
         self.closed_loop: bool = False
+        self.sync_context_to_pe: bool = False
+        self.sub_idxs: list = None
+        if self.motion_module is not None:
+            del self.motion_module
+            self.motion_module = None
 
     def update_with_inject_params(self, params: InjectionParams):
         self.video_length = params.video_length
@@ -53,6 +59,7 @@ class AnimateDiffHelper_GlobalState:
         self.context_overlap = params.context_overlap
         self.context_schedule = params.context_schedule
         self.closed_loop = params.closed_loop
+        self.sync_context_to_pe = params.sync_context_to_pe
 
     def is_using_sliding_context(self):
         return self.context_frames is not None
@@ -149,7 +156,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             ##############################################
 
             # try to load motion module
-            motion_module = load_motion_module(params.model_name, params.loras, model=model)
+            motion_module = load_motion_module(params.model_name, params.loras, model=model, motion_model_settings=params.motion_model_settings)
             # inject motion module into unet
             inject_motion_module(model=model, motion_module=motion_module, params=params)
 
@@ -158,7 +165,11 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             model.model.register_schedule(given_betas=None, beta_schedule=beta_schedule, timesteps=1000,
                                           linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
 
+            # apply scale multiplier, if needed
+            motion_module.set_scale_multiplier(params.motion_model_settings.attn_scale)
+
             # handle GLOBALSTATE vars and step tally
+            ADGS.motion_module = motion_module
             ADGS.update_with_inject_params(params)
             ADGS.start_step = kwargs.get("start_step") or 0
             ADGS.current_step = ADGS.start_step
@@ -178,6 +189,10 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
         finally:
             # attempt to eject motion module
             eject_motion_module(model=model)
+            # reset motion module scale multiplier
+            motion_module.reset_scale_multiplier()
+            # reset motion module sub_idxs
+            motion_module.set_sub_idxs(None)
             # if loras are present, remove model so it can be re-loaded next time with fresh weights
             if motion_module.has_loras():
                 unload_motion_module(motion_module)
@@ -421,26 +436,32 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                     area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
                     out_count[:, :, area[o][2]:area[o][0] + area[o][2], area[o][3]:area[o][1] + area[o][3]] += mult[o]
                 else:
-                    out_uncond[:, :, area[o][2]:area[o][0] + area[o][2],
-                    area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
-                    out_uncond_count[:, :, area[o][2]:area[o][0] + area[o][2], area[o][3]:area[o][1] + area[o][3]] += \
-                        mult[o]
-            del mult
+                    output = model_function(input_x, timestep_, **c).chunk(batch_chunks)
+                del input_x
 
-        out_cond /= out_count
-        del out_count
-        out_uncond /= out_uncond_count
-        del out_uncond_count
+                for o in range(batch_chunks):
+                    if cond_or_uncond[o] == COND:
+                        out_cond[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
+                        out_count[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += mult[o]
+                    else:
+                        out_uncond[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
+                        out_uncond_count[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += mult[o]
+                del mult
 
-        return out_cond, out_uncond
+            out_cond /= out_count
+            del out_count
+            out_uncond /= out_uncond_count
+            del out_uncond_count
 
+            return out_cond, out_uncond
+        
     # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
     # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
     def sliding_calc_cond_uncond_batch(model_function, cond, uncond, x_in, timestep, max_total_area, model_options):
         # get context scheduler
         context_scheduler = get_context_scheduler(ADGS.context_schedule)
         # figure out how input is split
-        axes_factor = x.size(0) // ADGS.video_length
+        axes_factor = x.size(0)//ADGS.video_length
 
         # prepare final cond, uncond, and out_count
         cond_final = torch.zeros_like(x)
@@ -479,8 +500,9 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                                 prepare_control_objects(control_item, full_idxs)
                             else:
                                 raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; \
-                                                        use Control objects from Kosinkadink/Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
+                                                    use Control objects from Kosinkadink/Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
                             resized_actual_cond[key] = control_item
+                            del control_item
                         elif isinstance(cond_item, dict):
                             new_cond_item = cond_item.copy()
                             # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
@@ -501,42 +523,43 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
             return resized_cond
 
         # perform calc_cond_uncond_batch per context window
-        for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames,
-                                          ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
+        for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames, ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
+            # idxs of positional encoders in motion module to use, if needed (experimental, so disabled for now)
+            if ADGS.sync_context_to_pe:
+                ADGS.sub_idxs = ctx_idxs
+                ADGS.motion_module.set_sub_idxs(ADGS.sub_idxs)
             # account for all portions of input frames
             full_idxs = []
             for n in range(axes_factor):
                 for ind in ctx_idxs:
-                    full_idxs.append((ADGS.video_length * n) + ind)
+                    full_idxs.append((ADGS.video_length*n)+ind)
             # get subsections of x, timestep, cond, uncond, cond_concat
             sub_x = x[full_idxs]
             sub_timestep = timestep[full_idxs]
             sub_cond = get_resized_cond(cond, full_idxs) if cond is not None else None
             sub_uncond = get_resized_cond(uncond, full_idxs) if uncond is not None else None
 
-            sub_cond_out, sub_uncond_out = calc_cond_uncond_batch(model_function, sub_cond, sub_uncond, sub_x,
-                                                                  sub_timestep, max_total_area, model_options)
+            sub_cond_out, sub_uncond_out = calc_cond_uncond_batch(model_function, sub_cond, sub_uncond, sub_x, sub_timestep, max_total_area, model_options)
 
             cond_final[full_idxs] += sub_cond_out
             uncond_final[full_idxs] += sub_uncond_out
-            out_count_final[full_idxs] += 1  # increment which indeces were used
+            out_count_final[full_idxs] += 1 # increment which indeces were used
 
         # normalize cond and uncond via division by context usage counts
         cond_final /= out_count_final
         uncond_final /= out_count_final
         return cond_final, uncond_final
 
-    max_total_area = model_management.maximum_batch_area()
-    if math.isclose(cond_scale, 1.0):
-        uncond = None
+        max_total_area = model_management.maximum_batch_area()
+        if math.isclose(cond_scale, 1.0):
+            uncond = None
 
-    if not ADGS.is_using_sliding_context():
-        cond, uncond = calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, model_options)
-    else:
-        cond, uncond = sliding_calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area,
-                                                      model_options)
-    if "sampler_cfg_function" in model_options:
-        args = {"cond": cond, "uncond": uncond, "cond_scale": cond_scale, "timestep": timestep}
-        return model_options["sampler_cfg_function"](args)
-    else:
-        return uncond + (cond - uncond) * cond_scale
+        if not ADGS.is_using_sliding_context():
+            cond, uncond = calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, model_options)
+        else:
+            cond, uncond = sliding_calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, model_options)
+        if "sampler_cfg_function" in model_options:
+            args = {"cond": cond, "uncond": uncond, "cond_scale": cond_scale, "timestep": timestep}
+            return model_options["sampler_cfg_function"](args)
+        else:
+            return uncond + (cond - uncond) * cond_scale
