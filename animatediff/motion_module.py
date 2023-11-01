@@ -98,6 +98,32 @@ def interpolate_pe_to_length(model_dict: dict[str, Tensor], key: str, new_length
     del temp_pe
 
 
+def interpolate_pe_to_length_diffs(model_dict: dict[str, Tensor], key: str, new_length: int):
+    # TODO: fill out and try out
+    pe_shape = model_dict[key].shape
+    temp_pe = rearrange(model_dict[key], "(t b) f d -> t b f d", t=1)
+    temp_pe = F.interpolate(temp_pe, size=(new_length, pe_shape[-1]), mode="bilinear")
+    temp_pe = rearrange(temp_pe, "t b f d -> (t b) f d", t=1)
+    model_dict[key] = temp_pe
+    del temp_pe
+
+
+def interpolate_pe_to_length_pingpong(model_dict: dict[str, Tensor], key: str, new_length: int):
+    if model_dict[key].shape[1] < new_length:
+        temp_pe = model_dict[key]
+        flipped_temp_pe = torch.flip(temp_pe[:, 1:-1, :], [1])
+        use_flipped = True
+        preview_pe = None
+        while model_dict[key].shape[1] < new_length:
+            preview_pe = model_dict[key]
+            model_dict[key] = torch.cat([model_dict[key], flipped_temp_pe if use_flipped else temp_pe], dim=1)
+            use_flipped = not use_flipped
+        del temp_pe
+        del flipped_temp_pe
+        del preview_pe
+    model_dict[key] = model_dict[key][:, :new_length]
+
+
 def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: 'MotionModelSettings') -> dict[str, Tensor]:
     if not mm_settings.has_anything_to_apply():
         return model_dict
@@ -123,9 +149,23 @@ def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: 'MotionModelSe
                 # apply final_pe_idx_offset, if needed
                 if mm_settings.has_final_pe_idx_offset():
                     model_dict[key] = model_dict[key][:, mm_settings.final_pe_idx_offset:]
-            # apply attn_strenth, if needed
-            elif mm_settings.has_attn_strength():
-                model_dict[key] *= mm_settings.attn_strength
+            else:
+                # apply attn_strenth, if needed
+                if mm_settings.has_attn_strength():
+                    model_dict[key] *= mm_settings.attn_strength
+                # apply specific attn_strengths, if needed
+                if mm_settings.has_any_attn_sub_strength():
+                    if "to_q" in key and mm_settings.has_attn_q_strength():
+                        model_dict[key] *= mm_settings.attn_q_strength
+                    elif "to_k" in key and mm_settings.has_attn_k_strength():
+                        model_dict[key] *= mm_settings.attn_k_strength
+                    elif "to_v" in key and mm_settings.has_attn_v_strength():
+                        model_dict[key] *= mm_settings.attn_v_strength
+                    elif "to_out" in key:
+                        if key.strip().endswith("weight") and mm_settings.has_attn_out_weight_strength():
+                            model_dict[key] *= mm_settings.attn_out_weight_strength
+                        elif key.strip().endswith("bias") and mm_settings.has_attn_out_bias_strength():
+                            model_dict[key] *= mm_settings.attn_out_bias_strength
         # apply other strength, if needed
         elif mm_settings.has_other_strength():
             model_dict[key] *= mm_settings.other_strength
@@ -506,16 +546,30 @@ def del_injected_unet_version(model: ModelPatcher):
 
 class MotionModelSettings:
     def __init__(self,
-                 pe_strength: float=1.0, attn_strength: float=1.0, other_strength: float=1.0,
+                 pe_strength: float=1.0,
+                 attn_strength: float=1.0,
+                 attn_q_strength: float=1.0,
+                 attn_k_strength: float=1.0,
+                 attn_v_strength: float=1.0,
+                 attn_out_weight_strength: float=1.0,
+                 attn_out_bias_strength: float=1.0,
+                 other_strength: float=1.0,
                  cap_initial_pe_length: int=0, interpolate_pe_to_length: int=0,
                  initial_pe_idx_offset: int=0, final_pe_idx_offset: int=0,
                  motion_pe_stretch: int=0,
                  attn_scale: float=1.0,
                  ):
-        # PE-interpolation settings
+        # general strengths
         self.pe_strength = pe_strength
         self.attn_strength = attn_strength
         self.other_strength = other_strength
+        # specific attn strengths
+        self.attn_q_strength = attn_q_strength
+        self.attn_k_strength = attn_k_strength
+        self.attn_v_strength = attn_v_strength
+        self.attn_out_weight_strength = attn_out_weight_strength
+        self.attn_out_bias_strength = attn_out_bias_strength
+        # PE-interpolation settings
         self.cap_initial_pe_length = cap_initial_pe_length
         self.interpolate_pe_to_length = interpolate_pe_to_length
         self.initial_pe_idx_offset = initial_pe_idx_offset
@@ -556,4 +610,27 @@ class MotionModelSettings:
             or self.has_interpolate_pe_to_length() \
             or self.has_initial_pe_idx_offset() \
             or self.has_final_pe_idx_offset() \
-            or self.has_motion_pe_stretch()
+            or self.has_motion_pe_stretch() \
+            or self.has_any_attn_sub_strength()
+
+    def has_any_attn_sub_strength(self) -> bool:
+        return self.has_attn_q_strength() \
+            or self.has_attn_k_strength() \
+            or self.has_attn_v_strength() \
+            or self.has_attn_out_weight_strength() \
+            or self.has_attn_out_bias_strength()
+
+    def has_attn_q_strength(self) -> bool:
+        return self.attn_q_strength != 1.0
+
+    def has_attn_k_strength(self) -> bool:
+        return self.attn_k_strength != 1.0
+
+    def has_attn_v_strength(self) -> bool:
+        return self.attn_v_strength != 1.0
+
+    def has_attn_out_weight_strength(self) -> bool:
+        return self.attn_out_weight_strength != 1.0
+
+    def has_attn_out_bias_strength(self) -> bool:
+        return self.attn_out_bias_strength != 1.0

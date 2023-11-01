@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, nn
 
 import folder_paths
-from comfy.model_base import SDXL, BaseModel
+from comfy.model_base import SDXL, BaseModel, model_sampling
 from comfy.model_patcher import ModelPatcher
 from comfy.model_management import xformers_enabled
 
@@ -24,6 +24,11 @@ class IsChangedHelper:
     
     def change(self):
         self.val = (self.val + 1) % 100
+
+
+class ModelSamplingConfig:
+    def __init__(self, beta_schedule: str):
+        self.beta_schedule = beta_schedule
 
 
 class BetaSchedules:
@@ -46,6 +51,14 @@ class BetaSchedules:
     @classmethod
     def to_name(cls, alias: str):
         return cls.ALIAS_MAP[alias]
+    
+    @classmethod
+    def to_config(cls, alias: str) -> ModelSamplingConfig:
+        return ModelSamplingConfig(cls.to_name(alias))
+    
+    @classmethod
+    def to_model_sampling(cls, alias: str, model: ModelPatcher):
+        return model_sampling(cls.to_config(alias), model_type=model.model.model_type)
 
     @staticmethod
     def get_alias_list_with_first_element(first_element: str):
@@ -57,18 +70,14 @@ class BetaSchedules:
 
 class BetaScheduleCache:
     def __init__(self, model: ModelPatcher): 
-        self.betas = model.model.betas.cpu().clone().detach()
-        self.linear_start = model.model.linear_start
-        self.linear_end = model.model.linear_end
+        self.model_sampling = model.model.model_sampling
 
     def use_cached_beta_schedule_and_clean(self, model: ModelPatcher):
-        model.model.register_schedule(given_betas=self.betas.clone().detach(), linear_start=self.linear_start, linear_end=self.linear_end)
+        model.model.model_sampling = self.model_sampling
         self.clean()
 
     def clean(self):
-        self.betas = None
-        self.linear_start = None
-        self.linear_end = None
+        self.model_sampling = None
 
 
 class Folders:

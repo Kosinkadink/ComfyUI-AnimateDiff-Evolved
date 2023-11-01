@@ -115,6 +115,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
         if not is_injected_mm_params(model):
             return orig_comfy_sample(model, *args, **kwargs)
         # otherwise, injection time
+        motion_module = None
+        orig_beta_cache = None
         try:
             # get params - clone to keep from resetting values on cached model
             params = get_injected_mm_params(model).clone()
@@ -152,9 +154,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # inject motion module into unet
             inject_motion_module(model=model, motion_module=motion_module, params=params)
 
-            # apply suggested beta schedule
-            beta_schedule = BetaSchedules.to_name(params.beta_schedule)
-            model.model.register_schedule(given_betas=None, beta_schedule=beta_schedule, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
+            # apply suggested beta schedule (model_sampling)
+            model.model.model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
 
             # apply scale multiplier, if needed
             motion_module.set_scale_multiplier(params.motion_model_settings.attn_scale)
@@ -178,14 +179,15 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
         finally:
             # attempt to eject motion module
             eject_motion_module(model=model)
-            # reset motion module scale multiplier
-            motion_module.reset_scale_multiplier()
-            # reset motion module sub_idxs
-            motion_module.set_sub_idxs(None)
-            # if loras are present, remove model so it can be re-loaded next time with fresh weights
-            if motion_module.has_loras():
-                unload_motion_module(motion_module)
-                del motion_module
+            if motion_module is not None:
+                # reset motion module scale multiplier
+                motion_module.reset_scale_multiplier()
+                # reset motion module sub_idxs
+                motion_module.set_sub_idxs(None)
+                # if loras are present, remove model so it can be re-loaded next time with fresh weights
+                if motion_module.has_loras():
+                    unload_motion_module(motion_module)
+                    del motion_module
             ##############################################
             # Restoration
             model_management.maximum_batch_area = orig_maximum_batch_area
@@ -194,7 +196,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             GroupNormAD.forward = orig_groupnormad_forward
             comfy_samplers.sampling_function = orig_sampling_function
             # reapply previous beta schedule
-            orig_beta_cache.use_cached_beta_schedule_and_clean(model)
+            if orig_beta_cache is not None:
+                orig_beta_cache.use_cached_beta_schedule_and_clean(model)
             # reset global state
             ADGS.reset()
             ##############################################
