@@ -1,29 +1,25 @@
+import math
 import sys
 from typing import Callable
+
 import torch
-from torch import Tensor
-import math
 from einops import rearrange
+from torch import Tensor
 from torch.nn.functional import group_norm
 
-import comfy.samplers as comfy_samplers
-import comfy.model_management as model_management
-from controlnet import ControlBase
-
-from model_patcher import ModelPatcher
-
-from comfy.ldm.modules.attention import SpatialTransformer
 import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
-
-from .logger import logger
-
-from .motion_module_ad import AnimDiffMotionWrapper, VanillaTemporalModule
-from .motion_module import InjectionParams , eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module, unload_motion_module
-from .motion_module import is_injected_mm_params, get_injected_mm_params
-from .motion_utils import GenericMotionWrapper, GroupNormAD
+import comfy.samplers as comfy_samplers
+from comfy.controlnet import ControlBase
+from comfy.ldm.modules.attention import SpatialTransformer
+from comfy.model_patcher import ModelPatcher
 from .context import get_context_scheduler
 from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
+from .motion_module import InjectionParams, eject_motion_module, inject_motion_module, inject_params_into_model, \
+    load_motion_module, unload_motion_module
+from .motion_module import is_injected_mm_params, get_injected_mm_params
+from .motion_module_ad import AnimDiffMotionWrapper, VanillaTemporalModule
+from .motion_utils import GenericMotionWrapper, GroupNormAD
 
 
 ##################################################################################

@@ -1,23 +1,21 @@
-from einops import rearrange, repeat
 import torch
-from torch import Tensor, nn
 import torch.nn.functional as F
+from einops import rearrange
+from torch import Tensor, nn
 
-from ldm.modules.diffusionmodules import openaimodel
-import comfy.model_patcher as comfy_model_patcher
-from comfy.model_patcher import ModelPatcher
 import comfy.model_management as model_management
-from comfy.utils import calculate_parameters, load_torch_file
+import comfy.model_patcher as comfy_model_patcher
+from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.diffusionmodules.openaimodel import ResBlock, SpatialTransformer
-
+from comfy.model_patcher import ModelPatcher
+from comfy.utils import calculate_parameters, load_torch_file
+from .logger import logger
+from .model_utils import ModelTypesSD, calculate_file_hash, get_motion_lora_path, get_motion_model_path, \
+    get_sd_model_type
+from .motion_lora import MotionLoRAList, MotionLoRAWrapper
 from .motion_module_ad import AnimDiffMotionWrapper, has_mid_block
 from .motion_module_hsxl import HotShotXLMotionWrapper, TransformerTemporal
 from .motion_utils import GenericMotionWrapper, InjectorVersion
-
-from .motion_lora import MotionLoRAList, MotionLoRAWrapper, MotionLoRAInfo
-from .model_utils import ModelTypesSD, calculate_file_hash, get_motion_lora_path, get_motion_model_path, get_sd_model_type, is_checkpoint_sd1_5
-from .logger import logger
-
 
 # inject into ModelPatcher.clone to carry over injected params over to cloned ModelPatcher
 orig_modelpatcher_clone = comfy_model_patcher.ModelPatcher.clone

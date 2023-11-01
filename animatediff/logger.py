@@ -1,6 +1,6 @@
-import sys
 import copy
 import logging
+import sys
 
 
 class ColoredFormatter(logging.Formatter):

@@ -1,15 +1,13 @@
+import math
 from typing import Iterable, Union
+
 import torch
+from einops import rearrange, repeat
 from torch import Tensor, nn
 
-import math
-from einops import rearrange, repeat
-
 from comfy.ldm.modules.attention import FeedForward
-
-from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM
 from .motion_lora import MotionLoRAInfo
-from .logger import logger
+from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM
 
 
 def zero_module(module):
