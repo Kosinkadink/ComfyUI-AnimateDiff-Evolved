@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, nn
 
 import folder_paths
-from comfy.model_base import SDXL, BaseModel, ModelSamplingDiscrete, ModelType, model_sampling
+from comfy.model_base import SDXL, BaseModel, model_sampling
 from comfy.model_patcher import ModelPatcher
 from comfy.model_management import xformers_enabled
 
