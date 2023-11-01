@@ -1,16 +1,15 @@
-from typing import Union
-import torch
-from torch import Tensor, nn
-import torch.nn.functional as F
 from abc import ABC, abstractmethod
+from typing import Union
 
-from comfy.ldm.modules.attention import attention_basic, attention_pytorch, attention_split, attention_sub_quad, attention_xformers, default
+import torch
+import torch.nn.functional as F
+from torch import Tensor, nn
+
 import comfy.model_management as model_management
 import comfy.ops
 from comfy.cli_args import args
-
+from comfy.ldm.modules.attention import attention_basic, attention_pytorch, attention_split, attention_sub_quad, default
 from .motion_lora import MotionLoRAInfo
-
 
 # until xformers bug is fixed, do not use xformers for VersatileAttention! TODO: change this when fix is out
 # logic for choosing optimized_attention method taken from comfy/ldm/modules/attention.py

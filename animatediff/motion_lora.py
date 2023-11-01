@@ -1,6 +1,5 @@
 from torch import Tensor
 
-from pathlib import Path
 
 class MotionLoRAInfo:
     def __init__(self, name: str, strength: float = 1.0, hash: str=""):

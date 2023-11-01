@@ -1,15 +1,14 @@
 # original HotShotXL components adapted from https://github.com/hotshotco/Hotshot-XL/blob/main/hotshot_xl/models/transformer_temporal.py
+import math
 from typing import Iterable, Optional, Union
+
 import torch
+from einops import rearrange, repeat
 from torch import Tensor, nn
 
-import math
-from einops import rearrange, repeat
-
 from comfy.ldm.modules.attention import FeedForward
-
-from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM
 from .motion_lora import MotionLoRAInfo
+from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM
 
 
 def zero_module(module):

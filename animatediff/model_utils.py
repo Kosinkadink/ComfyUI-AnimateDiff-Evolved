@@ -1,18 +1,14 @@
 import hashlib
 import os
 from pathlib import Path
-import time
-import json
 from typing import Callable
 
 import numpy as np
-import torch
-from torch import Tensor, nn
 
 import folder_paths
 from comfy.model_base import SDXL, BaseModel, model_sampling
-from comfy.model_patcher import ModelPatcher
 from comfy.model_management import xformers_enabled
+from comfy.model_patcher import ModelPatcher
 
 
 class IsChangedHelper:
