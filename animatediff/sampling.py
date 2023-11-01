@@ -18,7 +18,7 @@ import comfy.model_management as model_management
 
 from .logger import logger
 
-from .motion_module_ad import VanillaTemporalModule
+from .motion_module_ad import AnimDiffMotionWrapper, VanillaTemporalModule
 from .motion_module import InjectionParams , eject_motion_module, inject_motion_module, inject_params_into_model, load_motion_module, unload_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
 from .motion_utils import GenericMotionWrapper, GroupNormAD
@@ -137,20 +137,22 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_beta_cache = BetaScheduleCache(model)
             ##############################################
 
+            # try to load motion module
+            motion_module = load_motion_module(params.model_name, params.loras, model=model, motion_model_settings=params.motion_model_settings)
 
             ##############################################
             # Inject Functions
             openaimodel.forward_timestep_embed = forward_timestep_embed
             if params.unlimited_area_hack:
                 model_management.maximum_batch_area = unlimited_batch_area
-            torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
-            if params.apply_mm_groupnorm_hack:
-                GroupNormAD.forward = groupnorm_mm_factory(params)
+            # only apply groupnorm hack if not v2 and should not apply v2 properly
+            if not (isinstance(motion_module, AnimDiffMotionWrapper) and motion_module.version == "v2" and params.apply_v2_models_properly):
+                torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
+                if params.apply_mm_groupnorm_hack:
+                    GroupNormAD.forward = groupnorm_mm_factory(params)
             comfy_samplers.sampling_function = sliding_sampling_function
             ##############################################
 
-            # try to load motion module
-            motion_module = load_motion_module(params.model_name, params.loras, model=model, motion_model_settings=params.motion_model_settings)
             # inject motion module into unet
             inject_motion_module(model=model, motion_module=motion_module, params=params)
 

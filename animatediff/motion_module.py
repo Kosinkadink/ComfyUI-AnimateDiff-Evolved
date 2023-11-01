@@ -447,13 +447,15 @@ MM_INJECTED_ATTR = "_mm_injected_params"
 MM_UNET_INJECTION_ATTR = "_mm_is_unet_injected"
 
 class InjectionParams:
-    def __init__(self, video_length: int, unlimited_area_hack: bool, apply_mm_groupnorm_hack: bool, beta_schedule: str, injector: str, model_name: str) -> None:
+    def __init__(self, video_length: int, unlimited_area_hack: bool, apply_mm_groupnorm_hack: bool, beta_schedule: str, injector: str, model_name: str,
+                 apply_v2_models_properly: bool=False) -> None:
         self.video_length = video_length
         self.unlimited_area_hack = unlimited_area_hack
         self.apply_mm_groupnorm_hack = apply_mm_groupnorm_hack
         self.beta_schedule = beta_schedule
         self.injector = injector
         self.model_name = model_name
+        self.apply_v2_models_properly = apply_v2_models_properly
         self.context_length: int = None
         self.context_stride: int = None
         self.context_overlap: int = None
@@ -483,7 +485,7 @@ class InjectionParams:
             self.motion_model_settings = MotionModelSettings()
         else:
             self.motion_model_settings = motion_model_settings
-    
+
     def reset_context(self):
         self.context_length = None
         self.context_stride = None
@@ -494,7 +496,7 @@ class InjectionParams:
     def clone(self) -> 'InjectionParams':
         new_params = InjectionParams(
             self.video_length, self.unlimited_area_hack, self.apply_mm_groupnorm_hack,
-            self.beta_schedule, self.injector, self.model_name
+            self.beta_schedule, self.injector, self.model_name, apply_v2_models_properly=self.apply_v2_models_properly,
             )
         new_params.version = self.version
         new_params.set_context(
