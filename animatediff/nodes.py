@@ -537,8 +537,7 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
         out = load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
         # register chosen beta schedule on model - convert to beta_schedule name recognized by ComfyUI
-        beta_schedule_name = BetaSchedules.to_name(beta_schedule)
-        out[0].model.register_schedule(given_betas=None, beta_schedule=beta_schedule_name, timesteps=1000, linear_start=0.00085, linear_end=0.012, cosine_s=8e-3)
+        out[0].model.model_sampling = BetaSchedules.to_model_sampling(beta_schedule, out[0])
         return out
 
 
