@@ -185,6 +185,7 @@ class AnimateDiffLoaderWithContext:
                 "motion_lora": ("MOTION_LORA",),
                 "motion_model_settings": ("MOTION_MODEL_SETTINGS",),
                 "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
+                "apply_v2_models_properly": ("BOOLEAN", {"default": False}),
             }
         }
     
@@ -197,7 +198,7 @@ class AnimateDiffLoaderWithContext:
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
         context_options: ContextOptions=None, motion_lora: MotionLoRAList=None, motion_model_settings: MotionModelSettings=None,
-        motion_scale: float=1.0,
+        motion_scale: float=1.0, apply_v2_models_properly: bool=False,
     ):
         # load motion module
         mm = load_motion_module(model_name, motion_lora, model=model, motion_model_settings=motion_model_settings)
@@ -209,6 +210,7 @@ class AnimateDiffLoaderWithContext:
                 beta_schedule=beta_schedule,
                 injector=mm.injector_version,
                 model_name=model_name,
+                apply_v2_models_properly=apply_v2_models_properly,
         )
         if context_options:
             # set context settings TODO: make this dynamic for future purposes
