@@ -10,6 +10,8 @@ from torch.nn.functional import group_norm
 import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
 import comfy.samplers as comfy_samplers
+import comfy.sample as comfy_sample
+import comfy.utils
 from comfy.controlnet import ControlBase
 from comfy.ldm.modules.attention import SpatialTransformer
 from comfy.model_patcher import ModelPatcher
@@ -105,6 +107,16 @@ def groupnorm_mm_factory(params: InjectionParams):
 ##################################################################################
 
 
+def prepare_mask_ad(noise_mask, shape, device):
+    """ensures noise mask is of proper dimensions"""
+    noise_mask = torch.nn.functional.interpolate(noise_mask.reshape((-1, 1, noise_mask.shape[-2], noise_mask.shape[-1])), size=(shape[2], shape[3]), mode="bilinear")
+    #noise_mask = noise_mask.round()
+    noise_mask = torch.cat([noise_mask] * shape[1], dim=1)
+    noise_mask = comfy.utils.repeat_to_batch_size(noise_mask, shape[0])
+    noise_mask = noise_mask.to(device)
+    return noise_mask
+
+
 def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
     def animatediff_sample(model: ModelPatcher, *args, **kwargs):
         # check if model has params - if not, no need to do anything
@@ -129,6 +141,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
             orig_groupnormad_forward = GroupNormAD.forward
             orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
+            orig_prepare_mask = comfy_sample.prepare_mask
             # save original beta schedule settings
             orig_beta_cache = BetaScheduleCache(model)
             ##############################################
@@ -147,6 +160,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
                 if params.apply_mm_groupnorm_hack:
                     GroupNormAD.forward = groupnorm_mm_factory(params)
             comfy_samplers.sampling_function = sliding_sampling_function
+            comfy_sample.prepare_mask = prepare_mask_ad
             ##############################################
 
             # inject motion module into unet
@@ -193,6 +207,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             torch.nn.GroupNorm.forward = orig_groupnorm_forward
             GroupNormAD.forward = orig_groupnormad_forward
             comfy_samplers.sampling_function = orig_sampling_function
+            comfy_sample.prepare_mask = orig_prepare_mask
             # reapply previous beta schedule
             if orig_beta_cache is not None:
                 orig_beta_cache.use_cached_beta_schedule_and_clean(model)
