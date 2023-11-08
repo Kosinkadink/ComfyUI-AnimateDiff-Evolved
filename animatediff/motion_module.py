@@ -15,7 +15,7 @@ from .model_utils import ModelTypesSD, calculate_file_hash, get_motion_lora_path
 from .motion_lora import MotionLoRAList, MotionLoRAWrapper
 from .motion_module_ad import AnimDiffMotionWrapper, has_mid_block
 from .motion_module_hsxl import HotShotXLMotionWrapper, TransformerTemporal
-from .motion_utils import GenericMotionWrapper, InjectorVersion
+from .motion_utils import GenericMotionWrapper, InjectorVersion, normalize_min_max
 
 # inject into ModelPatcher.clone to carry over injected params over to cloned ModelPatcher
 orig_modelpatcher_clone = comfy_model_patcher.ModelPatcher.clone
@@ -122,6 +122,18 @@ def interpolate_pe_to_length_pingpong(model_dict: dict[str, Tensor], key: str, n
     model_dict[key] = model_dict[key][:, :new_length]
 
 
+def freeze_mask_of_pe(model_dict: dict[str, Tensor], key: str):
+    pe_portion = model_dict[key].shape[2] // 64
+    first_pe = model_dict[key][:,:1,:]
+    model_dict[key][:,:,pe_portion:] = first_pe[:,:,pe_portion:]
+    del first_pe
+
+
+def freeze_mask_of_attn(model_dict: dict[str, Tensor], key: str):
+    attn_portion = model_dict[key].shape[0] // 2
+    model_dict[key][:attn_portion,:attn_portion] *= 1.5
+
+
 def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: 'MotionModelSettings') -> dict[str, Tensor]:
     if not mm_settings.has_anything_to_apply():
         return model_dict
@@ -168,7 +180,6 @@ def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: 'MotionModelSe
         elif mm_settings.has_other_strength():
             model_dict[key] *= mm_settings.other_strength
     return model_dict
-    #cond_or_uncond = inspect.currentframe().f_back.f_locals["transformer_options"]["cond_or_uncond"]
 
 def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None, model: ModelPatcher = None, motion_model_settings = None) -> GenericMotionWrapper:
     # if already loaded, return it
@@ -274,12 +285,12 @@ def inject_motion_module(model: ModelPatcher, motion_module: GenericMotionWrappe
     if not params.context_length:
         if params.video_length > motion_module.encoding_max_len:
             raise ValueError(f"Without a context window, AnimateDiff model {motion_module.mm_name} has upper limit of {motion_module.encoding_max_len} frames, but received {params.video_length} latents.")
-        motion_module.set_video_length(params.video_length)
+        motion_module.set_video_length(params.video_length, params.full_length)
     # otherwise, treat context_length as intended AD frame window
     else:
         if params.context_length > motion_module.encoding_max_len:
             raise ValueError(f"AnimateDiff model {motion_module.mm_name} has upper limit of {motion_module.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
-        motion_module.set_video_length(params.context_length)
+        motion_module.set_video_length(params.context_length, params.full_length)
     # inject model
     params.set_version(motion_module)
     logger.info(f"Injecting motion module {motion_module.mm_name} version {motion_module.version}.")
@@ -448,6 +459,7 @@ class InjectionParams:
     def __init__(self, video_length: int, unlimited_area_hack: bool, apply_mm_groupnorm_hack: bool, beta_schedule: str, injector: str, model_name: str,
                  apply_v2_models_properly: bool=False) -> None:
         self.video_length = video_length
+        self.full_length = None
         self.unlimited_area_hack = unlimited_area_hack
         self.apply_mm_groupnorm_hack = apply_mm_groupnorm_hack
         self.beta_schedule = beta_schedule
@@ -496,6 +508,7 @@ class InjectionParams:
             self.video_length, self.unlimited_area_hack, self.apply_mm_groupnorm_hack,
             self.beta_schedule, self.injector, self.model_name, apply_v2_models_properly=self.apply_v2_models_properly,
             )
+        new_params.full_length = self.full_length
         new_params.version = self.version
         new_params.set_context(
             context_length=self.context_length, context_stride=self.context_stride,
@@ -558,6 +571,9 @@ class MotionModelSettings:
                  initial_pe_idx_offset: int=0, final_pe_idx_offset: int=0,
                  motion_pe_stretch: int=0,
                  attn_scale: float=1.0,
+                 mask_attn_scale: Tensor=None,
+                 mask_attn_scale_min: float=1.0,
+                 mask_attn_scale_max: float=1.0,
                  ):
         # general strengths
         self.pe_strength = pe_strength
@@ -577,6 +593,18 @@ class MotionModelSettings:
         self.motion_pe_stretch = motion_pe_stretch
         # attention scale settings
         self.attn_scale = attn_scale
+        # attention scale mask settings
+        self.mask_attn_scale = mask_attn_scale.clone() if mask_attn_scale is not None else mask_attn_scale
+        self.mask_attn_scale_min = mask_attn_scale_min
+        self.mask_attn_scale_max = mask_attn_scale_max
+        self._prepare_mask_attn_scale()
+    
+    def _prepare_mask_attn_scale(self):
+        if self.mask_attn_scale is not None:
+            self.mask_attn_scale = normalize_min_max(self.mask_attn_scale, self.mask_attn_scale_min, self.mask_attn_scale_max)
+
+    def has_mask_attn_scale(self) -> bool:
+        return self.mask_attn_scale is not None
 
     def has_pe_strength(self) -> bool:
         return self.pe_strength != 1.0
