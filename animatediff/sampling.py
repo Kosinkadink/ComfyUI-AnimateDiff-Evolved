@@ -131,6 +131,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # get amount of latents passed in, and inject into model
             latents = args[-1]
             params.video_length = latents.size(0)
+            params.full_length = latents.size(0)
             model = inject_params_into_model(model, params)
             # reset global state
             ADGS.reset()
@@ -172,6 +173,13 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # apply scale multiplier, if needed
             motion_module.set_scale_multiplier(params.motion_model_settings.attn_scale)
 
+            # apply scale mask, if needed
+            motion_module.set_masks(
+                masks=params.motion_model_settings.mask_attn_scale,
+                min_val=params.motion_model_settings.mask_attn_scale_min,
+                max_val=params.motion_model_settings.mask_attn_scale_max
+                )
+
             # handle GLOBALSTATE vars and step tally
             ADGS.motion_module = motion_module
             ADGS.update_with_inject_params(params)
@@ -192,10 +200,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # attempt to eject motion module
             eject_motion_module(model=model)
             if motion_module is not None:
-                # reset motion module scale multiplier
-                motion_module.reset_scale_multiplier()
-                # reset motion module sub_idxs
-                motion_module.set_sub_idxs(None)
+                # reset motion module
+                motion_module.reset()
                 # if loras are present, remove model so it can be re-loaded next time with fresh weights
                 if motion_module.has_loras():
                     unload_motion_module(motion_module)
@@ -516,10 +522,8 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
 
             # perform calc_cond_uncond_batch per context window
             for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames, ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
-                # idxs of positional encoders in motion module to use, if needed (experimental, so disabled for now)
-                if ADGS.sync_context_to_pe:
-                    ADGS.sub_idxs = ctx_idxs
-                    ADGS.motion_module.set_sub_idxs(ADGS.sub_idxs)
+                ADGS.sub_idxs = ctx_idxs
+                ADGS.motion_module.set_sub_idxs(ADGS.sub_idxs)  
                 # account for all portions of input frames
                 full_idxs = []
                 for n in range(axes_factor):

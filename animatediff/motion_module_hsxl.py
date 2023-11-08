@@ -8,7 +8,7 @@ from torch import Tensor, nn
 
 from comfy.ldm.modules.attention import FeedForward
 from .motion_lora import MotionLoRAInfo
-from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM
+from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, TemporalTransformerGeneric
 
 
 def zero_module(module):
@@ -66,14 +66,14 @@ class HotShotXLMotionWrapper(GenericMotionWrapper):
         # but only after implementing a fix for lowvram loading
         return self.loras is not None
     
-    def set_video_length(self, video_length: int):
+    def set_video_length(self, video_length: int, full_length: int):
         self.AD_video_length = video_length
         for block in self.down_blocks:
-            block.set_video_length(video_length)
+            block.set_video_length(video_length, full_length)
         for block in self.up_blocks:
-            block.set_video_length(video_length)
+            block.set_video_length(video_length, full_length)
         if self.mid_block is not None:
-            self.mid_block.set_video_length(video_length)
+            self.mid_block.set_video_length(video_length, full_length)
     
     def set_scale_multiplier(self, multiplier: Union[float, None]):
         for block in self.down_blocks:
@@ -83,8 +83,29 @@ class HotShotXLMotionWrapper(GenericMotionWrapper):
         if self.mid_block is not None:
             self.mid_block.set_scale_multiplier(multiplier)
 
+    def set_masks(self, masks: Tensor, min_val: float, max_val: float):
+        for block in self.down_blocks:
+            block.set_masks(masks, min_val, max_val)
+        for block in self.up_blocks:
+            block.set_masks(masks, min_val, max_val)
+        if self.mid_block is not None:
+            self.mid_block.set_masks(masks, min_val, max_val)
+
     def set_sub_idxs(self, sub_idxs: list[int]):
-        pass
+        for block in self.down_blocks:
+            block.set_sub_idxs(sub_idxs)
+        for block in self.up_blocks:
+            block.set_sub_idxs(sub_idxs)
+        if self.mid_block is not None:
+            self.mid_block.set_sub_idxs(sub_idxs)
+    
+    def reset_temp_vars(self):
+        for block in self.down_blocks:
+            block.reset_temp_vars()
+        for block in self.up_blocks:
+            block.reset_temp_vars()
+        if self.mid_block is not None:
+            self.mid_block.reset_temp_vars()
         
 
 class HotShotXLMotionModule(nn.Module):
@@ -105,13 +126,25 @@ class HotShotXLMotionModule(nn.Module):
             if block_type == BlockType.UP:
                 self.temporal_attentions.append(get_transformer_temporal(in_channels, max_length))
 
-    def set_video_length(self, video_length: int):
+    def set_video_length(self, video_length: int, full_length: int):
         for tt in self.temporal_attentions:
-            tt.set_video_length(video_length)
+            tt.set_video_length(video_length, full_length)
 
     def set_scale_multiplier(self, multiplier: Union[float, None]):
         for tt in self.temporal_attentions:
             tt.set_scale_multiplier(multiplier)
+    
+    def set_masks(self, masks: Tensor, min_val: float, max_val: float):
+        for tt in self.temporal_attentions:
+            tt.set_masks(masks, min_val, max_val)
+    
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        for tt in self.temporal_attentions:
+            tt.set_sub_idxs(sub_idxs)
+
+    def reset_temp_vars(self):
+        for tt in self.temporal_attentions:
+            tt.reset_temp_vars()
 
 
 def get_transformer_temporal(in_channels, max_length) -> 'TransformerTemporal':
@@ -124,7 +157,7 @@ def get_transformer_temporal(in_channels, max_length) -> 'TransformerTemporal':
     )
 
 
-class TransformerTemporal(nn.Module):
+class TransformerTemporal(nn.Module, TemporalTransformerGeneric):
     def __init__(
             self,
             num_attention_heads: int,
@@ -140,6 +173,7 @@ class TransformerTemporal(nn.Module):
             max_length = 24,
     ):
         super().__init__()
+        super().temporal_transformer_init(default_length=8)
 
         inner_dim = num_attention_heads * attention_head_dim
 
@@ -163,23 +197,33 @@ class TransformerTemporal(nn.Module):
             ]
         )
         self.proj_out = nn.Linear(inner_dim, in_channels)
-        self.video_length = 8
 
-    def set_video_length(self, video_length: int):
+    def set_video_length(self, video_length: int, full_length: int):
         self.video_length = video_length
+        self.full_length = full_length
 
     def set_scale_multiplier(self, multiplier: Union[float, None]):
         for block in self.transformer_blocks:
             block.set_scale_multiplier(multiplier)
+    
+    def set_masks(self, masks: Tensor, min_val: float, max_val: float):
+        self.scale_min = min_val
+        self.scale_max = max_val
+        self.raw_scale_mask = masks
+    
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        self.sub_idxs = sub_idxs
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
-        batch, channel, height, weight = hidden_states.shape
+        batch, channel, height, width = hidden_states.shape
         residual = hidden_states
+
+        scale_mask = self.get_scale_mask(hidden_states)
 
         hidden_states = self.norm(hidden_states)
         inner_dim = hidden_states.shape[1]
         hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(
-            batch, height * weight, inner_dim
+            batch, height * width, inner_dim
         )
         hidden_states = self.proj_in(hidden_states)
 
@@ -189,12 +233,14 @@ class TransformerTemporal(nn.Module):
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
-                number_of_frames=self.video_length)
+                number_of_frames=self.video_length,
+                scale_mask=scale_mask
+            )
 
         # output
         hidden_states = self.proj_out(hidden_states)
         hidden_states = (
-            hidden_states.reshape(batch, height, weight, inner_dim)
+            hidden_states.reshape(batch, height, width, inner_dim)
             .permute(0, 3, 1, 2)
             .contiguous()
         )
@@ -250,8 +296,7 @@ class TransformerBlock(nn.Module):
         for block in self.attention_blocks:
             block.set_scale_multiplier(multiplier)
 
-    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, number_of_frames=None):
-
+    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, number_of_frames=None, scale_mask=None):
         if not self.is_cross:
             encoder_hidden_states = None
 
@@ -261,7 +306,8 @@ class TransformerBlock(nn.Module):
                 norm_hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
-                number_of_frames=number_of_frames
+                number_of_frames=number_of_frames,
+                scale_mask=scale_mask
             ) + hidden_states
 
         norm_hidden_states = self.ff_norm(hidden_states)
@@ -312,9 +358,9 @@ class TemporalAttention(CrossAttentionMM):
         if multiplier is None or math.isclose(multiplier, 1.0):
             self.scale = None
         else:
-            self.scale = self.default_scale * multiplier
+            self.scale = multiplier
 
-    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, number_of_frames=8):
+    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, number_of_frames=8, scale_mask=None):
         sequence_length = hidden_states.shape[1]
         hidden_states = rearrange(hidden_states, "(b f) s c -> (b s) f c", f=number_of_frames)
         hidden_states = self.pos_encoder(hidden_states, length=number_of_frames)
@@ -322,6 +368,11 @@ class TemporalAttention(CrossAttentionMM):
         if encoder_hidden_states:
             encoder_hidden_states = repeat(encoder_hidden_states, "b n c -> (b s) n c", s=sequence_length)
 
-        hidden_states = super().forward(hidden_states, encoder_hidden_states, mask=attention_mask)
+        hidden_states = super().forward(
+            hidden_states,
+            encoder_hidden_states,
+            mask=attention_mask,
+            scale_mask=scale_mask
+        )
 
         return rearrange(hidden_states, "(b s) f c -> (b f) s c", s=sequence_length)
