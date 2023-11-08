@@ -78,22 +78,31 @@ class TemporalTransformerGeneric:
         self.raw_scale_mask: Union[Tensor, None] = None
         self.temp_scale_mask: Union[Tensor, None] = None
         self.sub_idxs: Union[list[int], None] = None
+        self.prev_hidden_states_batch = 0
 
     def reset_temp_vars(self):
+        del self.temp_scale_mask
         self.temp_scale_mask = None
+        self.prev_hidden_states_batch = 0
 
     def get_scale_mask(self, hidden_states: Tensor) -> Union[Tensor, None]:
         # if no raw mask, return None
         if self.raw_scale_mask is None:
             return None
-        # if temp mask already calculated, return it
-        if self.temp_scale_mask != None:
-            if self.sub_idxs is not None:
-                return self.temp_scale_mask[:, self.sub_idxs, :]
-            return self.temp_scale_mask
-        # otherwise, calculate temp mask
         shape = hidden_states.shape
         batch, channel, height, width = shape
+        # if temp mask already calculated, return it
+        if self.temp_scale_mask != None:
+            # check if hidden_states batch matches
+            if batch == self.prev_hidden_states_batch:
+                if self.sub_idxs is not None:
+                    return self.temp_scale_mask[:, self.sub_idxs, :]
+                return self.temp_scale_mask
+            # if does not match, reset cached temp_scale_mask and recalculate it
+            del self.temp_scale_mask
+            self.temp_scale_mask = None
+        # otherwise, calculate temp mask
+        self.prev_hidden_states_batch = batch
         mask = prepare_mask_batch(self.raw_scale_mask, shape=(self.full_length, 1, height, width))
         mask = repeat_to_batch_size(mask, self.full_length)
         # if mask not the same amount length as full length, make it match
