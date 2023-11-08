@@ -40,10 +40,10 @@ Examples shown here will also often make use of these helpful sets of nodes:
 - Prompt travel using BatchPromptSchedule node from [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) **(working since 9/27/23)**
 - [HotshotXL](https://huggingface.co/hotshotco/Hotshot-XL/tree/main) support (an SDXL motion module arch), ```hsxl_temporal_layers.safetensors``` **(working since 10/05/23)** NOTE: You will need to use ```linear``` beta_schedule, the sweetspot for context_length or total frames (when not using context) is 8 frames, and you will need to use an SDXL checkpoint. Will add more documentation and example workflows soon when I have some time between working on features/other nodes.
 - Motion scaling and other motion model settings to influence motion amount **(introduced 10/30/23)**
+- Motion scaling masks in Motion Model Settings, allowing to choose how much motion to apply per frame or per area of each frame **(introduced 11/08/23)**. Can be used alongside inpainting (gradient masks supported for AnimateDiff masking)
 
 # Upcoming features:
 - Alternate context schedulers and context types (in progress)
-- Investigate AnimateDiff inpainting or motion masking abilities
 
 # Core Nodes:
 
