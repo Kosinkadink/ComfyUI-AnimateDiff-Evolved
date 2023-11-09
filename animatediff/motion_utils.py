@@ -10,8 +10,8 @@ import comfy.model_management as model_management
 import comfy.ops
 from comfy.cli_args import args
 from comfy.ldm.modules.attention import attention_basic, attention_pytorch, attention_split, attention_sub_quad, default
-from controlnet import broadcast_image_to
-from utils import repeat_to_batch_size
+from comfy.controlnet import broadcast_image_to
+from comfy.utils import repeat_to_batch_size
 from .motion_lora import MotionLoRAInfo
 
 # until xformers bug is fixed, do not use xformers for VersatileAttention! TODO: change this when fix is out
