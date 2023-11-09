@@ -15,7 +15,7 @@ from .model_utils import ModelTypesSD, calculate_file_hash, get_motion_lora_path
 from .motion_lora import MotionLoRAList, MotionLoRAWrapper
 from .motion_module_ad import AnimDiffMotionWrapper, has_mid_block
 from .motion_module_hsxl import HotShotXLMotionWrapper, TransformerTemporal
-from .motion_utils import GenericMotionWrapper, InjectorVersion, normalize_min_max
+from .motion_utils import GenericMotionWrapper, InjectorVersion, NoiseType, normalize_min_max
 
 # inject into ModelPatcher.clone to carry over injected params over to cloned ModelPatcher
 orig_modelpatcher_clone = comfy_model_patcher.ModelPatcher.clone
@@ -475,6 +475,7 @@ class InjectionParams:
         self.version: str = None
         self.loras: MotionLoRAList = None
         self.motion_model_settings = MotionModelSettings()
+        self.noise_type: str = NoiseType.DEFAULT
     
     def set_version(self, motion_module: GenericMotionWrapper):
         self.version = motion_module.version
@@ -509,6 +510,7 @@ class InjectionParams:
             self.beta_schedule, self.injector, self.model_name, apply_v2_models_properly=self.apply_v2_models_properly,
             )
         new_params.full_length = self.full_length
+        new_params.noise_type = self.noise_type
         new_params.version = self.version
         new_params.set_context(
             context_length=self.context_length, context_stride=self.context_stride,
