@@ -139,6 +139,7 @@ class BlockType:
 
 class InjectorVersion:
     V1_V2 = "v1/v2"
+    ADXL_V1_V2 = "ADXL v1/v2"
     HOTSHOTXL_V1 = "HSXL v1"
 
 
@@ -271,3 +272,7 @@ class NoiseType:
             generator = torch.manual_seed(seed+i)
             all_noises.append(torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu"))
         return torch.cat(all_noises, dim=0)
+
+
+class MotionCompatibilityError(ValueError):
+    pass

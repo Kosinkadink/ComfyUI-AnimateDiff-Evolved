@@ -21,6 +21,7 @@ from .motion_module import InjectionParams, eject_motion_module, inject_motion_m
     load_motion_module, unload_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
 from .motion_module_ad import AnimDiffMotionWrapper, VanillaTemporalModule
+from .motion_module_adxl import AnimDiffSDXLMotionWrapper
 from .motion_utils import GenericMotionWrapper, GroupNormAD, NoiseType
 
 
@@ -155,8 +156,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             openaimodel.forward_timestep_embed = forward_timestep_embed
             if params.unlimited_area_hack:
                 model_management.maximum_batch_area = unlimited_batch_area
-            # only apply groupnorm hack if not v2 and should not apply v2 properly
-            if not (isinstance(motion_module, AnimDiffMotionWrapper) and motion_module.version == "v2" and params.apply_v2_models_properly):
+            # only apply groupnorm hack if not [AnimateDiff and v2 and should apply v2 properly]
+            if not ((isinstance(motion_module, AnimDiffMotionWrapper) and motion_module.version == "v2" and params.apply_v2_models_properly)):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
                 if params.apply_mm_groupnorm_hack:
                     GroupNormAD.forward = groupnorm_mm_factory(params)

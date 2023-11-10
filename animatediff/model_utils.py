@@ -29,15 +29,17 @@ class ModelSamplingConfig:
 
 class BetaSchedules:
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
+    LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
     SQRT = "sqrt"
     COSINE = "cosine"
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
-    ALIAS_LIST = [SQRT_LINEAR, LINEAR, SQRT, COSINE, SQUAREDCOS_CAP_V2]
+    ALIAS_LIST = [SQRT_LINEAR, LINEAR_ADXL, LINEAR, SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
     ALIAS_MAP = {
         SQRT_LINEAR: "sqrt_linear",
+        LINEAR_ADXL: "linear", # also linear, but has different linear_end (0.020)
         LINEAR: "linear",
         SQRT: "sqrt",
         COSINE: "cosine",
@@ -54,7 +56,11 @@ class BetaSchedules:
     
     @classmethod
     def to_model_sampling(cls, alias: str, model: ModelPatcher):
-        return model_sampling(cls.to_config(alias), model_type=model.model.model_type)
+        ms_obj = model_sampling(cls.to_config(alias), model_type=model.model.model_type)
+        if alias == cls.LINEAR_ADXL:
+            # uses linear_end=0.020
+            ms_obj._register_schedule(given_betas=None, beta_schedule=cls.to_name(alias), timesteps=1000, linear_start=0.00085, linear_end=0.020, cosine_s=8e-3)
+        return ms_obj
 
     @staticmethod
     def get_alias_list_with_first_element(first_element: str):

@@ -7,7 +7,7 @@ from torch import Tensor, nn
 
 from comfy.ldm.modules.attention import FeedForward
 from .motion_lora import MotionLoRAInfo
-from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, TemporalTransformerGeneric, prepare_mask_batch
+from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric, prepare_mask_batch
 
 
 def zero_module(module):
@@ -22,7 +22,23 @@ def get_ad_temporal_position_encoding_max_len(mm_state_dict: dict[str, Tensor], 
     for key in mm_state_dict.keys():
         if key.endswith("pos_encoder.pe"):
             return mm_state_dict[key].size(1) # get middle dim
-    raise ValueError(f"No pos_encoder.pe found in mm_state_dict - {mm_type} is not a valid motion module!")
+    raise MotionCompatibilityError(f"No pos_encoder.pe found in mm_state_dict - {mm_type} is not a valid AnimateDiff-SD1.5 motion module!")
+
+
+def validate_ad_block_count(mm_state_dict: dict[str, Tensor], mm_type: str) -> None:
+    # keep track of biggest down_block count in module
+    biggest_block = 0
+    for key in mm_state_dict.keys():
+        if "down_blocks" in key:
+            try:
+                block_int = key.split(".")[1]
+                block_num = int(block_int)
+                if block_num > biggest_block:
+                    biggest_block = block_num
+            except ValueError:
+                pass
+    if biggest_block != 3:
+        raise MotionCompatibilityError(f"Expected biggest down_block to be 3, but was {biggest_block} - {mm_type} is not a valid AnimateDiff-SD1.5 motion module!")
 
 
 def has_mid_block(mm_state_dict: dict[str, Tensor]):
@@ -40,6 +56,7 @@ class AnimDiffMotionWrapper(GenericMotionWrapper):
         self.up_blocks: Iterable[MotionModule] = nn.ModuleList([])
         self.mid_block: Union[MotionModule, None] = None
         self.encoding_max_len = get_ad_temporal_position_encoding_max_len(mm_state_dict, mm_name)
+        validate_ad_block_count(mm_state_dict, mm_name)
         for c in (320, 640, 1280, 1280):
             self.down_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.DOWN))
         for c in (1280, 1280, 640, 320):
