@@ -8,7 +8,7 @@ from torch import Tensor, nn
 
 from comfy.ldm.modules.attention import FeedForward
 from .motion_lora import MotionLoRAInfo
-from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, TemporalTransformerGeneric
+from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric
 
 
 def zero_module(module):
@@ -23,7 +23,23 @@ def get_hsxl_temporal_position_encoding_max_len(mm_state_dict: dict[str, Tensor]
     for key in mm_state_dict.keys():
         if key.endswith("pos_encoder.positional_encoding"):
             return mm_state_dict[key].size(1) # get middle dim
-    raise ValueError(f"No pos_encoder.positional_encoding found in mm_state_dict - {mm_type} is not a valid HotShotXL motion module!")
+    raise MotionCompatibilityError(f"No pos_encoder.positional_encoding found in mm_state_dict - {mm_type} is not a valid HotShotXL motion module!")
+
+
+def validate_hsxl_block_count(mm_state_dict: dict[str, Tensor], mm_type: str) -> None:
+    # keep track of biggest down_block count in module
+    biggest_block = 0
+    for key in mm_state_dict.keys():
+        if "down_blocks" in key:
+            try:
+                block_int = key.split(".")[1]
+                block_num = int(block_int)
+                if block_num > biggest_block:
+                    biggest_block = block_num
+            except ValueError:
+                pass
+    if biggest_block != 2:
+        raise MotionCompatibilityError(f"Expected biggest down_block to be 2, but was {biggest_block} - {mm_type} is not a valid HotShotXL motion module!")
 
 
 def has_mid_block(mm_state_dict: dict[str, Tensor]):
@@ -48,6 +64,7 @@ class HotShotXLMotionWrapper(GenericMotionWrapper):
         self.up_blocks: Iterable[HotShotXLMotionModule] = nn.ModuleList([])
         self.mid_block: Union[HotShotXLMotionModule, None] = None
         self.encoding_max_len = get_hsxl_temporal_position_encoding_max_len(mm_state_dict, mm_name)
+        validate_hsxl_block_count(mm_state_dict, mm_name)
         for c in (320, 640, 1280):
             self.down_blocks.append(HotShotXLMotionModule(c, block_type=BlockType.DOWN, max_length=self.encoding_max_len))
         for c in (1280, 640, 320):

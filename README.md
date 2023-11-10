@@ -38,9 +38,10 @@ Examples shown here will also often make use of these helpful sets of nodes:
 - Infinite animation length support using sliding context windows **(introduced 9/17/23)**
 - Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth``` **(introduced 9/25/23)**
 - Prompt travel using BatchPromptSchedule node from [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) **(working since 9/27/23)**
-- [HotshotXL](https://huggingface.co/hotshotco/Hotshot-XL/tree/main) support (an SDXL motion module arch), ```hsxl_temporal_layers.safetensors``` **(working since 10/05/23)** NOTE: You will need to use ```linear``` beta_schedule, the sweetspot for context_length or total frames (when not using context) is 8 frames, and you will need to use an SDXL checkpoint. Will add more documentation and example workflows soon when I have some time between working on features/other nodes.
+- [HotshotXL](https://huggingface.co/hotshotco/Hotshot-XL/tree/main) support (an SDXL motion module arch), ```hsxl_temporal_layers.safetensors``` **(working since 10/05/23)** NOTE: You will need to use ```linear (HotshotXL/default)``` beta_schedule, the sweetspot for context_length or total frames (when not using context) is 8 frames, and you will need to use an SDXL checkpoint. Will add more documentation and example workflows soon when I have some time between working on features/other nodes.
 - Motion scaling and other motion model settings to influence motion amount **(introduced 10/30/23)**
 - Motion scaling masks in Motion Model Settings, allowing to choose how much motion to apply per frame or per area of each frame **(introduced 11/08/23)**. Can be used alongside inpainting (gradient masks supported for AnimateDiff masking)
+- AnimateDiff-SDXL support, with corresponding model. **(introduced 11/10/23)**. Currently, a beta version is out, which you can find info about at [AnimateDiff](https://github.com/guoyww/AnimateDiff/). NOTE: You will need to use ```linear (AnimateDiff-SDXL)``` beta_schedule. Other than that, same rules of thumb apply to AnimateDiff-SDXL as AnimateDiff.
 
 # Upcoming features:
 - Alternate context schedulers and context types (in progress)

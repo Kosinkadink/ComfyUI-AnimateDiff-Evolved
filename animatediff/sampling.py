@@ -21,7 +21,8 @@ from .motion_module import InjectionParams, eject_motion_module, inject_motion_m
     load_motion_module, unload_motion_module
 from .motion_module import is_injected_mm_params, get_injected_mm_params
 from .motion_module_ad import AnimDiffMotionWrapper, VanillaTemporalModule
-from .motion_utils import GenericMotionWrapper, GroupNormAD
+from .motion_module_adxl import AnimDiffSDXLMotionWrapper
+from .motion_utils import GenericMotionWrapper, GroupNormAD, NoiseType
 
 
 ##################################################################################
@@ -118,10 +119,10 @@ def prepare_mask_ad(noise_mask, shape, device):
 
 
 def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
-    def animatediff_sample(model: ModelPatcher, *args, **kwargs):
+    def animatediff_sample(model: ModelPatcher, noise: Tensor, *args, **kwargs):
         # check if model has params - if not, no need to do anything
         if not is_injected_mm_params(model):
-            return orig_comfy_sample(model, *args, **kwargs)
+            return orig_comfy_sample(model, noise, *args, **kwargs)
         # otherwise, injection time
         motion_module = None
         orig_beta_cache = None
@@ -155,8 +156,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             openaimodel.forward_timestep_embed = forward_timestep_embed
             if params.unlimited_area_hack:
                 model_management.maximum_batch_area = unlimited_batch_area
-            # only apply groupnorm hack if not v2 and should not apply v2 properly
-            if not (isinstance(motion_module, AnimDiffMotionWrapper) and motion_module.version == "v2" and params.apply_v2_models_properly):
+            # only apply groupnorm hack if not [AnimateDiff and v2 and should apply v2 properly]
+            if not ((isinstance(motion_module, AnimDiffMotionWrapper) and motion_module.version == "v2" and params.apply_v2_models_properly)):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
                 if params.apply_mm_groupnorm_hack:
                     GroupNormAD.forward = groupnorm_mm_factory(params)
@@ -179,6 +180,13 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
                 min_val=params.motion_model_settings.mask_attn_scale_min,
                 max_val=params.motion_model_settings.mask_attn_scale_max
                 )
+            
+            # apply custom noise, if needed
+            disable_noise = kwargs["disable_noise"]
+            seed = kwargs["seed"]
+            if not disable_noise:
+                # if context asks for specific noise, do it
+                noise = NoiseType.prepare_noise(params.noise_type, latents=latents, noise=noise, context_length=params.context_length, seed=seed)
 
             # handle GLOBALSTATE vars and step tally
             ADGS.motion_module = motion_module
@@ -195,7 +203,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
                 ADGS.current_step = ADGS.start_step + step + 1
             kwargs["callback"] = ad_callback
 
-            return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, *args, **kwargs)
+            return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
         finally:
             # attempt to eject motion module
             eject_motion_module(model=model)

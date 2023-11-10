@@ -13,9 +13,10 @@ from .logger import logger
 from .model_utils import ModelTypesSD, calculate_file_hash, get_motion_lora_path, get_motion_model_path, \
     get_sd_model_type
 from .motion_lora import MotionLoRAList, MotionLoRAWrapper
-from .motion_module_ad import AnimDiffMotionWrapper, has_mid_block
+from .motion_module_ad import AnimDiffMotionWrapper, VanillaTemporalModule, has_mid_block
+from .motion_module_adxl import AnimDiffSDXLMotionWrapper
 from .motion_module_hsxl import HotShotXLMotionWrapper, TransformerTemporal
-from .motion_utils import GenericMotionWrapper, InjectorVersion, normalize_min_max
+from .motion_utils import GenericMotionWrapper, InjectorVersion, MotionCompatibilityError, NoiseType, normalize_min_max
 
 # inject into ModelPatcher.clone to carry over injected params over to cloned ModelPatcher
 orig_modelpatcher_clone = comfy_model_patcher.ModelPatcher.clone
@@ -225,13 +226,19 @@ def load_motion_module(model_name: str, motion_lora: MotionLoRAList = None, mode
     if sd_model_type == ModelTypesSD.SD1_5:
         try:
             motion_module = AnimDiffMotionWrapper(mm_state_dict=mm_state_dict, mm_hash=model_hash, mm_name=model_name, loras=loras)
-        except ValueError as e:
+        except MotionCompatibilityError as e:
             raise ValueError(f"Motion model {model_name} is not compatible with SD1.5-based model.", e)
     elif sd_model_type == ModelTypesSD.SDXL:
+        # determine if motion module is a AnimateDiffXL model or a HotshotXL model
         try:
+            # try to load as HotShotXL model first
             motion_module = HotShotXLMotionWrapper(mm_state_dict=mm_state_dict, mm_hash=model_hash, mm_name=model_name, loras=loras)
-        except ValueError as e:
-            raise ValueError(f"Motion model {model_name} is not compatible with SDXL-based model.", e)
+        except MotionCompatibilityError as e:
+            # if not compatible, try to load as AnimateDiff-SDXL
+            try:
+                motion_module = AnimDiffSDXLMotionWrapper(mm_state_dict=mm_state_dict, mm_hash=model_hash, mm_name=model_name, loras=loras)
+            except MotionCompatibilityError as e:
+                raise ValueError(f"Motion model {model_name} is not compatible with neither AnimateDiff-SDXL nor HotShotXL.", e)
     else:
         raise ValueError(f"SD model must be either SD1.5-based for AnimateDiff or SDXL-based for HotShotXL.")
 
@@ -362,6 +369,85 @@ def _eject_motion_module_from_unet(model: ModelPatcher):
 
 
 ############################################################################################################
+## AnimateDiff-SDXL
+def _inject_adxl_motion_module_to_unet(model: ModelPatcher, motion_module: 'AnimDiffSDXLMotionWrapper'):
+    unet: openaimodel.UNetModel = model.model.diffusion_model
+    # inject input (down) blocks
+    # AnimateDiffSDXL mm contains 3 downblocks, each with 2 TransformerTemporals - 6 in total
+    # per_block is the amount of Temporal Blocks per down block
+    _perform_adxl_motion_module_injection(unet.input_blocks, motion_module.down_blocks, injection_goal=6, per_block=2)
+
+    # inject output (up) blocks
+    # AnimateDiffSDXL mm contains 3 upblocks, each with 3 TransformerTemporals - 9 in total
+    _perform_adxl_motion_module_injection(unet.output_blocks, motion_module.up_blocks, injection_goal=9, per_block=3)
+
+    # inject mid block, if needed (encapsulate in list to make structure compatible)
+    if motion_module.mid_block is not None:
+        _perform_adxl_motion_module_injection(unet.middle_block, [motion_module.mid_block], injection_goal=1, per_block=1)
+
+    # keep track of if unet blocks actually affected
+    set_injected_unet_version(model, InjectorVersion.ADXL_V1_V2)
+
+def _perform_adxl_motion_module_injection(unet_blocks: nn.ModuleList, mm_blocks: nn.ModuleList, injection_goal: int, per_block: int):
+    # Rules for injection:
+    # For each component list in a unet block:
+    #     if SpatialTransformer exists in list, place next block after last occurrence
+    #     elif ResBlock exists in list, place next block after first occurrence
+    #     else don't place block
+    injection_count = 0
+    unet_idx = 0
+    # only stop injecting when modules exhausted
+    while injection_count < injection_goal:
+        # figure out which VanillaTemporalModule from mm to inject
+        mm_blk_idx, mm_vtm_idx = injection_count // per_block, injection_count % per_block
+        # figure out layout of unet block components
+        st_idx = -1 # SpatialTransformer index
+        res_idx = -1 # first ResBlock index
+        # first, figure out indeces of relevant blocks
+        for idx, component in enumerate(unet_blocks[unet_idx]):
+            if type(component) == SpatialTransformer:
+                st_idx = idx
+            elif type(component) == ResBlock and res_idx < 0:
+                res_idx = idx
+        # if SpatialTransformer exists, inject right after
+        if st_idx >= 0:
+            #logger.info(f"ADXL: injecting after ST({st_idx})")
+            unet_blocks[unet_idx].insert(st_idx+1, mm_blocks[mm_blk_idx].motion_modules[mm_vtm_idx])
+            injection_count += 1
+        # otherwise, if only ResBlock exists, inject right after
+        elif res_idx >= 0:
+            #logger.info(f"ADXL: injecting after Res({res_idx})")
+            unet_blocks[unet_idx].insert(res_idx+1, mm_blocks[mm_blk_idx].motion_modules[mm_vtm_idx])
+            injection_count += 1
+        # increment unet_idx
+        unet_idx += 1
+
+def _eject_adxl_motion_module_from_unet(model: ModelPatcher):
+    unet: openaimodel.UNetModel = model.model.diffusion_model
+    # remove from input blocks
+    _perform_adxl_motion_module_ejection(unet.input_blocks)
+    # remove from output blocks
+    _perform_adxl_motion_module_ejection(unet.output_blocks)
+    # remove from middle block (encapsulate in list to make structure compatible)
+    _perform_adxl_motion_module_ejection([unet.middle_block])
+    # remove attr; ejected
+    del_injected_unet_version(model)
+
+def _perform_adxl_motion_module_ejection(unet_blocks: nn.ModuleList):
+    # eject all TemporalTransformer3DModel objects from all blocks
+    for block in unet_blocks:
+        idx_to_pop = []
+        for idx, component in enumerate(block):
+            if type(component) == VanillaTemporalModule:
+                idx_to_pop.append(idx)
+        # pop in backwards order, as to not disturb what the indeces refer to
+        for idx in sorted(idx_to_pop, reverse=True):
+            block.pop(idx)
+        #logger.info(f"ADXL: ejecting {idx_to_pop}")
+############################################################################################################
+
+
+############################################################################################################
 ## HotShot XL
 def _inject_hsxl_motion_module_to_unet(model: ModelPatcher, motion_module: 'HotShotXLMotionWrapper'):
     unet: openaimodel.UNetModel = model.model.diffusion_model
@@ -443,11 +529,13 @@ def _perform_hsxl_motion_module_ejection(unet_blocks: nn.ModuleList):
 
 injectors = {
     InjectorVersion.V1_V2: _inject_motion_module_to_unet,
+    InjectorVersion.ADXL_V1_V2: _inject_adxl_motion_module_to_unet,
     InjectorVersion.HOTSHOTXL_V1: _inject_hsxl_motion_module_to_unet,
 }
 
 ejectors = {
     InjectorVersion.V1_V2: _eject_motion_module_from_unet,
+    InjectorVersion.ADXL_V1_V2: _eject_adxl_motion_module_from_unet,
     InjectorVersion.HOTSHOTXL_V1: _eject_hsxl_motion_module_from_unet,
 }
 
@@ -475,6 +563,7 @@ class InjectionParams:
         self.version: str = None
         self.loras: MotionLoRAList = None
         self.motion_model_settings = MotionModelSettings()
+        self.noise_type: str = NoiseType.DEFAULT
     
     def set_version(self, motion_module: GenericMotionWrapper):
         self.version = motion_module.version
@@ -509,6 +598,7 @@ class InjectionParams:
             self.beta_schedule, self.injector, self.model_name, apply_v2_models_properly=self.apply_v2_models_properly,
             )
         new_params.full_length = self.full_length
+        new_params.noise_type = self.noise_type
         new_params.version = self.version
         new_params.set_context(
             context_length=self.context_length, context_stride=self.context_stride,
