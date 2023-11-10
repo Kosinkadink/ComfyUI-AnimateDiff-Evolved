@@ -210,7 +210,7 @@ class AnimateDiffUniformContextOptionsExperimental:
 
 NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
-    #"ADE_AnimateDiffUniformContextOptionsExperimental": AnimateDiffUniformContextOptionsExperimental,
+    "ADE_AnimateDiffUniformContextOptionsExperimental": AnimateDiffUniformContextOptionsExperimental,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
     "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
@@ -229,7 +229,7 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
-    #"ADE_AnimateDiffUniformContextOptionsExperimental": "EXPERIMENTAL Uniform Context Options 🎭🅐🅓",
+    "ADE_AnimateDiffUniformContextOptionsExperimental": "EXPERIMENTAL Uniform Context Options 🎭🅐🅓",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓",
     "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader 🎭🅐🅓",
     "ADE_AnimateDiffModelSettings_Release": "Motion Model Settings 🎭🅐🅓",
