@@ -86,8 +86,9 @@ def forward_timestep_embed(
             x = layer(x)
     return x
 
-def unlimited_batch_area():
-    return int(sys.maxsize)
+
+def unlimited_memory_required(*args, **kwargs):
+    return 0
 
 
 def groupnorm_mm_factory(params: InjectionParams):
@@ -139,7 +140,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             ##############################################
             # Save Original Functions
             orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
-            orig_maximum_batch_area = model_management.maximum_batch_area # allows for "unlimited area hack" to prevent halving of conds/unconds
+            orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
             orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
             orig_groupnormad_forward = GroupNormAD.forward
             orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
@@ -155,7 +156,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # Inject Functions
             openaimodel.forward_timestep_embed = forward_timestep_embed
             if params.unlimited_area_hack:
-                model_management.maximum_batch_area = unlimited_batch_area
+                model.model.memory_required = unlimited_memory_required
             # only apply groupnorm hack if not [AnimateDiff and v2 and should apply v2 properly]
             if not ((isinstance(motion_module, AnimDiffMotionWrapper) and motion_module.version == "v2" and params.apply_v2_models_properly)):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
@@ -216,7 +217,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
                     del motion_module
             ##############################################
             # Restoration
-            model_management.maximum_batch_area = orig_maximum_batch_area
+            model.model.memory_required = orig_memory_required
             openaimodel.forward_timestep_embed = orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = orig_groupnorm_forward
             GroupNormAD.forward = orig_groupnormad_forward
@@ -231,7 +232,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
     return animatediff_sample
 
 
-def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None):
+def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None):
         def get_area_and_mult(conds, x_in, timestep_in):
             area = (x_in.shape[2], x_in.shape[3], 0, 0)
             strength = 1.0
@@ -354,7 +355,7 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
 
             return out
 
-        def calc_cond_uncond_batch(model_function, cond, uncond, x_in, timestep, max_total_area, model_options):
+        def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
             out_cond = torch.zeros_like(x_in)
             out_count = torch.ones_like(x_in) * 1e-37
 
@@ -390,9 +391,11 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                 to_batch_temp.reverse()
                 to_batch = to_batch_temp[:1]
 
+                free_memory = model_management.get_free_memory(x_in.device)
                 for i in range(1, len(to_batch_temp) + 1):
                     batch_amount = to_batch_temp[:len(to_batch_temp)//i]
-                    if (len(batch_amount) * first_shape[0] * first_shape[2] * first_shape[3] < max_total_area):
+                    input_shape = [len(batch_amount) * first_shape[0]] + list(first_shape)[1:]
+                    if model.memory_required(input_shape) < free_memory:
                         to_batch = batch_amount
                         break
 
@@ -441,9 +444,9 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                 c['transformer_options'] = transformer_options
 
                 if 'model_function_wrapper' in model_options:
-                    output = model_options['model_function_wrapper'](model_function, {"input": input_x, "timestep": timestep_, "c": c, "cond_or_uncond": cond_or_uncond}).chunk(batch_chunks)
+                    output = model_options['model_function_wrapper'](model.apply_model, {"input": input_x, "timestep": timestep_, "c": c, "cond_or_uncond": cond_or_uncond}).chunk(batch_chunks)
                 else:
-                    output = model_function(input_x, timestep_, **c).chunk(batch_chunks)
+                    output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
                 del input_x
 
                 for o in range(batch_chunks):
@@ -463,16 +466,16 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
         
         # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
         # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
-        def sliding_calc_cond_uncond_batch(model_function, cond, uncond, x_in, timestep, max_total_area, model_options):
+        def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
             # get context scheduler
             context_scheduler = get_context_scheduler(ADGS.context_schedule)
             # figure out how input is split
-            axes_factor = x.size(0)//ADGS.video_length
+            axes_factor = x_in.size(0)//ADGS.video_length
 
             # prepare final cond, uncond, and out_count
-            cond_final = torch.zeros_like(x)
-            uncond_final = torch.zeros_like(x)
-            out_count_final = torch.zeros((x.shape[0], 1, 1, 1), device=x.device)
+            cond_final = torch.zeros_like(x_in)
+            uncond_final = torch.zeros_like(x_in)
+            out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
 
             def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
                 if control.previous_controlnet is not None:
@@ -493,7 +496,7 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                             cond_item = actual_cond[key]
                             if isinstance(cond_item, Tensor):
                                 # check that tensor is the expected length - x.size(0)
-                                if cond_item.size(0) == x.size(0):
+                                if cond_item.size(0) == x_in.size(0):
                                     # if so, it's subsetting time - tell controls the expected indeces so they can handle them
                                     actual_cond_item = cond_item[full_idxs]
                                     resized_actual_cond[key] = actual_cond_item
@@ -514,11 +517,11 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                                 # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
                                 for cond_key, cond_value in new_cond_item.items():
                                     if isinstance(cond_value, Tensor):
-                                        if cond_value.size(0) == x.size(0):
+                                        if cond_value.size(0) == x_in.size(0):
                                             new_cond_item[cond_key] = cond_value[full_idxs]
                                     # if has cond that is a Tensor, check if needs to be subset
                                     elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
-                                        if cond_value.cond.size(0) == x.size(0):
+                                        if cond_value.cond.size(0) == x_in.size(0):
                                             new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
                                 resized_actual_cond[key] = new_cond_item
                             else:
@@ -538,12 +541,12 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
                     for ind in ctx_idxs:
                         full_idxs.append((ADGS.video_length*n)+ind)
                 # get subsections of x, timestep, cond, uncond, cond_concat
-                sub_x = x[full_idxs]
+                sub_x = x_in[full_idxs]
                 sub_timestep = timestep[full_idxs]
                 sub_cond = get_resized_cond(cond, full_idxs) if cond is not None else None
                 sub_uncond = get_resized_cond(uncond, full_idxs) if uncond is not None else None
 
-                sub_cond_out, sub_uncond_out = calc_cond_uncond_batch(model_function, sub_cond, sub_uncond, sub_x, sub_timestep, max_total_area, model_options)
+                sub_cond_out, sub_uncond_out = calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
 
                 cond_final[full_idxs] += sub_cond_out
                 uncond_final[full_idxs] += sub_uncond_out
@@ -552,16 +555,17 @@ def sliding_sampling_function(model_function, x, timestep, uncond, cond, cond_sc
             # normalize cond and uncond via division by context usage counts
             cond_final /= out_count_final
             uncond_final /= out_count_final
+            del out_count_final
             return cond_final, uncond_final
 
-        max_total_area = model_management.maximum_batch_area()
+
         if math.isclose(cond_scale, 1.0):
             uncond = None
 
         if not ADGS.is_using_sliding_context():
-            cond, uncond = calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, model_options)
+            cond, uncond = calc_cond_uncond_batch(model, cond, uncond, x, timestep, model_options)
         else:
-            cond, uncond = sliding_calc_cond_uncond_batch(model_function, cond, uncond, x, timestep, max_total_area, model_options)
+            cond, uncond = sliding_calc_cond_uncond_batch(model, cond, uncond, x, timestep, model_options)
         if "sampler_cfg_function" in model_options:
             args = {"cond": x - cond, "uncond": x - uncond, "cond_scale": cond_scale, "timestep": timestep, "input": x}
             return x - model_options["sampler_cfg_function"](args)
