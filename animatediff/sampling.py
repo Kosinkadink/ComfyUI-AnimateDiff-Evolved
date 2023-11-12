@@ -470,12 +470,12 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             # get context scheduler
             context_scheduler = get_context_scheduler(ADGS.context_schedule)
             # figure out how input is split
-            axes_factor = x.size(0)//ADGS.video_length
+            axes_factor = x_in.size(0)//ADGS.video_length
 
             # prepare final cond, uncond, and out_count
-            cond_final = torch.zeros_like(x)
-            uncond_final = torch.zeros_like(x)
-            out_count_final = torch.zeros((x.shape[0], 1, 1, 1), device=x.device)
+            cond_final = torch.zeros_like(x_in)
+            uncond_final = torch.zeros_like(x_in)
+            out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
 
             def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
                 if control.previous_controlnet is not None:
@@ -496,7 +496,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                             cond_item = actual_cond[key]
                             if isinstance(cond_item, Tensor):
                                 # check that tensor is the expected length - x.size(0)
-                                if cond_item.size(0) == x.size(0):
+                                if cond_item.size(0) == x_in.size(0):
                                     # if so, it's subsetting time - tell controls the expected indeces so they can handle them
                                     actual_cond_item = cond_item[full_idxs]
                                     resized_actual_cond[key] = actual_cond_item
@@ -517,11 +517,11 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                                 # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
                                 for cond_key, cond_value in new_cond_item.items():
                                     if isinstance(cond_value, Tensor):
-                                        if cond_value.size(0) == x.size(0):
+                                        if cond_value.size(0) == x_in.size(0):
                                             new_cond_item[cond_key] = cond_value[full_idxs]
                                     # if has cond that is a Tensor, check if needs to be subset
                                     elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
-                                        if cond_value.cond.size(0) == x.size(0):
+                                        if cond_value.cond.size(0) == x_in.size(0):
                                             new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
                                 resized_actual_cond[key] = new_cond_item
                             else:
@@ -541,7 +541,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                     for ind in ctx_idxs:
                         full_idxs.append((ADGS.video_length*n)+ind)
                 # get subsections of x, timestep, cond, uncond, cond_concat
-                sub_x = x[full_idxs]
+                sub_x = x_in[full_idxs]
                 sub_timestep = timestep[full_idxs]
                 sub_cond = get_resized_cond(cond, full_idxs) if cond is not None else None
                 sub_uncond = get_resized_cond(uncond, full_idxs) if uncond is not None else None
