@@ -567,7 +567,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
         else:
             cond, uncond = sliding_calc_cond_uncond_batch(model, cond, uncond, x, timestep, model_options)
         if "sampler_cfg_function" in model_options:
-            args = {"cond": x - cond, "uncond": x - uncond, "cond_scale": cond_scale, "timestep": timestep, "input": x}
+            args = {"cond": x - cond, "uncond": x - uncond, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep}
             return x - model_options["sampler_cfg_function"](args)
         else:
             return uncond + (cond - uncond) * cond_scale
