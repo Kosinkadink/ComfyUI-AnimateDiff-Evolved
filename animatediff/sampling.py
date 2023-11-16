@@ -441,6 +441,8 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                         transformer_options["patches"] = patches
 
                 transformer_options["cond_or_uncond"] = cond_or_uncond[:]
+                transformer_options["sigmas"] = timestep
+
                 c['transformer_options'] = transformer_options
 
                 if 'model_function_wrapper' in model_options:
