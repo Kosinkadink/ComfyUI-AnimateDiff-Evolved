@@ -564,6 +564,7 @@ class InjectionParams:
         self.loras: MotionLoRAList = None
         self.motion_model_settings = MotionModelSettings()
         self.noise_type: str = NoiseType.DEFAULT
+        self.sub_idxs = None  # value should NOT be included in clone, so it will auto reset
     
     def set_version(self, motion_module: GenericMotionWrapper):
         self.version = motion_module.version
