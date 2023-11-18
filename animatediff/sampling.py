@@ -31,6 +31,7 @@ from .motion_utils import GenericMotionWrapper, GroupNormAD, NoiseType
 class AnimateDiffHelper_GlobalState:
     def __init__(self):
         self.motion_module: GenericMotionWrapper = None
+        self.params: InjectionParams = None
         self.reset()
     
     def reset(self):
@@ -49,6 +50,9 @@ class AnimateDiffHelper_GlobalState:
         if self.motion_module is not None:
             del self.motion_module
             self.motion_module = None
+        if self.params is not None:
+            del self.params
+            self.params = None
     
     def update_with_inject_params(self, params: InjectionParams):
         self.video_length = params.video_length
@@ -58,6 +62,7 @@ class AnimateDiffHelper_GlobalState:
         self.context_schedule = params.context_schedule
         self.closed_loop = params.closed_loop
         self.sync_context_to_pe = params.sync_context_to_pe
+        self.params = params
 
     def is_using_sliding_context(self):
         return self.context_frames is not None
@@ -536,6 +541,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             # perform calc_cond_uncond_batch per context window
             for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames, ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
                 ADGS.sub_idxs = ctx_idxs
+                ADGS.params.sub_idxs = ADGS.sub_idxs
                 ADGS.motion_module.set_sub_idxs(ADGS.sub_idxs)  
                 # account for all portions of input frames
                 full_idxs = []
