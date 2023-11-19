@@ -1,6 +1,6 @@
 import math
 import sys
-from typing import Callable
+from typing import Callable, Dict, Union
 
 import torch
 from einops import rearrange
@@ -66,10 +66,26 @@ class AnimateDiffHelper_GlobalState:
 
     def is_using_sliding_context(self):
         return self.context_frames is not None
+    
+    def create_exposed_params(self):
+        # This dict will be exposed to be used by other extensions
+        # DO NOT change any of the key names
+        # or I will find you 👁.👁
+        return {
+            "full_length": self.video_length,
+            "context_length": self.context_frames,
+            "sub_idxs": self.sub_idxs,
+        }
 
 ADGS = AnimateDiffHelper_GlobalState()
 ######################################################################
 ##################################################################################
+
+
+class ListWithParams(list):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.params: Union[Dict, None] = None
 
 
 ##################################################################################
@@ -445,7 +461,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                     else:
                         transformer_options["patches"] = patches
 
-                transformer_options["cond_or_uncond"] = cond_or_uncond[:]
+                transformer_options["cond_or_uncond"] = get_cond_or_uncond_with_params(cond_or_uncond)
                 transformer_options["sigmas"] = timestep
 
                 c['transformer_options'] = transformer_options
@@ -471,6 +487,11 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             del out_uncond_count
             return out_cond, out_uncond
         
+        def get_cond_or_uncond_with_params(cond_or_uncond: list):
+            new_list = ListWithParams(cond_or_uncond[:])
+            new_list.params = ADGS.create_exposed_params()
+            return new_list
+
         # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
         # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
         def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
