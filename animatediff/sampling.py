@@ -100,7 +100,8 @@ def forward_timestep_embed(
             x = layer(x, context)
         elif isinstance(layer, SpatialTransformer):
             x = layer(x, context, transformer_options)
-            transformer_options["current_index"] += 1
+            if "current_index" in transformer_options:
+                transformer_options["current_index"] += 1
         elif isinstance(layer, openaimodel.Upsample):
             x = layer(x, output_shape=output_shape)
         else:
