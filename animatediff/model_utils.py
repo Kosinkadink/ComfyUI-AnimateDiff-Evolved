@@ -24,7 +24,8 @@ class IsChangedHelper:
 
 class ModelSamplingConfig:
     def __init__(self, beta_schedule: str):
-        self.beta_schedule = beta_schedule
+        self.sampling_settings = {"beta_schedule": beta_schedule}
+        self.beta_schedule = beta_schedule  # keeping this for backwards compatibility
 
 
 class BetaSchedules:
