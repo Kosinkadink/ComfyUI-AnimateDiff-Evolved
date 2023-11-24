@@ -7,13 +7,13 @@ from einops import rearrange
 from torch import Tensor
 from torch.nn.functional import group_norm
 
+import comfy.ldm.modules.attention as attention
 import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
 import comfy.model_management as model_management
 import comfy.samplers as comfy_samplers
 import comfy.sample as comfy_sample
 import comfy.utils
 from comfy.controlnet import ControlBase
-from comfy.ldm.modules.attention import SpatialTransformer
 from comfy.model_patcher import ModelPatcher
 from .context import get_context_scheduler
 from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
@@ -90,23 +90,48 @@ class ListWithParams(list):
 
 ##################################################################################
 #### Code Injection ##################################################
-def forward_timestep_embed(
-    ts, x, emb, context=None, transformer_options={}, output_shape=None
-):
-    for layer in ts:
-        if isinstance(layer, openaimodel.TimestepBlock):
-            x = layer(x, emb)
-        elif isinstance(layer, VanillaTemporalModule):
-            x = layer(x, context)
-        elif isinstance(layer, SpatialTransformer):
-            x = layer(x, context, transformer_options)
-            if "current_index" in transformer_options:
-                transformer_options["current_index"] += 1
-        elif isinstance(layer, openaimodel.Upsample):
-            x = layer(x, output_shape=output_shape)
-        else:
-            x = layer(x)
-    return x
+
+# refer to forward_timestep_embed in comfy/ldm/modules/diffusionmodules/openaimodel.py
+def forward_timestep_embed_factory() -> Callable:
+    if hasattr(attention, "SpatialVideoTransformer"):
+        def forward_timestep_embed(ts, x, emb, context=None, transformer_options={}, output_shape=None, time_context=None, num_video_frames=None, image_only_indicator=None):
+            for layer in ts:
+                if isinstance(layer, openaimodel.VideoResBlock):
+                    x = layer(x, emb, num_video_frames, image_only_indicator)
+                elif isinstance(layer, openaimodel.TimestepBlock):
+                    x = layer(x, emb)
+                elif isinstance(layer, VanillaTemporalModule):
+                    x = layer(x, context)
+                elif isinstance(layer, attention.SpatialVideoTransformer):
+                    x = layer(x, context, time_context, num_video_frames, image_only_indicator, transformer_options)
+                    transformer_options["current_index"] += 1
+                elif isinstance(layer, attention.SpatialTransformer):
+                    x = layer(x, context, transformer_options)
+                    if "current_index" in transformer_options:
+                        transformer_options["current_index"] += 1
+                elif isinstance(layer, openaimodel.Upsample):
+                    x = layer(x, output_shape=output_shape)
+                else:
+                    x = layer(x)
+            return x
+    # keep old version for backwards compatibility (TODO: remove at end of 2023)
+    else:
+        def forward_timestep_embed(ts, x, emb, context=None, transformer_options={}, output_shape=None):
+            for layer in ts:
+                if isinstance(layer, openaimodel.TimestepBlock):
+                    x = layer(x, emb)
+                elif isinstance(layer, VanillaTemporalModule):
+                    x = layer(x, context)
+                elif isinstance(layer, attention.SpatialTransformer):
+                    x = layer(x, context, transformer_options)
+                    if "current_index" in transformer_options:
+                        transformer_options["current_index"] += 1
+                elif isinstance(layer, openaimodel.Upsample):
+                    x = layer(x, output_shape=output_shape)
+                else:
+                    x = layer(x)
+            return x
+    return forward_timestep_embed
 
 
 def unlimited_memory_required(*args, **kwargs):
@@ -176,7 +201,7 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
 
             ##############################################
             # Inject Functions
-            openaimodel.forward_timestep_embed = forward_timestep_embed
+            openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
             if params.unlimited_area_hack:
                 model.model.memory_required = unlimited_memory_required
             # only apply groupnorm hack if not [AnimateDiff and v2 and should apply v2 properly]
