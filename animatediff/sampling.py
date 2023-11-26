@@ -494,6 +494,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
 
                 transformer_options["cond_or_uncond"] = get_cond_or_uncond_with_params(cond_or_uncond)
                 transformer_options["sigmas"] = timestep
+                transformer_options["ad_params"] = ADGS.create_exposed_params()
 
                 c['transformer_options'] = transformer_options
 
