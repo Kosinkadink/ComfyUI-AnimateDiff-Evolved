@@ -104,10 +104,15 @@ def forward_timestep_embed_factory() -> Callable:
                     x = layer(x, context)
                 elif isinstance(layer, attention.SpatialVideoTransformer):
                     x = layer(x, context, time_context, num_video_frames, image_only_indicator, transformer_options)
-                    transformer_options["current_index"] += 1
+                    if "transformer_index" in transformer_options:
+                        transformer_options["transformer_index"] += 1
+                    if "current_index" in transformer_options: # keep this for backward compat, for now
+                        transformer_options["current_index"] += 1
                 elif isinstance(layer, attention.SpatialTransformer):
                     x = layer(x, context, transformer_options)
-                    if "current_index" in transformer_options:
+                    if "transformer_index" in transformer_options:
+                        transformer_options["transformer_index"] += 1
+                    if "current_index" in transformer_options:  # keep this for backward compat, for now
                         transformer_options["current_index"] += 1
                 elif isinstance(layer, openaimodel.Upsample):
                     x = layer(x, output_shape=output_shape)
@@ -489,6 +494,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
 
                 transformer_options["cond_or_uncond"] = get_cond_or_uncond_with_params(cond_or_uncond)
                 transformer_options["sigmas"] = timestep
+                transformer_options["ad_params"] = ADGS.create_exposed_params()
 
                 c['transformer_options'] = transformer_options
 
