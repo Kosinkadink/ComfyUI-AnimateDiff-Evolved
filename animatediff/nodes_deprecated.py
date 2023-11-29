@@ -120,6 +120,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
     
 
 class AnimateDiffCombine_Deprecated:
+    ffmpeg_warning_already_shown = False
     @classmethod
     def INPUT_TYPES(s):
         ffmpeg_path = shutil.which("ffmpeg")
@@ -128,7 +129,9 @@ class AnimateDiffCombine_Deprecated:
             ffmpeg_formats = ["video/"+x[:-5] for x in folder_paths.get_filename_list("video_formats")]
         else:
             ffmpeg_formats = []
-            logger.warning("This warning can be ignored, you should not be using the deprecated AnimateDiff Combine node anyway. If you are, use Video Combine from ComfyUI-VideoHelperSuite instead. ffmpeg could not be found. Outputs that require it have been disabled")
+            if not s.ffmpeg_warning_already_shown:
+                logger.warning("This warning can be ignored, you should not be using the deprecated AnimateDiff Combine node anyway. If you are, use Video Combine from ComfyUI-VideoHelperSuite instead. ffmpeg could not be found. Outputs that require it have been disabled")
+                s.ffmpeg_warning_already_shown = True
         return {
             "required": {
                 "images": ("IMAGE",),
