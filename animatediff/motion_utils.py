@@ -223,9 +223,10 @@ class NoiseType:
     DEFAULT = "default"
     REPEATED = "repeated"
     CONSTANT = "constant"
+    CONSTANT_ADDED = "constant_added"
     AUTO1111 = "auto1111"
 
-    LIST = [DEFAULT, REPEATED, CONSTANT, AUTO1111]
+    LIST = [DEFAULT, REPEATED, CONSTANT, CONSTANT_ADDED, AUTO1111]
 
     @classmethod
     def prepare_noise(cls, noise_type: str, latents: Tensor, noise: Tensor, context_length: int, seed: int):
@@ -235,6 +236,10 @@ class NoiseType:
             return cls.prepare_noise_repeated(latents, noise, context_length, seed)
         elif noise_type == cls.CONSTANT:
             return cls.prepare_noise_constant(latents, noise, context_length, seed)
+        elif noise_type == cls.CONSTANT_ADDED:
+            new_noise = cls.prepare_noise_constant(latents, noise, context_length, seed)
+            noise_weight = 0.2
+            return noise * (1.0-(noise_weight/3)) + new_noise * noise_weight
         elif noise_type == cls.AUTO1111:
             return cls.prepare_noise_auto1111(latents, noise, context_length, seed)
         logger.warning(f"Noise type {noise_type} not recognized, proceeding with default noise.")

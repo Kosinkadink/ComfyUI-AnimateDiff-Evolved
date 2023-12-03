@@ -32,16 +32,20 @@ class BetaSchedules:
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
     LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
+    USE_PATCHED = "use_patched"
+    USE_ORIGINAL = "use_original"
     SQRT = "sqrt"
     COSINE = "cosine"
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
-    ALIAS_LIST = [SQRT_LINEAR, LINEAR_ADXL, LINEAR, SQRT, COSINE, SQUAREDCOS_CAP_V2]
+    ALIAS_LIST = [SQRT_LINEAR, LINEAR_ADXL, LINEAR, USE_PATCHED, USE_ORIGINAL, SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
     ALIAS_MAP = {
         SQRT_LINEAR: "sqrt_linear",
         LINEAR_ADXL: "linear", # also linear, but has different linear_end (0.020)
         LINEAR: "linear",
+        USE_PATCHED: None,
+        USE_ORIGINAL: None,
         SQRT: "sqrt",
         COSINE: "cosine",
         SQUAREDCOS_CAP_V2: "squaredcos_cap_v2",
@@ -57,6 +61,13 @@ class BetaSchedules:
     
     @classmethod
     def to_model_sampling(cls, alias: str, model: ModelPatcher):
+        # if should use patched, try to get model_sampling patch; otherwise, use original
+        if alias == cls.USE_PATCHED:
+            ms_obj = model.object_patches.get("model_sampling", None)
+            return ms_obj if ms_obj is not None else model.model.model_sampling
+        # if should use original, use model_sampling that is already on the model
+        if alias == cls.USE_ORIGINAL:
+            return model.model.model_sampling
         ms_obj = model_sampling(cls.to_config(alias), model_type=model.model.model_type)
         if alias == cls.LINEAR_ADXL:
             # uses linear_end=0.020
