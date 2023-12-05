@@ -12,7 +12,7 @@ from comfy.cli_args import args
 from comfy.ldm.modules.attention import attention_basic, attention_pytorch, attention_split, attention_sub_quad, default
 from comfy.controlnet import broadcast_image_to
 from comfy.utils import repeat_to_batch_size
-from .motion_lora import MotionLoRAInfo
+from .motion_lora import MotionLoraInfo
 from .logger import logger
 
 
@@ -144,7 +144,7 @@ class InjectorVersion:
 
 
 class GenericMotionWrapper(nn.Module, ABC):
-    def __init__(self, mm_hash: str, mm_name: str, loras: list[MotionLoRAInfo]):
+    def __init__(self, mm_hash: str, mm_name: str, loras: list[MotionLoraInfo]):
         super().__init__()
         self.down_blocks: nn.ModuleList = None
         self.up_blocks: nn.ModuleList = None

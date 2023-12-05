@@ -6,7 +6,6 @@ from comfy.model_patcher import ModelPatcher
 from comfy.sd import load_checkpoint_guess_config
 from .logger import logger
 from .model_utils import IsChangedHelper, BetaSchedules
-from .motion_module import eject_params_from_model
 
 
 class AnimateDiffUnload:
@@ -23,9 +22,9 @@ class AnimateDiffUnload:
 
     def unload_motion_modules(self, model: ModelPatcher):
         # return model clone with ejected params
-        model = eject_params_from_model(model)
+        #model = eject_params_from_model(model)
 
-        return (model,)
+        return (model.clone(),)
 
 
 class CheckpointLoaderSimpleWithNoiseSelect:

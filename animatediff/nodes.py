@@ -7,17 +7,16 @@ from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .logger import logger
 from .model_utils import get_available_motion_loras, get_available_motion_models, BetaSchedules
 from .motion_utils import NoiseType
-from .motion_lora import MotionLoRAInfo, MotionLoRAList
-from .motion_module import InjectionParams, MotionModelSettings
-from .motion_module import inject_params_into_model, load_motion_lora, load_motion_module
-from .sampling import animatediff_sample_factory
+from .motion_lora import MotionLoraInfo, MotionLoraList
+from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelSettings, load_motion_module
+from .sampling_motion import motion_sample_factory
 
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
-from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
+#from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
 
 # override comfy_sample.sample with animatediff-support version
-comfy_sample.sample = animatediff_sample_factory(comfy_sample.sample)
+comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
 
 
 class AnimateDiffModelSettings:
@@ -48,7 +47,7 @@ class AnimateDiffModelSettings:
 
 
 
-class AnimateDiffLoRALoader:
+class AnimateDiffLoraLoader:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -65,15 +64,15 @@ class AnimateDiffLoRALoader:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "load_motion_lora"
 
-    def load_motion_lora(self, lora_name: str, strength: float, prev_motion_lora: MotionLoRAList=None):
+    def load_motion_lora(self, lora_name: str, strength: float, prev_motion_lora: MotionLoraList=None):
         if prev_motion_lora is None:
-            prev_motion_lora = MotionLoRAList()
+            prev_motion_lora = MotionLoraList()
         else:
             prev_motion_lora = prev_motion_lora.clone()
         # load lora
-        lora = load_motion_lora(lora_name)
-        lora_info = MotionLoRAInfo(name=lora_name, strength=strength, hash=lora.hash)
-        prev_motion_lora.add_lora(lora_info)
+        # lora = load_motion_lora(lora_name)
+        # lora_info = MotionLoraInfo(name=lora_name, strength=strength, hash=lora.hash)
+        # prev_motion_lora.add_lora(lora_info)
 
         return (prev_motion_lora,)
 
@@ -105,25 +104,24 @@ class AnimateDiffLoaderWithContext:
     def load_mm_and_inject_params(self,
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
-        context_options: ContextOptions=None, motion_lora: MotionLoRAList=None, motion_model_settings: MotionModelSettings=None,
+        context_options: ContextOptions=None, motion_lora: MotionLoraList=None, motion_model_settings: MotionModelSettings=None,
         motion_scale: float=1.0, apply_v2_models_properly: bool=False,
     ):
         # load motion module
-        mm = load_motion_module(model_name, motion_lora, model=model, motion_model_settings=motion_model_settings)
+        motion_model = load_motion_module(model_name, motion_lora, model=model, motion_model_settings=motion_model_settings)
         # set injection params
-        injection_params = InjectionParams(
+        params = InjectionParams(
                 video_length=None,
                 unlimited_area_hack=False,
                 apply_mm_groupnorm_hack=True,
                 beta_schedule=beta_schedule,
-                injector=mm.injector_version,
                 model_name=model_name,
                 apply_v2_models_properly=apply_v2_models_properly,
         )
         if context_options:
             # set context settings TODO: make this dynamic for future purposes
             if type(context_options) == UniformContextOptions:
-                injection_params.set_context(
+                params.set_context(
                         context_length=context_options.context_length,
                         context_stride=context_options.context_stride,
                         context_overlap=context_options.context_overlap,
@@ -131,16 +129,37 @@ class AnimateDiffLoaderWithContext:
                         closed_loop=context_options.closed_loop,
                         sync_context_to_pe=context_options.sync_context_to_pe,
                 )
-                injection_params.noise_type = context_options.noise_type
+                params.noise_type = context_options.noise_type
         if motion_lora:
-            injection_params.set_loras(motion_lora)
+            params.set_loras(motion_lora)
         # set motion_scale and motion_model_settings
         if not motion_model_settings:
             motion_model_settings = MotionModelSettings()
         motion_model_settings.attn_scale = motion_scale
-        injection_params.set_motion_model_settings(motion_model_settings)
+        params.set_motion_model_settings(motion_model_settings)
         # inject for use in sampling code
-        model = inject_params_into_model(model, injection_params)
+        #model = inject_params_into_model(model, injection_params)
+
+        # apply scale multiplier, if needed
+        motion_model.model.set_scale_multiplier(params.motion_model_settings.attn_scale)
+
+        # apply scale mask, if needed
+        motion_model.model.set_masks(
+            masks=params.motion_model_settings.mask_attn_scale,
+            min_val=params.motion_model_settings.mask_attn_scale_min,
+            max_val=params.motion_model_settings.mask_attn_scale_max
+            )
+
+        model = ModelPatcherAndInjector(model)
+        model.motion_model = motion_model
+        model.motion_injection_params = params
+        del motion_model
+
+        # apply beta schedule, if there already isn't a model_sampling patch
+        if model.object_patches.get("model_sampling", None) is None:
+            new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+            if new_model_sampling is not None:
+                model.add_object_patch("model_sampling", new_model_sampling)
 
         return (model,)
 
@@ -212,7 +231,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     #"ADE_AnimateDiffUniformContextOptionsExperimental": AnimateDiffUniformContextOptionsExperimental,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
-    "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
+    "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
     "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
     # Experimental Nodes
     "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
@@ -223,9 +242,9 @@ NODE_CLASS_MAPPINGS = {
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
     # Deprecated Nodes
-    "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
-    "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
-    "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
+    # "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
+    # "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
+    # "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
@@ -242,7 +261,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select 🎭🅐🅓",
     # Deprecated Nodes
-    "AnimateDiffLoaderV1": "AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
-    "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
-    "ADE_AnimateDiffCombine": "DO NOT USE, USE VideoCombine from ComfyUI-VideoHelperSuite instead! AnimateDiff Combine [DEPRECATED, DO NOT USE] 🎭🅐🅓",
+    # "AnimateDiffLoaderV1": "AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
+    # "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
+    # "ADE_AnimateDiffCombine": "DO NOT USE, USE VideoCombine from ComfyUI-VideoHelperSuite instead! AnimateDiff Combine [DEPRECATED, DO NOT USE] 🎭🅐🅓",
 }

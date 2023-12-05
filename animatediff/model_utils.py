@@ -6,7 +6,7 @@ from typing import Callable
 import numpy as np
 
 import folder_paths
-from comfy.model_base import SDXL, BaseModel, model_sampling
+from comfy.model_base import SD21UNCLIP, SDXL, BaseModel, SDXLRefiner, SVD_img2vid, model_sampling
 from comfy.model_management import xformers_enabled
 from comfy.model_patcher import ModelPatcher
 
@@ -155,31 +155,34 @@ def calculate_model_hash(model: ModelPatcher):
 
 
 class ModelTypesSD:
-    SD1_5 = "sd1_5"
-    SDXL = "sdxl"
+    SD1_5 = "SD1.5"
+    SD2_1 = "SD2.1"
+    SDXL = "SDXL"
+    SDXL_REFINER = "SDXL_Refiner"
+    SVD = "SVD"
 
 
 def get_sd_model_type(model: ModelPatcher) -> str:
     if model is None:
         return None
-    if is_checkpoint_sd1_5(model):
+    elif type(model.model) == BaseModel:
         return ModelTypesSD.SD1_5
-    elif is_checkpoint_sdxl(model):
+    elif type(model.model) == SDXL:
         return ModelTypesSD.SDXL
-    return False
-
+    elif type(model.model) == SD21UNCLIP:
+        return ModelTypesSD.SD2_1
+    elif type(model.model) == SDXLRefiner:
+        return ModelTypesSD.SDXL_REFINER
+    elif type(model.model) == SVD_img2vid:
+        return ModelTypesSD.SVD
+    else:
+        return str(type(model.model).__name__)
 
 def is_checkpoint_sd1_5(model: ModelPatcher):
-    if model is None:
-        return False
-    model_type = type(model.model)
-    return model_type == BaseModel
+    return False if model is None else type(model.model) == BaseModel
 
 def is_checkpoint_sdxl(model: ModelPatcher):
-    if model is None:
-        return False
-    model_type = type(model.model)
-    return model_type == SDXL
+    return False if model is None else type(model.model) == SDXL
 
 
 def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
@@ -202,7 +205,6 @@ def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Cal
                                        and a workaround for now is to run ComfyUI with the --disable-xformers argument.")
                 raise
         return wrapped_function
-
 
 # TODO: possibly add configuration file in future when needed?
 # # Load config settings

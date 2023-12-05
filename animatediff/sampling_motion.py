@@ -1,28 +1,24 @@
-import math
-import sys
-from typing import Callable, Dict, Union
+from typing import Callable
 
+import math
 import torch
-from einops import rearrange
 from torch import Tensor
 from torch.nn.functional import group_norm
+from einops import rearrange
 
 import comfy.ldm.modules.attention as attention
-import comfy.ldm.modules.diffusionmodules.openaimodel as openaimodel
+from comfy.ldm.modules.diffusionmodules import openaimodel
 import comfy.model_management as model_management
 import comfy.samplers as comfy_samplers
 import comfy.sample as comfy_sample
 import comfy.utils
 from comfy.controlnet import ControlBase
-from comfy.model_patcher import ModelPatcher
+
 from .context import get_context_scheduler
-from .model_utils import BetaScheduleCache, BetaSchedules, wrap_function_to_inject_xformers_bug_info
-from .motion_module import InjectionParams, eject_motion_module, inject_motion_module, inject_params_into_model, \
-    load_motion_module, unload_motion_module
-from .motion_module import is_injected_mm_params, get_injected_mm_params
-from .motion_module_ad import AnimDiffMotionWrapper, VanillaTemporalModule
-from .motion_module_adxl import AnimDiffSDXLMotionWrapper
-from .motion_utils import GenericMotionWrapper, GroupNormAD, NoiseType
+from .motion_utils import GroupNormAD, NoiseType
+from .model_utils import BetaScheduleCache, BetaSchedules, ModelTypesSD, wrap_function_to_inject_xformers_bug_info
+from .model_injection import InjectionParams, ModelPatcherAndInjector
+from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffModelWrapper, VanillaTemporalModule
 
 
 ##################################################################################
@@ -30,7 +26,7 @@ from .motion_utils import GenericMotionWrapper, GroupNormAD, NoiseType
 # Global variable to use to more conveniently hack variable access into samplers
 class AnimateDiffHelper_GlobalState:
     def __init__(self):
-        self.motion_module: GenericMotionWrapper = None
+        self.motion_module: AnimateDiffModelWrapper = None
         self.params: InjectionParams = None
         self.reset()
     
@@ -80,12 +76,6 @@ class AnimateDiffHelper_GlobalState:
 ADGS = AnimateDiffHelper_GlobalState()
 ######################################################################
 ##################################################################################
-
-
-class ListWithParams(list):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.params: Union[Dict, None] = None
 
 
 ##################################################################################
@@ -170,22 +160,22 @@ def prepare_mask_ad(noise_mask, shape, device):
     noise_mask = noise_mask.to(device)
     return noise_mask
 
-def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
-    def animatediff_sample(model: ModelPatcher, noise: Tensor, *args, **kwargs):
-        # check if model has params - if not, no need to do anything
-        if not is_injected_mm_params(model):
+
+def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
+    def motion_sample(model: ModelPatcherAndInjector, noise: Tensor, *args, **kwargs):
+        # check if model is intended for injecting
+        if type(model) != ModelPatcherAndInjector:
             return orig_comfy_sample(model, noise, *args, **kwargs)
         # otherwise, injection time
-        motion_module = None
         orig_beta_cache = None
+        model_is_loaded = False
         try:
-            # get params - clone to keep from resetting values on cached model
-            params = get_injected_mm_params(model).clone()
-            # get amount of latents passed in, and inject into model
+            # get params from model
+            params = model.motion_injection_params.clone()
+            # get amount of latents passed in, and store in params
             latents = args[-1]
             params.video_length = latents.size(0)
             params.full_length = latents.size(0)
-            model = inject_params_into_model(model, params)
             # reset global state
             ADGS.reset()
             ##############################################
@@ -200,39 +190,23 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_beta_cache = BetaScheduleCache(model)
             ##############################################
 
-            # try to load motion module
-            motion_module = load_motion_module(params.model_name, params.loras, model=model, motion_model_settings=params.motion_model_settings)
-
             ##############################################
             # Inject Functions
             openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
             if params.unlimited_area_hack:
                 model.model.memory_required = unlimited_memory_required
-            # only apply groupnorm hack if not [AnimateDiff and v2 and should apply v2 properly]
-            if not ((isinstance(motion_module, AnimDiffMotionWrapper) and motion_module.version == "v2" and params.apply_v2_models_properly)):
+            # only apply groupnorm hack if not [AnimateDiff SD1.5 and v2 and should apply v2 properly]
+            info: AnimateDiffInfo = model.motion_model.model.mm_info
+            if not (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypesSD.SD1_5 and \
+                    info.mm_version == "v2" and params.apply_v2_models_properly):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
                 if params.apply_mm_groupnorm_hack:
                     GroupNormAD.forward = groupnorm_mm_factory(params)
             comfy_samplers.sampling_function = sliding_sampling_function
             comfy_sample.prepare_mask = prepare_mask_ad
+            del info
             ##############################################
 
-            # inject motion module into unet
-            inject_motion_module(model=model, motion_module=motion_module, params=params)
-
-            # apply suggested beta schedule (model_sampling)
-            model.model.model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
-
-            # apply scale multiplier, if needed
-            motion_module.set_scale_multiplier(params.motion_model_settings.attn_scale)
-
-            # apply scale mask, if needed
-            motion_module.set_masks(
-                masks=params.motion_model_settings.mask_attn_scale,
-                min_val=params.motion_model_settings.mask_attn_scale_min,
-                max_val=params.motion_model_settings.mask_attn_scale_max
-                )
-            
             # apply custom noise, if needed
             disable_noise = kwargs["disable_noise"]
             seed = kwargs["seed"]
@@ -241,7 +215,6 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
                 noise = NoiseType.prepare_noise(params.noise_type, latents=latents, noise=noise, context_length=params.context_length, seed=seed)
 
             # handle GLOBALSTATE vars and step tally
-            ADGS.motion_module = motion_module
             ADGS.update_with_inject_params(params)
             ADGS.start_step = kwargs.get("start_step") or 0
             ADGS.current_step = ADGS.start_step
@@ -254,18 +227,17 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
                 # update GLOBALSTATE for next iteration
                 ADGS.current_step = ADGS.start_step + step + 1
             kwargs["callback"] = ad_callback
+            ADGS.motion_module = model.motion_model.model
 
+            # load motion model
+            model_management.load_model_gpu(model.motion_model)
+            model_is_loaded = True
             return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
+
         finally:
-            # attempt to eject motion module
-            eject_motion_module(model=model)
-            if motion_module is not None:
-                # reset motion module
-                motion_module.reset()
-                # if loras are present, remove model so it can be re-loaded next time with fresh weights
-                if motion_module.has_loras():
-                    unload_motion_module(motion_module)
-                    del motion_module
+            # clean motion model
+            if model_is_loaded:
+                model.motion_model.model.cleanup()
             ##############################################
             # Restoration
             model.model.memory_required = orig_memory_required
@@ -280,7 +252,8 @@ def animatediff_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # reset global state
             ADGS.reset()
             ##############################################
-    return animatediff_sample
+    return motion_sample
+
 
 
 def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None):
@@ -491,7 +464,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                     else:
                         transformer_options["patches"] = patches
 
-                transformer_options["cond_or_uncond"] = get_cond_or_uncond_with_params(cond_or_uncond)
+                transformer_options["cond_or_uncond"] = cond_or_uncond
                 transformer_options["sigmas"] = timestep
                 transformer_options["ad_params"] = ADGS.create_exposed_params()
 
@@ -517,11 +490,6 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             out_uncond /= out_uncond_count
             del out_uncond_count
             return out_cond, out_uncond
-        
-        def get_cond_or_uncond_with_params(cond_or_uncond: list):
-            new_list = ListWithParams(cond_or_uncond[:])
-            new_list.params = ADGS.create_exposed_params()
-            return new_list
 
         # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
         # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
@@ -594,7 +562,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames, ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
                 ADGS.sub_idxs = ctx_idxs
                 ADGS.params.sub_idxs = ADGS.sub_idxs
-                ADGS.motion_module.set_sub_idxs(ADGS.sub_idxs)  
+                ADGS.motion_module.set_sub_idxs(ADGS.sub_idxs)
                 # account for all portions of input frames
                 full_idxs = []
                 for n in range(axes_factor):

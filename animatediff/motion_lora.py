@@ -1,7 +1,7 @@
 from torch import Tensor
 
 
-class MotionLoRAInfo:
+class MotionLoraInfo:
     def __init__(self, name: str, strength: float = 1.0, hash: str=""):
         self.name = name
         self.strength = strength
@@ -11,28 +11,28 @@ class MotionLoRAInfo:
         self.hash = hash
     
     def clone(self):
-        return MotionLoRAInfo(self.name, self.strength, self.hash)
+        return MotionLoraInfo(self.name, self.strength, self.hash)
 
 
-class MotionLoRAWrapper:
-    def __init__(self, state_dict: dict[str, Tensor], hash: str):
+class MotionLoraWrapper:
+    def __init__(self, state_dict: dict[str, Tensor], hash: str=""):
         self.state_dict = state_dict
         self.hash = hash
-        self.info: MotionLoRAInfo = None
+        self.info: MotionLoraInfo = None
     
-    def set_info(self, info: MotionLoRAInfo):
+    def set_info(self, info: MotionLoraInfo):
         self.info = info
 
 
-class MotionLoRAList:
+class MotionLoraList:
     def __init__(self):
-        self.loras: list[MotionLoRAInfo] = []
+        self.loras: list[MotionLoraInfo] = []
     
-    def add_lora(self, lora: MotionLoRAInfo):
+    def add_lora(self, lora: MotionLoraInfo):
         self.loras.append(lora)
     
     def clone(self):
-        new_list = MotionLoRAList()
+        new_list = MotionLoraList()
         for lora in self.loras:
             new_list.add_lora(lora.clone())
         return new_list
