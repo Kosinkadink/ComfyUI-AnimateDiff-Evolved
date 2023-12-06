@@ -191,6 +191,50 @@ def apply_params_to_motion_model(motion_model: MotionModelPatcher, params: Injec
     logger.info(f"Using motion module {motion_model.model.mm_info.mm_name} version {motion_model.model.mm_info.mm_version}.")
 
 
+class FunctionInjectionHolder:
+    def __init__(self):
+        pass
+    
+    def inject_functions(self, model: ModelPatcherAndInjector, params: InjectionParams):
+        # Save Original Functions
+        self.orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
+        self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
+        self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
+        self.orig_groupnormad_forward = GroupNormAD.forward
+        self.orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
+        self.orig_prepare_mask = comfy_sample.prepare_mask
+        self.orig_get_additional_models = comfy_sample.get_additional_models
+        # Inject Functions
+        openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
+        if params.unlimited_area_hack:
+            model.model.memory_required = unlimited_memory_required
+        # only apply groupnorm hack if not [AnimateDiff SD1.5 and v2 and should apply v2 properly]
+        info: AnimateDiffInfo = model.motion_model.model.mm_info
+        if not (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and \
+                info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_models_properly):
+            torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
+            if params.apply_mm_groupnorm_hack:
+                GroupNormAD.forward = groupnorm_mm_factory(params)
+        comfy_samplers.sampling_function = sliding_sampling_function
+        comfy_sample.prepare_mask = prepare_mask_ad
+        comfy_sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_model)
+        del info
+
+    def restore_functions(self, model: ModelPatcherAndInjector):
+        # Restoration
+        try:
+            model.model.memory_required = self.orig_memory_required
+            openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
+            torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
+            GroupNormAD.forward = self.orig_groupnormad_forward
+            comfy_samplers.sampling_function = self.orig_sampling_function
+            comfy_sample.prepare_mask = self.orig_prepare_mask
+            comfy_sample.get_additional_models = self.orig_get_additional_models
+        except AttributeError:
+            logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
+                         "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
+
+
 def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
     def motion_sample(model: ModelPatcherAndInjector, noise: Tensor, *args, **kwargs):
         # check if model is intended for injecting
@@ -198,6 +242,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             return orig_comfy_sample(model, noise, *args, **kwargs)
         # otherwise, injection time
         latents = None
+        function_injections = FunctionInjectionHolder()
         try:
             # clone params from model
             params = model.motion_injection_params.clone()
@@ -207,37 +252,11 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             params.full_length = latents.size(0)
             # reset global state
             ADGS.reset()
-            ##############################################
-            # Save Original Functions
-            orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
-            orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
-            orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
-            orig_groupnormad_forward = GroupNormAD.forward
-            orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
-            orig_prepare_mask = comfy_sample.prepare_mask
-            orig_get_additional_models = comfy_sample.get_additional_models
-            ##############################################
-
-            ##############################################
-            # Inject Functions
-            openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
-            if params.unlimited_area_hack:
-                model.model.memory_required = unlimited_memory_required
-            # only apply groupnorm hack if not [AnimateDiff SD1.5 and v2 and should apply v2 properly]
-            info: AnimateDiffInfo = model.motion_model.model.mm_info
-            if not (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and \
-                    info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_models_properly):
-                torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
-                if params.apply_mm_groupnorm_hack:
-                    GroupNormAD.forward = groupnorm_mm_factory(params)
-            comfy_samplers.sampling_function = sliding_sampling_function
-            comfy_sample.prepare_mask = prepare_mask_ad
-            comfy_sample.get_additional_models = get_additional_models_factory(orig_get_additional_models, model.motion_model)
-            del info
-            ##############################################
+            # store and inject functions
+            function_injections.inject_functions(model, params)
 
             # apply custom noise, if needed
-            disable_noise = kwargs["disable_noise"]
+            disable_noise = kwargs.get("disable_noise") or False
             seed = kwargs["seed"]
             if not disable_noise:
                 # if context asks for specific noise, do it
@@ -267,16 +286,9 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             del noise
             # reset global state
             ADGS.reset()
-            ##############################################
-            # Restoration
-            model.model.memory_required = orig_memory_required
-            openaimodel.forward_timestep_embed = orig_forward_timestep_embed
-            torch.nn.GroupNorm.forward = orig_groupnorm_forward
-            GroupNormAD.forward = orig_groupnormad_forward
-            comfy_samplers.sampling_function = orig_sampling_function
-            comfy_sample.prepare_mask = orig_prepare_mask
-            comfy_sample.get_additional_models = orig_get_additional_models
-            ##############################################
+            # restore injected functions
+            function_injections.restore_functions(model)
+            del function_injections
     return motion_sample
 
 
