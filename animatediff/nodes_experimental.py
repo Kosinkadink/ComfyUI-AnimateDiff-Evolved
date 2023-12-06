@@ -1,4 +1,3 @@
-
 import torch
 
 from .model_injection import MotionModelSettings

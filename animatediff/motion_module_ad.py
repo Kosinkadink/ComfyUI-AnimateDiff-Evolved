@@ -9,9 +9,9 @@ from torch import Tensor, nn
 from comfy.ldm.modules.attention import FeedForward, SpatialTransformer
 from comfy.model_patcher import ModelPatcher
 from comfy.ldm.modules.diffusionmodules import openaimodel
-from comfy.ldm.modules.diffusionmodules.openaimodel import ResBlock, SpatialTransformer
-from .motion_lora import MotionLoraInfo
-from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric, prepare_mask_batch
+from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
+
+from .motion_utils import GroupNormAD, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric
 from .model_utils import ModelTypeSD
 
 
@@ -132,7 +132,7 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
     return mm_state_dict, info
 
 
-class AnimateDiffModelWrapper(nn.Module):
+class AnimateDiffModel(nn.Module):
     def __init__(self, mm_state_dict: dict[str, Tensor], mm_info: AnimateDiffInfo):
         super().__init__()
         self.mm_info = mm_info
@@ -152,8 +152,6 @@ class AnimateDiffModelWrapper(nn.Module):
             self.up_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.UP))
         if has_mid_block(mm_state_dict):
             self.mid_block = MotionModule(1280, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.MID)
-        self.version = "v1" if self.mid_block is None else "v2"
-        self.injector_version = InjectorVersion.V1_V2
         self.AD_video_length: int = 24
 
     def get_device_debug(self):

@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from typing import Union
-from einops import rearrange
 
 import torch
 import torch.nn.functional as F
@@ -136,12 +135,6 @@ class BlockType:
     UP = "up"
     DOWN = "down"
     MID = "mid"
-
-
-class InjectorVersion:
-    V1_V2 = "v1/v2"
-    ADXL_V1_V2 = "ADXL v1/v2"
-    HOTSHOTXL_V1 = "HSXL v1"
 
 
 class GenericMotionWrapper(nn.Module, ABC):

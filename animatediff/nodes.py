@@ -6,7 +6,7 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .logger import logger
-from .model_utils import get_available_motion_loras, get_available_motion_models, BetaSchedules, get_motion_lora_path
+from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .motion_utils import NoiseType
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelSettings, load_motion_module
@@ -14,7 +14,7 @@ from .sampling import motion_sample_factory
 
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
-#from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
+from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
 
 # override comfy_sample.sample with animatediff-support version
 comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
@@ -45,7 +45,6 @@ class AnimateDiffModelSettings:
             )
 
         return (motion_model_settings,)
-
 
 
 class AnimateDiffLoraLoader:
@@ -88,7 +87,7 @@ class AnimateDiffLoaderWithContext:
             "required": {
                 "model": ("MODEL",),
                 "model_name": (get_available_motion_models(),),
-                "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
+                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.SQRT_LINEAR}),
                 #"apply_mm_groupnorm_hack": ("BOOLEAN", {"default": True}),
             },
             "optional": {
@@ -96,7 +95,7 @@ class AnimateDiffLoaderWithContext:
                 "motion_lora": ("MOTION_LORA",),
                 "motion_model_settings": ("MOTION_MODEL_SETTINGS",),
                 "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
-                "apply_v2_models_properly": ("BOOLEAN", {"default": False}),
+                "apply_v2_models_properly": ("BOOLEAN", {"default": True}),
             }
         }
     
@@ -112,7 +111,7 @@ class AnimateDiffLoaderWithContext:
         motion_scale: float=1.0, apply_v2_models_properly: bool=False,
     ):
         # load motion module
-        motion_model = load_motion_module(model_name, motion_lora, model=model, motion_model_settings=motion_model_settings)
+        motion_model = load_motion_module(model_name, model, motion_lora=motion_lora, motion_model_settings=motion_model_settings)
         # set injection params
         params = InjectionParams(
                 video_length=None,
@@ -156,11 +155,10 @@ class AnimateDiffLoaderWithContext:
         model.motion_model = motion_model
         model.motion_injection_params = params
 
-        # apply beta schedule, if there already isn't a model_sampling patch
-        if model.object_patches.get("model_sampling", None) is None:
-            new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
-            if new_model_sampling is not None:
-                model.add_object_patch("model_sampling", new_model_sampling)
+        # save model sampling from BetaSchedule as object patch
+        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+        if new_model_sampling is not None:
+            model.add_object_patch("model_sampling", new_model_sampling)
 
         del motion_model
         return (model,)
@@ -244,9 +242,9 @@ NODE_CLASS_MAPPINGS = {
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
     # Deprecated Nodes
-    # "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
-    # "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
-    # "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
+    "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
+    "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
+    "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
@@ -263,7 +261,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select 🎭🅐🅓",
     # Deprecated Nodes
-    # "AnimateDiffLoaderV1": "AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
-    # "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
-    # "ADE_AnimateDiffCombine": "DO NOT USE, USE VideoCombine from ComfyUI-VideoHelperSuite instead! AnimateDiff Combine [DEPRECATED, DO NOT USE] 🎭🅐🅓",
+    "AnimateDiffLoaderV1": "AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
+    "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
+    "ADE_AnimateDiffCombine": "DO NOT USE, USE VideoCombine from ComfyUI-VideoHelperSuite instead! AnimateDiff Combine [DEPRECATED, DO NOT USE] 🎭🅐🅓",
 }

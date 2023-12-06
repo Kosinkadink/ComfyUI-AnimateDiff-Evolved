@@ -16,9 +16,9 @@ from comfy.controlnet import ControlBase
 
 from .context import get_context_scheduler
 from .motion_utils import GroupNormAD, NoiseType
-from .model_utils import BetaScheduleCache, BetaSchedules, ModelTypeSD, wrap_function_to_inject_xformers_bug_info
+from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelPatcher
-from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffModelWrapper, VanillaTemporalModule
+from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
 from .logger import logger
 
 
@@ -188,7 +188,7 @@ def apply_params_to_motion_model(motion_model: MotionModelPatcher, params: Injec
             raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
         motion_model.model.set_video_length(params.context_length, params.full_length)
     # inject model
-    logger.info(f"Injecting motion module {motion_model.model.mm_info.mm_name} version {motion_model.model.mm_info.mm_version}.")
+    logger.info(f"Using motion module {motion_model.model.mm_info.mm_name} version {motion_model.model.mm_info.mm_version}.")
 
 
 def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
@@ -197,11 +197,9 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
         if type(model) != ModelPatcherAndInjector:
             return orig_comfy_sample(model, noise, *args, **kwargs)
         # otherwise, injection time
-        orig_beta_cache = None
-        model_is_loaded = False
         latents = None
         try:
-            # get params from model
+            # clone params from model
             params = model.motion_injection_params.clone()
             # get amount of latents passed in, and store in params
             latents = args[-1]
@@ -218,8 +216,6 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
             orig_prepare_mask = comfy_sample.prepare_mask
             orig_get_additional_models = comfy_sample.get_additional_models
-            # save original beta schedule settings
-            #orig_beta_cache = BetaScheduleCache(model)
             ##############################################
 
             ##############################################
@@ -230,7 +226,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # only apply groupnorm hack if not [AnimateDiff SD1.5 and v2 and should apply v2 properly]
             info: AnimateDiffInfo = model.motion_model.model.mm_info
             if not (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and \
-                    info.mm_version == "v2" and params.apply_v2_models_properly):
+                    info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_models_properly):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
                 if params.apply_mm_groupnorm_hack:
                     GroupNormAD.forward = groupnorm_mm_factory(params)
@@ -280,9 +276,6 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             comfy_samplers.sampling_function = orig_sampling_function
             comfy_sample.prepare_mask = orig_prepare_mask
             comfy_sample.get_additional_models = orig_get_additional_models
-            # reapply previous beta schedule
-            if orig_beta_cache is not None:
-                orig_beta_cache.use_cached_beta_schedule_and_clean(model)
             ##############################################
     return motion_sample
 

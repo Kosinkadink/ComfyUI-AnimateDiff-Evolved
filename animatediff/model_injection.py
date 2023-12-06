@@ -5,19 +5,14 @@ from torch import Tensor
 import torch.nn.functional as F
 import torch
 
-import comfy.model_management
 from comfy.model_patcher import ModelPatcher
-from comfy.utils import calculate_parameters, load_torch_file
+from comfy.utils import load_torch_file
 
-from .motion_module_ad import AnimateDiffModelWrapper, has_mid_block, normalize_ad_state_dict
-
+from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
-
 from .motion_utils import MotionCompatibilityError, NoiseType, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
-
-from .model_utils import ModelTypeSD, calculate_file_hash, get_motion_lora_path, get_motion_model_path, \
-    get_sd_model_type
+from .model_utils import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 
 
 class ModelPatcherAndInjector(ModelPatcher):
@@ -78,12 +73,23 @@ class MotionModelPatcher(ModelPatcher):
     # Mostly here so that type hints work in IDEs
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.model: AnimateDiffModelWrapper = self.model
+        self.model: AnimateDiffModel = self.model
     
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
 
+
+def get_vanilla_model_patcher(m: ModelPatcher) -> ModelPatcher:
+    model = ModelPatcher(m.model, m.load_device, m.offload_device, m.size, m.current_device, weight_inplace_update=m.weight_inplace_update)
+    model.patches = {}
+    for k in m.patches:
+        model.patches[k] = m.patches[k][:]
+
+    model.object_patches = m.object_patches.copy()
+    model.model_options = copy.deepcopy(m.model_options)
+    model.model_keys = m.model_keys
+    return model
 
 # adapted from https://github.com/guoyww/AnimateDiff/blob/main/animatediff/utils/convert_lora_safetensor_to_diffusers.py
 # Example LoRA keys:
@@ -132,7 +138,7 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
     motion_model.add_patches(patches=patches, strength_patch=lora.strength)
 
 
-def load_motion_module(model_name: str, motion_lora: MotionLoraList = None, model: ModelPatcher = None, motion_model_settings = None) -> MotionModelPatcher:
+def load_motion_module(model_name: str, model: ModelPatcher, motion_lora: MotionLoraList = None, motion_model_settings: 'MotionModelSettings' = None) -> MotionModelPatcher:
     model_path = get_motion_model_path(model_name)
     logger.info(f"Loading motion module {model_name}")
     mm_state_dict = load_torch_file(model_path, safe_load=True)
@@ -147,7 +153,7 @@ def load_motion_module(model_name: str, motion_lora: MotionLoraList = None, mode
     # apply motion model settings
     mm_state_dict = apply_mm_settings(model_dict=mm_state_dict, mm_settings=motion_model_settings)
     # initialize AnimateDiffModelWrapper
-    ad_wrapper = AnimateDiffModelWrapper(mm_state_dict=mm_state_dict, mm_info=mm_info)
+    ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(model.model_dtype())
     ad_wrapper.to(model.offload_device)
     load_result = ad_wrapper.load_state_dict(mm_state_dict)
