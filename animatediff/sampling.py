@@ -27,7 +27,7 @@ from .logger import logger
 # Global variable to use to more conveniently hack variable access into samplers
 class AnimateDiffHelper_GlobalState:
     def __init__(self):
-        self.motion_module: AnimateDiffModelWrapper = None
+        self.motion_model: MotionModelPatcher = None
         self.params: InjectionParams = None
         self.reset()
     
@@ -44,9 +44,9 @@ class AnimateDiffHelper_GlobalState:
         self.closed_loop: bool = False
         self.sync_context_to_pe: bool = False
         self.sub_idxs: list = None
-        if self.motion_module is not None:
-            del self.motion_module
-            self.motion_module = None
+        if self.motion_model is not None:
+            del self.motion_model
+            self.motion_model = None
         if self.params is not None:
             del self.params
             self.params = None
@@ -148,6 +148,15 @@ def groupnorm_mm_factory(params: InjectionParams):
         input = rearrange(input, "b c f h w -> (b f) c h w", b=axes_factor)
         return input
     return groupnorm_mm_forward
+
+
+def get_additional_models_factory(orig_get_additional_models: Callable, motion_model: MotionModelPatcher):
+    def get_additional_models_with_motion(*args, **kwargs):
+        models, inference_memory = orig_get_additional_models(*args, **kwargs)
+        models.append(motion_model)
+        # TODO: account for inference memory as well?
+        return models, inference_memory
+    return get_additional_models_with_motion
 ######################################################################
 ##################################################################################
 
@@ -208,6 +217,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_groupnormad_forward = GroupNormAD.forward
             orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
             orig_prepare_mask = comfy_sample.prepare_mask
+            orig_get_additional_models = comfy_sample.get_additional_models
             # save original beta schedule settings
             #orig_beta_cache = BetaScheduleCache(model)
             ##############################################
@@ -226,6 +236,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
                     GroupNormAD.forward = groupnorm_mm_factory(params)
             comfy_samplers.sampling_function = sliding_sampling_function
             comfy_sample.prepare_mask = prepare_mask_ad
+            comfy_sample.get_additional_models = get_additional_models_factory(orig_get_additional_models, model.motion_model)
             del info
             ##############################################
 
@@ -252,18 +263,14 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
                 # update GLOBALSTATE for next iteration
                 ADGS.current_step = ADGS.start_step + step + 1
             kwargs["callback"] = ad_callback
-            ADGS.motion_module = model.motion_model.model
+            ADGS.motion_model = model.motion_model
 
-            # load motion model
-            model_management.load_model_gpu(model.motion_model)
-            model_is_loaded = True
             return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
         finally:
             del latents
             del noise
-            # clean motion model
-            if model_is_loaded:
-                model.motion_model.model.cleanup()
+            # reset global state
+            ADGS.reset()
             ##############################################
             # Restoration
             model.model.memory_required = orig_memory_required
@@ -272,11 +279,10 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             GroupNormAD.forward = orig_groupnormad_forward
             comfy_samplers.sampling_function = orig_sampling_function
             comfy_sample.prepare_mask = orig_prepare_mask
+            comfy_sample.get_additional_models = orig_get_additional_models
             # reapply previous beta schedule
             if orig_beta_cache is not None:
                 orig_beta_cache.use_cached_beta_schedule_and_clean(model)
-            # reset global state
-            ADGS.reset()
             ##############################################
     return motion_sample
 
@@ -588,7 +594,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames, ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
                 ADGS.sub_idxs = ctx_idxs
                 ADGS.params.sub_idxs = ADGS.sub_idxs
-                ADGS.motion_module.set_sub_idxs(ADGS.sub_idxs)
+                ADGS.motion_model.model.set_sub_idxs(ADGS.sub_idxs)
                 # account for all portions of input frames
                 full_idxs = []
                 for n in range(axes_factor):

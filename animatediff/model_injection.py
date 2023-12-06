@@ -35,6 +35,7 @@ class ModelPatcherAndInjector(ModelPatcher):
         # injection stuff
         self.motion_injection_params: InjectionParams = None
         self.motion_model: MotionModelPatcher = None
+        self.motion_model_sampling = None
     
     def model_patches_to(self, device):
         super().model_patches_to(device)
@@ -69,6 +70,7 @@ class ModelPatcherAndInjector(ModelPatcher):
         cloned = ModelPatcherAndInjector(self)
         cloned.motion_model = self.motion_model
         cloned.motion_injection_params = self.motion_injection_params
+        cloned.motion_model_sampling = self.motion_model_sampling
         return cloned
 
 
@@ -77,6 +79,10 @@ class MotionModelPatcher(ModelPatcher):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.model: AnimateDiffModelWrapper = self.model
+    
+    def cleanup(self):
+        if self.model is not None:
+            self.model.cleanup()
 
 
 # adapted from https://github.com/guoyww/AnimateDiff/blob/main/animatediff/utils/convert_lora_safetensor_to_diffusers.py

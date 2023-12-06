@@ -156,6 +156,9 @@ class AnimateDiffModelWrapper(nn.Module):
         self.injector_version = InjectorVersion.V1_V2
         self.AD_video_length: int = 24
 
+    def get_device_debug(self):
+        return self.down_blocks[0].motion_modules[0].temporal_transformer.proj_in.weight.device
+
     def cleanup(self):
         pass
 
