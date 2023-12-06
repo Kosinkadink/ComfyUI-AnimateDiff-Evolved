@@ -187,7 +187,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
             orig_prepare_mask = comfy_sample.prepare_mask
             # save original beta schedule settings
-            orig_beta_cache = BetaScheduleCache(model)
+            #orig_beta_cache = BetaScheduleCache(model)
             ##############################################
 
             ##############################################
