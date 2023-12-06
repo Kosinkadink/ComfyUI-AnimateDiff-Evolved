@@ -8,7 +8,7 @@ from torch import Tensor, nn
 
 from comfy.ldm.modules.attention import FeedForward, SpatialTransformer
 from comfy.model_patcher import ModelPatcher
-from ldm.modules.diffusionmodules import openaimodel
+from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.diffusionmodules.openaimodel import ResBlock, SpatialTransformer
 from .motion_lora import MotionLoraInfo
 from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric, prepare_mask_batch
