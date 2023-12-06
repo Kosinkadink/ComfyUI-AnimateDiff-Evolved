@@ -12,7 +12,7 @@ from ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.diffusionmodules.openaimodel import ResBlock, SpatialTransformer
 from .motion_lora import MotionLoraInfo
 from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric, prepare_mask_batch
-from .model_utils import ModelTypesSD
+from .model_utils import ModelTypeSD
 
 
 def zero_module(module):
@@ -96,9 +96,9 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
     sd_type: str = None
     down_block_max = get_down_block_max(mm_state_dict)
     if down_block_max == 3:
-        sd_type = ModelTypesSD.SD1_5
+        sd_type = ModelTypeSD.SD1_5
     elif down_block_max == 2:
-        sd_type = ModelTypesSD.SDXL
+        sd_type = ModelTypeSD.SDXL
     else:
         raise ValueError(f"'{mm_name}' is not a valid SD1.5 nor SDXL motion module - contained {down_block_max} downblocks.")
     # determine the model's format
@@ -141,7 +141,7 @@ class AnimateDiffModelWrapper(nn.Module):
         self.mid_block: Union[MotionModule, None] = None
         self.encoding_max_len = get_position_encoding_max_len(mm_state_dict, mm_info)
         # SDXL has 3 up/down blocks, SD1.5 has 4 up/down blocks
-        if mm_info.sd_type == ModelTypesSD.SDXL:
+        if mm_info.sd_type == ModelTypeSD.SDXL:
             layer_channels = (320, 640, 1280)
         else:
             layer_channels = (320, 640, 1280, 1280)

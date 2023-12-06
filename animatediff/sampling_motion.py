@@ -16,7 +16,7 @@ from comfy.controlnet import ControlBase
 
 from .context import get_context_scheduler
 from .motion_utils import GroupNormAD, NoiseType
-from .model_utils import BetaScheduleCache, BetaSchedules, ModelTypesSD, wrap_function_to_inject_xformers_bug_info
+from .model_utils import BetaScheduleCache, BetaSchedules, ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffModelWrapper, VanillaTemporalModule
 from .logger import logger
@@ -219,7 +219,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
                 model.model.memory_required = unlimited_memory_required
             # only apply groupnorm hack if not [AnimateDiff SD1.5 and v2 and should apply v2 properly]
             info: AnimateDiffInfo = model.motion_model.model.mm_info
-            if not (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypesSD.SD1_5 and \
+            if not (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and \
                     info.mm_version == "v2" and params.apply_v2_models_properly):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
                 if params.apply_mm_groupnorm_hack:

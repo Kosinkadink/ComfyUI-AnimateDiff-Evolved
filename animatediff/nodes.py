@@ -1,3 +1,4 @@
+from pathlib import Path
 import torch
 
 import comfy.sample as comfy_sample
@@ -5,7 +6,7 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .logger import logger
-from .model_utils import get_available_motion_loras, get_available_motion_models, BetaSchedules
+from .model_utils import get_available_motion_loras, get_available_motion_models, BetaSchedules, get_motion_lora_path
 from .motion_utils import NoiseType
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelSettings, load_motion_module
@@ -69,10 +70,13 @@ class AnimateDiffLoraLoader:
             prev_motion_lora = MotionLoraList()
         else:
             prev_motion_lora = prev_motion_lora.clone()
-        # load lora
-        # lora = load_motion_lora(lora_name)
-        # lora_info = MotionLoraInfo(name=lora_name, strength=strength, hash=lora.hash)
-        # prev_motion_lora.add_lora(lora_info)
+        # check if motion lora with name exists
+        lora_path = get_motion_lora_path(lora_name)
+        if not Path(lora_path).is_file():
+            raise FileNotFoundError(f"Motion lora with name '{lora_name}' not found.")
+        # create motion lora info to be loaded in AnimateDiff Loader
+        lora_info = MotionLoraInfo(name=lora_name, strength=strength)
+        prev_motion_lora.add_lora(lora_info)
 
         return (prev_motion_lora,)
 

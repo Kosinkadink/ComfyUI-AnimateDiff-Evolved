@@ -154,7 +154,7 @@ def calculate_model_hash(model: ModelPatcher):
     return m.hexdigest()
 
 
-class ModelTypesSD:
+class ModelTypeSD:
     SD1_5 = "SD1.5"
     SD2_1 = "SD2.1"
     SDXL = "SDXL"
@@ -166,15 +166,15 @@ def get_sd_model_type(model: ModelPatcher) -> str:
     if model is None:
         return None
     elif type(model.model) == BaseModel:
-        return ModelTypesSD.SD1_5
+        return ModelTypeSD.SD1_5
     elif type(model.model) == SDXL:
-        return ModelTypesSD.SDXL
+        return ModelTypeSD.SDXL
     elif type(model.model) == SD21UNCLIP:
-        return ModelTypesSD.SD2_1
+        return ModelTypeSD.SD2_1
     elif type(model.model) == SDXLRefiner:
-        return ModelTypesSD.SDXL_REFINER
+        return ModelTypeSD.SDXL_REFINER
     elif type(model.model) == SVD_img2vid:
-        return ModelTypesSD.SVD
+        return ModelTypeSD.SVD
     else:
         return str(type(model.model).__name__)
 

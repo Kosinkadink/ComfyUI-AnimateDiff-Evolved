@@ -14,9 +14,9 @@ from .motion_module_ad import AnimateDiffModelWrapper, has_mid_block, normalize_
 from .logger import logger
 
 from .motion_utils import MotionCompatibilityError, NoiseType, normalize_min_max
-from .motion_lora import MotionLoraInfo, MotionLoraList, MotionLoraWrapper
+from .motion_lora import MotionLoraInfo, MotionLoraList
 
-from .model_utils import ModelTypesSD, calculate_file_hash, get_motion_lora_path, get_motion_model_path, \
+from .model_utils import ModelTypeSD, calculate_file_hash, get_motion_lora_path, get_motion_model_path, \
     get_sd_model_type
 
 
@@ -55,15 +55,15 @@ class ModelPatcherAndInjector(ModelPatcher):
         return super().unpatch_model(device_to)
 
     def inject_model(self, device_to=None):
-        # motion_model.model is AnimateDiffModelWrapper
         if self.motion_model is not None:
             self.motion_model.model.eject(self)
             self.motion_model.model.inject(self)
+            self.motion_model.model.to(device_to)
 
     def eject_model(self, device_to=None):
-        # motion_model.model is AnimateDiffModelWrapper
         if self.motion_model is not None:
             self.motion_model.model.eject(self)
+            self.motion_model.model.to(device_to)
 
     def clone(self):
         cloned = ModelPatcherAndInjector(self)
@@ -73,6 +73,7 @@ class ModelPatcherAndInjector(ModelPatcher):
 
 
 class MotionModelPatcher(ModelPatcher):
+    # Mostly here so that type hints work in IDEs
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.model: AnimateDiffModelWrapper = self.model
@@ -118,7 +119,8 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
         weight_down = state_dict[key]
         weight_up = state_dict[up_key]
         # actual weights obtained by matrix multiplication of up and down weights
-        patches[model_key] += torch.mm(weight_up, weight_down)
+        # save as a tuple, so that (Motion)ModelPatcher's calculate_weight function detects len==1, applying it correctly
+        patches[model_key] = (torch.mm(weight_up, weight_down),)
     del state_dict
     # add patches to motion ModelPatcher
     motion_model.add_patches(patches=patches, strength_patch=lora.strength)
