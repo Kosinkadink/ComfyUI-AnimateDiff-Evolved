@@ -175,7 +175,7 @@ def apply_params_to_motion_model(motion_model: MotionModelPatcher, params: Injec
         motion_model.model.set_video_length(params.video_length, params.full_length)
     # otherwise, treat context_length as intended AD frame window
     else:
-        if params.context_length > motion_model.model.encoding_max_le:
+        if params.context_length > motion_model.model.encoding_max_len:
             raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
         motion_model.model.set_video_length(params.context_length, params.full_length)
     # inject model
