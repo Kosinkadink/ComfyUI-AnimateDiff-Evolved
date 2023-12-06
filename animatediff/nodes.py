@@ -137,8 +137,6 @@ class AnimateDiffLoaderWithContext:
             motion_model_settings = MotionModelSettings()
         motion_model_settings.attn_scale = motion_scale
         params.set_motion_model_settings(motion_model_settings)
-        # inject for use in sampling code
-        #model = inject_params_into_model(model, injection_params)
 
         # apply scale multiplier, if needed
         motion_model.model.set_scale_multiplier(params.motion_model_settings.attn_scale)
@@ -153,7 +151,6 @@ class AnimateDiffLoaderWithContext:
         model = ModelPatcherAndInjector(model)
         model.motion_model = motion_model
         model.motion_injection_params = params
-        del motion_model
 
         # apply beta schedule, if there already isn't a model_sampling patch
         if model.object_patches.get("model_sampling", None) is None:
@@ -161,6 +158,7 @@ class AnimateDiffLoaderWithContext:
             if new_model_sampling is not None:
                 model.add_object_patch("model_sampling", new_model_sampling)
 
+        del motion_model
         return (model,)
 
 

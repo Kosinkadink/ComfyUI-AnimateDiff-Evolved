@@ -460,15 +460,14 @@ class TemporalTransformer3DModel(nn.Module, TemporalTransformerGeneric):
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
         batch, channel, height, width = hidden_states.shape
         residual = hidden_states
-
         scale_mask = self.get_scale_mask(hidden_states)
-
-        hidden_states = self.norm(hidden_states)
+        # add some casts for fp8 purposes - does not affect speed otherwise
+        hidden_states = self.norm(hidden_states).to(hidden_states.dtype)
         inner_dim = hidden_states.shape[1]
         hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(
             batch, height * width, inner_dim
         )
-        hidden_states = self.proj_in(hidden_states)
+        hidden_states = self.proj_in(hidden_states).to(hidden_states.dtype)
 
         # Transformer Blocks
         for block in self.transformer_blocks:
@@ -561,7 +560,7 @@ class TemporalTransformerBlock(nn.Module):
         scale_mask=None
     ):
         for attention_block, norm in zip(self.attention_blocks, self.norms):
-            norm_hidden_states = norm(hidden_states)
+            norm_hidden_states = norm(hidden_states).to(hidden_states.dtype)
             hidden_states = (
                 attention_block(
                     norm_hidden_states,
@@ -662,7 +661,7 @@ class VersatileAttention(CrossAttentionMM):
         )
 
         if self.pos_encoder is not None:
-           hidden_states = self.pos_encoder(hidden_states)
+           hidden_states = self.pos_encoder(hidden_states).to(hidden_states.dtype)
 
         encoder_hidden_states = (
             repeat(encoder_hidden_states, "b n c -> (b d) n c", d=d)

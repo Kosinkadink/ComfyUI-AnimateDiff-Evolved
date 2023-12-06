@@ -17,8 +17,9 @@ from comfy.controlnet import ControlBase
 from .context import get_context_scheduler
 from .motion_utils import GroupNormAD, NoiseType
 from .model_utils import BetaScheduleCache, BetaSchedules, ModelTypesSD, wrap_function_to_inject_xformers_bug_info
-from .model_injection import InjectionParams, ModelPatcherAndInjector
+from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffModelWrapper, VanillaTemporalModule
+from .logger import logger
 
 
 ##################################################################################
@@ -161,6 +162,26 @@ def prepare_mask_ad(noise_mask, shape, device):
     return noise_mask
 
 
+def apply_params_to_motion_model(motion_model: MotionModelPatcher, params: InjectionParams):
+    if params.context_length and params.video_length > params.context_length:
+        logger.info(f"Sliding context window activated - latents passed in ({params.video_length}) greater than context_length {params.context_length}.")
+    else:
+        logger.info(f"Regular AnimateDiff activated - latents passed in ({params.video_length}) less or equal to context_length {params.context_length}.")
+        params.reset_context()
+    # if no context_length, treat video length as intended AD frame window
+    if not params.context_length:
+        if params.video_length > motion_model.model.encoding_max_len:
+            raise ValueError(f"Without a context window, AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames, but received {params.video_length} latents.")
+        motion_model.model.set_video_length(params.video_length, params.full_length)
+    # otherwise, treat context_length as intended AD frame window
+    else:
+        if params.context_length > motion_model.model.encoding_max_le:
+            raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
+        motion_model.model.set_video_length(params.context_length, params.full_length)
+    # inject model
+    logger.info(f"Injecting motion module {motion_model.model.mm_info.mm_name} version {motion_model.model.mm_info.mm_version}.")
+
+
 def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
     def motion_sample(model: ModelPatcherAndInjector, noise: Tensor, *args, **kwargs):
         # check if model is intended for injecting
@@ -169,6 +190,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
         # otherwise, injection time
         orig_beta_cache = None
         model_is_loaded = False
+        latents = None
         try:
             # get params from model
             params = model.motion_injection_params.clone()
@@ -214,6 +236,9 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
                 # if context asks for specific noise, do it
                 noise = NoiseType.prepare_noise(params.noise_type, latents=latents, noise=noise, context_length=params.context_length, seed=seed)
 
+            # apply params to motion model
+            apply_params_to_motion_model(model.motion_model, params)
+
             # handle GLOBALSTATE vars and step tally
             ADGS.update_with_inject_params(params)
             ADGS.start_step = kwargs.get("start_step") or 0
@@ -233,8 +258,9 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             model_management.load_model_gpu(model.motion_model)
             model_is_loaded = True
             return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
-
         finally:
+            del latents
+            del noise
             # clean motion model
             if model_is_loaded:
                 model.motion_model.model.cleanup()

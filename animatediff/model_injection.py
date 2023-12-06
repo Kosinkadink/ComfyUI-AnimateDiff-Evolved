@@ -5,8 +5,9 @@ from torch import Tensor
 import torch.nn.functional as F
 import torch
 
+import comfy.model_management
 from comfy.model_patcher import ModelPatcher
-from comfy.utils import load_torch_file
+from comfy.utils import calculate_parameters, load_torch_file
 
 from .motion_module_ad import AnimateDiffModelWrapper, has_mid_block, normalize_ad_state_dict
 
