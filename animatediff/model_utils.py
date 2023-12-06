@@ -6,7 +6,7 @@ from typing import Callable
 import numpy as np
 
 import folder_paths
-from comfy.model_base import SDXL, BaseModel, model_sampling
+from comfy.model_base import SD21UNCLIP, SDXL, BaseModel, SDXLRefiner, SVD_img2vid, model_sampling
 from comfy.model_management import xformers_enabled
 from comfy.model_patcher import ModelPatcher
 
@@ -32,11 +32,12 @@ class BetaSchedules:
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
     LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
+    USE_EXISTING = "use existing"
     SQRT = "sqrt"
     COSINE = "cosine"
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
-    ALIAS_LIST = [SQRT_LINEAR, LINEAR_ADXL, LINEAR, SQRT, COSINE, SQUAREDCOS_CAP_V2]
+    ALIAS_LIST = [SQRT_LINEAR, LINEAR_ADXL, LINEAR, USE_EXISTING, SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
     ALIAS_MAP = {
         SQRT_LINEAR: "sqrt_linear",
@@ -57,6 +58,8 @@ class BetaSchedules:
     
     @classmethod
     def to_model_sampling(cls, alias: str, model: ModelPatcher):
+        if alias == cls.USE_EXISTING:
+            return None
         ms_obj = model_sampling(cls.to_config(alias), model_type=model.model.model_type)
         if alias == cls.LINEAR_ADXL:
             # uses linear_end=0.020
@@ -154,32 +157,35 @@ def calculate_model_hash(model: ModelPatcher):
     return m.hexdigest()
 
 
-class ModelTypesSD:
-    SD1_5 = "sd1_5"
-    SDXL = "sdxl"
+class ModelTypeSD:
+    SD1_5 = "SD1.5"
+    SD2_1 = "SD2.1"
+    SDXL = "SDXL"
+    SDXL_REFINER = "SDXL_Refiner"
+    SVD = "SVD"
 
 
 def get_sd_model_type(model: ModelPatcher) -> str:
     if model is None:
         return None
-    if is_checkpoint_sd1_5(model):
-        return ModelTypesSD.SD1_5
-    elif is_checkpoint_sdxl(model):
-        return ModelTypesSD.SDXL
-    return False
-
+    elif type(model.model) == BaseModel:
+        return ModelTypeSD.SD1_5
+    elif type(model.model) == SDXL:
+        return ModelTypeSD.SDXL
+    elif type(model.model) == SD21UNCLIP:
+        return ModelTypeSD.SD2_1
+    elif type(model.model) == SDXLRefiner:
+        return ModelTypeSD.SDXL_REFINER
+    elif type(model.model) == SVD_img2vid:
+        return ModelTypeSD.SVD
+    else:
+        return str(type(model.model).__name__)
 
 def is_checkpoint_sd1_5(model: ModelPatcher):
-    if model is None:
-        return False
-    model_type = type(model.model)
-    return model_type == BaseModel
+    return False if model is None else type(model.model) == BaseModel
 
 def is_checkpoint_sdxl(model: ModelPatcher):
-    if model is None:
-        return False
-    model_type = type(model.model)
-    return model_type == SDXL
+    return False if model is None else type(model.model) == SDXL
 
 
 def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
@@ -202,7 +208,6 @@ def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Cal
                                        and a workaround for now is to run ComfyUI with the --disable-xformers argument.")
                 raise
         return wrapped_function
-
 
 # TODO: possibly add configuration file in future when needed?
 # # Load config settings

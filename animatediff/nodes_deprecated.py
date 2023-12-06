@@ -11,12 +11,11 @@ from PIL.PngImagePlugin import PngInfo
 
 import folder_paths
 from comfy.model_patcher import ModelPatcher
+
 from .context import ContextSchedules
 from .logger import logger
-from .model_utils import get_available_motion_models, BetaSchedules, \
-    raise_if_not_checkpoint_sd1_5
-from .motion_module import InjectorVersion, InjectionParams
-from .motion_module import inject_params_into_model, load_motion_module
+from .model_utils import get_available_motion_models, BetaSchedules
+from .model_injection import ModelPatcherAndInjector, InjectionParams, load_motion_module
 
 
 class AnimateDiffLoader_Deprecated:
@@ -42,23 +41,29 @@ class AnimateDiffLoader_Deprecated:
         latents: Dict[str, torch.Tensor],
         model_name: str, unlimited_area_hack: bool, beta_schedule: str,
     ):
-        raise_if_not_checkpoint_sd1_5(model)
         # load motion module
-        load_motion_module(model_name)
+        motion_model = load_motion_module(model_name, model)
         # get total frames
         init_frames_len = len(latents["samples"])
         # set injection params
-        injection_params = InjectionParams(
+        params = InjectionParams(
                 video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
                 apply_mm_groupnorm_hack=True,
                 beta_schedule=beta_schedule,
-                injector=InjectorVersion.V1_V2,
                 model_name=model_name,
         )
         # inject for use in sampling code
-        model = inject_params_into_model(model, injection_params)
+        model = ModelPatcherAndInjector(model)
+        model.motion_model = motion_model
+        model.motion_injection_params = params
 
+        # save model sampling from BetaSchedule as object patch
+        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+        if new_model_sampling is not None:
+            model.add_object_patch("model_sampling", new_model_sampling)
+
+        del motion_model
         return (model, latents)
 
 
@@ -91,22 +96,20 @@ class AnimateDiffLoaderAdvanced_Deprecated:
             context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool,
             beta_schedule: str,
         ):
-        raise_if_not_checkpoint_sd1_5(model)
         # load motion module
-        load_motion_module(model_name)
+        motion_model = load_motion_module(model_name, model)
         # get total frames
         init_frames_len = len(latents["samples"])
         # set injection params
-        injection_params = InjectionParams(
+        params = InjectionParams(
                 video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
                 apply_mm_groupnorm_hack=True,
                 beta_schedule=beta_schedule,
-                injector=InjectorVersion.V1_V2,
                 model_name=model_name,
         )
         # set context settings
-        injection_params.set_context(
+        params.set_context(
                 context_length=context_length,
                 context_stride=context_stride,
                 context_overlap=context_overlap,
@@ -114,8 +117,16 @@ class AnimateDiffLoaderAdvanced_Deprecated:
                 closed_loop=closed_loop
         )
         # inject for use in sampling code
-        model = inject_params_into_model(model, injection_params)
+        model = ModelPatcherAndInjector(model)
+        model.motion_model = motion_model
+        model.motion_injection_params = params
 
+        # save model sampling from BetaSchedule as object patch
+        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+        if new_model_sampling is not None:
+            model.add_object_patch("model_sampling", new_model_sampling)
+
+        del motion_model
         return (model, latents)
     
 
