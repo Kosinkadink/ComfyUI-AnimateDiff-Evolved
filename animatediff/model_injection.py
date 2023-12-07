@@ -59,7 +59,12 @@ class ModelPatcherAndInjector(ModelPatcher):
     def eject_model(self, device_to=None):
         if self.motion_model is not None:
             self.motion_model.model.eject(self)
-            self.motion_model.model.to(device_to)
+            try:
+                # this cast might fail if model becomes metatensor or is not castable;
+                # should not really matter if it fails, so ignore raised Exceptions
+                self.motion_model.model.to(device_to)
+            except Exception:
+                pass
 
     def clone(self):
         cloned = ModelPatcherAndInjector(self)
