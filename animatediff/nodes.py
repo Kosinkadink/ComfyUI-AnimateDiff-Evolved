@@ -18,6 +18,7 @@ from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdv
 
 # override comfy_sample.sample with animatediff-support version
 comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
+comfy_sample.sample_custom = motion_sample_factory(comfy_sample.sample_custom)
 
 
 class AnimateDiffModelSettings:
