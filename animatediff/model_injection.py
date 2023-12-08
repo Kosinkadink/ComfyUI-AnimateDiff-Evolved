@@ -15,6 +15,8 @@ from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_utils import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 
 
+# some motion_model casts here might fail if model becomes metatensor or is not castable;
+# should not really matter if it fails, so ignore raised Exceptions
 class ModelPatcherAndInjector(ModelPatcher):
     def __init__(self, m: ModelPatcher):
         # replicate ModelPatcher.clone() to initialize ModelPatcherAndInjector
@@ -35,7 +37,10 @@ class ModelPatcherAndInjector(ModelPatcher):
     def model_patches_to(self, device):
         super().model_patches_to(device)
         if self.motion_model is not None:
-            self.motion_model.model.to(device)
+            try:
+                self.motion_model.model.to(device)
+            except Exception:
+                pass
 
     def patch_model(self, device_to=None):
         # first, perform model patching
@@ -54,14 +59,15 @@ class ModelPatcherAndInjector(ModelPatcher):
         if self.motion_model is not None:
             self.motion_model.model.eject(self)
             self.motion_model.model.inject(self)
-            self.motion_model.model.to(device_to)
+            try:
+                self.motion_model.model.to(device_to)
+            except Exception:
+                pass
 
     def eject_model(self, device_to=None):
         if self.motion_model is not None:
             self.motion_model.model.eject(self)
             try:
-                # this cast might fail if model becomes metatensor or is not castable;
-                # should not really matter if it fails, so ignore raised Exceptions
                 self.motion_model.model.to(device_to)
             except Exception:
                 pass
