@@ -5,8 +5,9 @@ from torch import Tensor
 import torch.nn.functional as F
 import torch
 
+import comfy.model_management
+import comfy.utils
 from comfy.model_patcher import ModelPatcher
-from comfy.utils import load_torch_file
 
 from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
@@ -85,7 +86,28 @@ class MotionModelPatcher(ModelPatcher):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.model: AnimateDiffModel = self.model
+
+    def patch_model(self, *args, **kwargs):
+        # patch as normal, but prepare_weights so that lowvram meta device works properly
+        patched_model = super().patch_model(*args, **kwargs)
+        self.prepare_weights()
+        return patched_model
+
+    def prepare_weights(self):
+        # in case lowvram is active and meta device is used, need to convert weights
+        # otherwise, will get exceptions thrown related to meta device
+        state_dict = self.model.state_dict()
+        for key in state_dict:
+            weight = comfy.model_management.resolve_lowvram_weight(state_dict[key], self.model, key)
+            try:
+                comfy.utils.set_attr(self.model, key, weight)
+            except Exception:
+                pass
     
+    def pre_run(self):
+        # just in case, prepare_weights before every run
+        self.prepare_weights()
+
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
@@ -116,7 +138,7 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
 
     lora_path = get_motion_lora_path(lora.name)
     logger.info(f"Loading motion LoRA {lora.name}")
-    state_dict = load_torch_file(lora_path)
+    state_dict = comfy.utils.load_torch_file(lora_path)
 
     model_has_midblock = motion_model.model.mid_block != None
     lora_has_midblock = has_mid_block(state_dict)
@@ -152,7 +174,7 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
 def load_motion_module(model_name: str, model: ModelPatcher, motion_lora: MotionLoraList = None, motion_model_settings: 'MotionModelSettings' = None) -> MotionModelPatcher:
     model_path = get_motion_model_path(model_name)
     logger.info(f"Loading motion module {model_name}")
-    mm_state_dict = load_torch_file(model_path, safe_load=True)
+    mm_state_dict = comfy.utils.load_torch_file(model_path, safe_load=True)
     # TODO: check for empty state dict?
     # get normalized state_dict and motion model info
     mm_state_dict, mm_info = normalize_ad_state_dict(mm_state_dict=mm_state_dict, mm_name=model_name)

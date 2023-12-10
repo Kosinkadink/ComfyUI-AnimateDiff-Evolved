@@ -2,6 +2,7 @@ import hashlib
 import os
 from pathlib import Path
 from typing import Callable
+from time import time
 
 import numpy as np
 
@@ -208,6 +209,31 @@ def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Cal
                                        and a workaround for now is to run ComfyUI with the --disable-xformers argument.")
                 raise
         return wrapped_function
+
+
+class Timer(object):
+    __slots__ = ("start_time", "end_time")
+
+    def __init__(self) -> None:
+        self.start_time = 0.0
+        self.end_time = 0.0
+
+    def start(self) -> None:
+        self.start_time = time()
+
+    def update(self) -> None:
+        self.start()
+
+    def stop(self) -> float:
+        self.end_time = time()
+        return self.get_time_diff()
+
+    def get_time_diff(self) -> float:
+        return self.end_time - self.start_time
+
+    def get_time_current(self) -> float:
+        return time() - self.start_time
+
 
 # TODO: possibly add configuration file in future when needed?
 # # Load config settings
