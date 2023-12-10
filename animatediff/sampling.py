@@ -280,6 +280,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             kwargs["callback"] = ad_callback
             ADGS.motion_model = model.motion_model
 
+            model.motion_model.pre_run()
             return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
         finally:
             del latents
