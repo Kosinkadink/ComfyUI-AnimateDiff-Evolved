@@ -1,13 +1,18 @@
 import math
-from typing import Iterable, Union
+from typing import Iterable, Tuple, Union
+import re
 
 import torch
 from einops import rearrange, repeat
 from torch import Tensor, nn
 
-from comfy.ldm.modules.attention import FeedForward
-from .motion_lora import MotionLoRAInfo
-from .motion_utils import GenericMotionWrapper, GroupNormAD, InjectorVersion, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric, prepare_mask_batch
+from comfy.ldm.modules.attention import FeedForward, SpatialTransformer
+from comfy.model_patcher import ModelPatcher
+from comfy.ldm.modules.diffusionmodules import openaimodel
+from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
+
+from .motion_utils import GroupNormAD, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric
+from .model_utils import ModelTypeSD
 
 
 def zero_module(module):
@@ -17,15 +22,33 @@ def zero_module(module):
     return module
 
 
-def get_ad_temporal_position_encoding_max_len(mm_state_dict: dict[str, Tensor], mm_type: str) -> int:
-    # use pos_encoder.pe entries to determine max length - [1, {max_length}, {320|640|1280}]
+class AnimateDiffFormat:
+    ANIMATEDIFF = "AnimateDiff"
+    HOTSHOTXL = "HotshotXL"
+
+
+class AnimateDiffVersion:
+    V1 = "v1"
+    V2 = "v2"
+
+
+class AnimateDiffInfo:
+    def __init__(self, sd_type: str, mm_format: str, mm_version: str, mm_name: str):
+        self.sd_type = sd_type
+        self.mm_format = mm_format
+        self.mm_version = mm_version
+        self.mm_name = mm_name
+
+
+def is_hotshotxl(mm_state_dict: dict[str, Tensor]) -> bool:
+    # use pos_encoder naming to determine if hotshotxl model
     for key in mm_state_dict.keys():
-        if key.endswith("pos_encoder.pe"):
-            return mm_state_dict[key].size(1) # get middle dim
-    raise MotionCompatibilityError(f"No pos_encoder.pe found in mm_state_dict - {mm_type} is not a valid AnimateDiff-SD1.5 motion module!")
+        if key.endswith("pos_encoder.positional_encoding"):
+            return True
+    return False
 
 
-def validate_ad_block_count(mm_state_dict: dict[str, Tensor], mm_type: str) -> None:
+def get_down_block_max(mm_state_dict: dict[str, Tensor]) -> int:
     # keep track of biggest down_block count in module
     biggest_block = 0
     for key in mm_state_dict.keys():
@@ -37,8 +60,7 @@ def validate_ad_block_count(mm_state_dict: dict[str, Tensor], mm_type: str) -> N
                     biggest_block = block_num
             except ValueError:
                 pass
-    if biggest_block != 3:
-        raise MotionCompatibilityError(f"Expected biggest down_block to be 3, but was {biggest_block} - {mm_type} is not a valid AnimateDiff-SD1.5 motion module!")
+    return biggest_block
 
 
 def has_mid_block(mm_state_dict: dict[str, Tensor]):
@@ -49,32 +71,168 @@ def has_mid_block(mm_state_dict: dict[str, Tensor]):
     return False
 
 
-class AnimDiffMotionWrapper(GenericMotionWrapper):
-    def __init__(self, mm_state_dict: dict[str, Tensor], mm_hash: str, mm_name: str="mm_sd_v15.ckpt" , loras: list[MotionLoRAInfo]=None):
-        super().__init__(mm_hash, mm_name, loras)
+def get_position_encoding_max_len(mm_state_dict: dict[str, Tensor], mm_info: AnimateDiffInfo) -> int:
+    # use pos_encoder.pe entries to determine max length - [1, {max_length}, {320|640|1280}]
+    for key in mm_state_dict.keys():
+        if key.endswith("pos_encoder.pe"):
+            return mm_state_dict[key].size(1) # get middle dim
+    raise MotionCompatibilityError(f"No pos_encoder.pe found in mm_state_dict - {mm_info.mm_name} is not a valid AnimateDiff motion module!")
+
+
+_regex_hotshotxl_module_num = re.compile(r'temporal_attentions\.(\d+)\.')
+def find_hotshot_module_num(key: str) -> Union[int, None]:
+    found = _regex_hotshotxl_module_num.search(key)
+    if found:
+        return int(found.group(1))
+    return None
+
+
+def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> Tuple[dict[str, Tensor], AnimateDiffInfo]:
+    # remove all non-temporal keys (in case model has extra stuff in it)
+    for key in list(mm_state_dict.keys()):
+        if "temporal" not in key:
+            del mm_state_dict[key]
+    # determine what SD model the motion module is intended for
+    sd_type: str = None
+    down_block_max = get_down_block_max(mm_state_dict)
+    if down_block_max == 3:
+        sd_type = ModelTypeSD.SD1_5
+    elif down_block_max == 2:
+        sd_type = ModelTypeSD.SDXL
+    else:
+        raise ValueError(f"'{mm_name}' is not a valid SD1.5 nor SDXL motion module - contained {down_block_max} downblocks.")
+    # determine the model's format
+    mm_format = AnimateDiffFormat.ANIMATEDIFF
+    if is_hotshotxl(mm_state_dict):
+        mm_format = AnimateDiffFormat.HOTSHOTXL
+    # determine the model's version
+    mm_version = AnimateDiffVersion.V1
+    if has_mid_block(mm_state_dict):
+        mm_version = AnimateDiffVersion.V2
+    info = AnimateDiffInfo(sd_type=sd_type, mm_format=mm_format, mm_version=mm_version, mm_name=mm_name)
+    # convert to AnimateDiff format, if needed
+    if mm_format == AnimateDiffFormat.HOTSHOTXL:
+        # HotshotXL is AD-based architecture applied to SDXL instead of SD1.5
+        # By renaming the keys, no code needs to be adapted at all
+        #
+        # reformat temporal_attentions:
+        # HSXL: temporal_attentions.#.
+        #   AD: motion_modules.#.temporal_transformer.
+        # HSXL: pos_encoder.positional_encoding
+        #   AD: pos_encoder.pe
+        for key in list(mm_state_dict.keys()):
+            module_num = find_hotshot_module_num(key)
+            if module_num is not None:
+                new_key = key.replace(f"temporal_attentions.{module_num}",
+                                      f"motion_modules.{module_num}.temporal_transformer", 1)
+                new_key = new_key.replace("pos_encoder.positional_encoding", "pos_encoder.pe")
+                mm_state_dict[new_key] = mm_state_dict[key]
+                del mm_state_dict[key]
+    # return adjusted mm_state_dict and info
+    return mm_state_dict, info
+
+
+class AnimateDiffModel(nn.Module):
+    def __init__(self, mm_state_dict: dict[str, Tensor], mm_info: AnimateDiffInfo):
+        super().__init__()
+        self.mm_info = mm_info
         self.down_blocks: Iterable[MotionModule] = nn.ModuleList([])
         self.up_blocks: Iterable[MotionModule] = nn.ModuleList([])
         self.mid_block: Union[MotionModule, None] = None
-        self.encoding_max_len = get_ad_temporal_position_encoding_max_len(mm_state_dict, mm_name)
-        validate_ad_block_count(mm_state_dict, mm_name)
-        for c in (320, 640, 1280, 1280):
+        self.encoding_max_len = get_position_encoding_max_len(mm_state_dict, mm_info)
+        # SDXL has 3 up/down blocks, SD1.5 has 4 up/down blocks
+        if mm_info.sd_type == ModelTypeSD.SDXL:
+            layer_channels = (320, 640, 1280)
+        else:
+            layer_channels = (320, 640, 1280, 1280)
+        # fill out down/up blocks and middle block, if present
+        for c in layer_channels:
             self.down_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.DOWN))
-        for c in (1280, 1280, 640, 320):
+        for c in reversed(layer_channels):
             self.up_blocks.append(MotionModule(c, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.UP))
         if has_mid_block(mm_state_dict):
             self.mid_block = MotionModule(1280, temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.MID)
-        self.mm_hash = mm_hash
-        self.mm_name = mm_name
-        self.version = "v1" if self.mid_block is None else "v2"
-        self.injector_version = InjectorVersion.V1_V2
         self.AD_video_length: int = 24
-        self.loras = loras
-    
-    def has_loras(self):
-        # TODO: fix this to return False if has an empty list as well
-        # but only after implementing a fix for lowvram loading
-        return self.loras is not None
-    
+
+    def get_device_debug(self):
+        return self.down_blocks[0].motion_modules[0].temporal_transformer.proj_in.weight.device
+
+    def cleanup(self):
+        pass
+
+    def inject(self, model: ModelPatcher):
+        unet: openaimodel.UNetModel = model.model.diffusion_model
+        # inject input (down) blocks
+        # SD15 mm contains 4 downblocks, each with 2 TemporalTransformers - 8 in total
+        # SDXL mm contains 3 downblocks, each with 2 TemporalTransformers - 6 in total
+        self._inject(unet.input_blocks, self.down_blocks)
+        # inject output (up) blocks
+        # SD15 mm contains 4 upblocks, each with 3 TemporalTransformers - 12 in total
+        # SDXL mm contains 3 upblocks, each with 3 TemporalTransformers - 9 in total
+        self._inject(unet.output_blocks, self.up_blocks)
+        # inject mid block, if needed (encapsulate in list to make structure compatible)
+        if self.mid_block is not None:
+            self._inject([unet.middle_block], [self.mid_block])
+        del unet
+
+    def _inject(self, unet_blocks: nn.ModuleList, mm_blocks: nn.ModuleList):
+        # Rules for injection:
+        # For each component list in a unet block:
+        #     if SpatialTransformer exists in list, place next block after last occurrence
+        #     elif ResBlock exists in list, place next block after first occurrence
+        #     else don't place block
+        injection_count = 0
+        unet_idx = 0
+        # details about blocks passed in
+        per_block = len(mm_blocks[0].motion_modules)
+        injection_goal = len(mm_blocks) * per_block
+        # only stop injecting when modules exhausted
+        while injection_count < injection_goal:
+            # figure out which VanillaTemporalModule from mm to inject
+            mm_blk_idx, mm_vtm_idx = injection_count // per_block, injection_count % per_block
+            # figure out layout of unet block components
+            st_idx = -1 # SpatialTransformer index
+            res_idx = -1 # first ResBlock index
+            # first, figure out indeces of relevant blocks
+            for idx, component in enumerate(unet_blocks[unet_idx]):
+                if type(component) == SpatialTransformer:
+                    st_idx = idx
+                elif type(component).__name__ == "ResBlock" and res_idx < 0:
+                    res_idx = idx
+            # if SpatialTransformer exists, inject right after
+            if st_idx >= 0:
+                #logger.info(f"ADXL: injecting after ST({st_idx})")
+                unet_blocks[unet_idx].insert(st_idx+1, mm_blocks[mm_blk_idx].motion_modules[mm_vtm_idx])
+                injection_count += 1
+            # otherwise, if only ResBlock exists, inject right after
+            elif res_idx >= 0:
+                #logger.info(f"ADXL: injecting after Res({res_idx})")
+                unet_blocks[unet_idx].insert(res_idx+1, mm_blocks[mm_blk_idx].motion_modules[mm_vtm_idx])
+                injection_count += 1
+            # increment unet_idx
+            unet_idx += 1
+
+    def eject(self, model: ModelPatcher):
+        unet: openaimodel.UNetModel = model.model.diffusion_model
+        # remove from input blocks (downblocks)
+        self._eject(unet.input_blocks)
+        # remove from output blocks (upblocks)
+        self._eject(unet.output_blocks)
+        # remove from middle block (encapsulate in list to make compatible)
+        self._eject([unet.middle_block])
+        del unet
+
+    def _eject(self, unet_blocks: nn.ModuleList):
+        # eject all VanillaTemporalModule objects from all blocks
+        for block in unet_blocks:
+            idx_to_pop = []
+            for idx, component in enumerate(block):
+                if type(component) == VanillaTemporalModule:
+                    idx_to_pop.append(idx)
+            # pop in backwards order, as to not disturb what the indeces refer to
+            for idx in sorted(idx_to_pop, reverse=True):
+                block.pop(idx)
+
     def set_video_length(self, video_length: int, full_length: int):
         self.AD_video_length = video_length
         for block in self.down_blocks:
@@ -116,6 +274,17 @@ class AnimDiffMotionWrapper(GenericMotionWrapper):
         if self.mid_block is not None:
             self.mid_block.reset_temp_vars()
 
+    def reset_scale_multiplier(self):
+        self.set_scale_multiplier(None)
+
+    def reset_sub_idxs(self):
+        self.set_sub_idxs(None)
+
+    def reset(self):
+        self.reset_sub_idxs()
+        self.reset_scale_multiplier()
+        self.reset_temp_vars()
+
 
 class MotionModule(nn.Module):
     def __init__(self, in_channels, temporal_position_encoding_max_len=24, block_type: str=BlockType.DOWN):
@@ -125,7 +294,7 @@ class MotionModule(nn.Module):
             self.motion_modules: Iterable[VanillaTemporalModule] = nn.ModuleList([get_motion_module(in_channels, temporal_position_encoding_max_len)])
         else:
             # down blocks contain two VanillaTemporalModules
-            self.motion_modules = nn.ModuleList(
+            self.motion_modules: Iterable[VanillaTemporalModule] = nn.ModuleList(
                 [
                     get_motion_module(in_channels, temporal_position_encoding_max_len),
                     get_motion_module(in_channels, temporal_position_encoding_max_len)
@@ -292,15 +461,14 @@ class TemporalTransformer3DModel(nn.Module, TemporalTransformerGeneric):
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
         batch, channel, height, width = hidden_states.shape
         residual = hidden_states
-
         scale_mask = self.get_scale_mask(hidden_states)
-
-        hidden_states = self.norm(hidden_states)
+        # add some casts for fp8 purposes - does not affect speed otherwise
+        hidden_states = self.norm(hidden_states).to(hidden_states.dtype)
         inner_dim = hidden_states.shape[1]
         hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(
             batch, height * width, inner_dim
         )
-        hidden_states = self.proj_in(hidden_states)
+        hidden_states = self.proj_in(hidden_states).to(hidden_states.dtype)
 
         # Transformer Blocks
         for block in self.transformer_blocks:
@@ -393,7 +561,7 @@ class TemporalTransformerBlock(nn.Module):
         scale_mask=None
     ):
         for attention_block, norm in zip(self.attention_blocks, self.norms):
-            norm_hidden_states = norm(hidden_states)
+            norm_hidden_states = norm(hidden_states).to(hidden_states.dtype)
             hidden_states = (
                 attention_block(
                     norm_hidden_states,
@@ -494,7 +662,7 @@ class VersatileAttention(CrossAttentionMM):
         )
 
         if self.pos_encoder is not None:
-           hidden_states = self.pos_encoder(hidden_states)
+           hidden_states = self.pos_encoder(hidden_states).to(hidden_states.dtype)
 
         encoder_hidden_states = (
             repeat(encoder_hidden_states, "b n c -> (b d) n c", d=d)

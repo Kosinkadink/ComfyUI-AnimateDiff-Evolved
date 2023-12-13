@@ -4,9 +4,10 @@ import folder_paths
 import nodes as comfy_nodes
 from comfy.model_patcher import ModelPatcher
 from comfy.sd import load_checkpoint_guess_config
+
 from .logger import logger
 from .model_utils import IsChangedHelper, BetaSchedules
-from .motion_module import eject_params_from_model
+from .model_injection import get_vanilla_model_patcher
 
 
 class AnimateDiffUnload:
@@ -23,9 +24,9 @@ class AnimateDiffUnload:
 
     def unload_motion_modules(self, model: ModelPatcher):
         # return model clone with ejected params
-        model = eject_params_from_model(model)
-
-        return (model,)
+        #model = eject_params_from_model(model)
+        model = get_vanilla_model_patcher(model)
+        return (model.clone(),)
 
 
 class CheckpointLoaderSimpleWithNoiseSelect:
@@ -34,7 +35,7 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         return {
             "required": {
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
-                "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.LINEAR), )
+                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.LINEAR}, )
             },
         }
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")
@@ -46,7 +47,9 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
         out = load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
         # register chosen beta schedule on model - convert to beta_schedule name recognized by ComfyUI
-        out[0].model.model_sampling = BetaSchedules.to_model_sampling(beta_schedule, out[0])
+        new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, out[0])
+        if new_model_sampling is not None:
+            out[0].model.model_sampling = new_model_sampling
         return out
 
 

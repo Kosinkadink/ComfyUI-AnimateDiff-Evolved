@@ -1,7 +1,6 @@
-
 import torch
 
-from .motion_module import MotionModelSettings
+from .model_injection import MotionModelSettings
 
 
 class AnimateDiffModelSettingsSimple:

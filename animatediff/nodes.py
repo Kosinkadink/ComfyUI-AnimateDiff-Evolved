@@ -1,3 +1,4 @@
+from pathlib import Path
 import torch
 
 import comfy.sample as comfy_sample
@@ -5,19 +6,19 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .logger import logger
-from .model_utils import get_available_motion_loras, get_available_motion_models, BetaSchedules
+from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .motion_utils import NoiseType
-from .motion_lora import MotionLoRAInfo, MotionLoRAList
-from .motion_module import InjectionParams, MotionModelSettings
-from .motion_module import inject_params_into_model, load_motion_lora, load_motion_module
-from .sampling import animatediff_sample_factory
+from .motion_lora import MotionLoraInfo, MotionLoraList
+from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelSettings, load_motion_module
+from .sampling import motion_sample_factory
 
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
 from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
 
 # override comfy_sample.sample with animatediff-support version
-comfy_sample.sample = animatediff_sample_factory(comfy_sample.sample)
+comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
+comfy_sample.sample_custom = motion_sample_factory(comfy_sample.sample_custom)
 
 
 class AnimateDiffModelSettings:
@@ -47,8 +48,7 @@ class AnimateDiffModelSettings:
         return (motion_model_settings,)
 
 
-
-class AnimateDiffLoRALoader:
+class AnimateDiffLoraLoader:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -65,14 +65,17 @@ class AnimateDiffLoRALoader:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "load_motion_lora"
 
-    def load_motion_lora(self, lora_name: str, strength: float, prev_motion_lora: MotionLoRAList=None):
+    def load_motion_lora(self, lora_name: str, strength: float, prev_motion_lora: MotionLoraList=None):
         if prev_motion_lora is None:
-            prev_motion_lora = MotionLoRAList()
+            prev_motion_lora = MotionLoraList()
         else:
             prev_motion_lora = prev_motion_lora.clone()
-        # load lora
-        lora = load_motion_lora(lora_name)
-        lora_info = MotionLoRAInfo(name=lora_name, strength=strength, hash=lora.hash)
+        # check if motion lora with name exists
+        lora_path = get_motion_lora_path(lora_name)
+        if not Path(lora_path).is_file():
+            raise FileNotFoundError(f"Motion lora with name '{lora_name}' not found.")
+        # create motion lora info to be loaded in AnimateDiff Loader
+        lora_info = MotionLoraInfo(name=lora_name, strength=strength)
         prev_motion_lora.add_lora(lora_info)
 
         return (prev_motion_lora,)
@@ -85,7 +88,7 @@ class AnimateDiffLoaderWithContext:
             "required": {
                 "model": ("MODEL",),
                 "model_name": (get_available_motion_models(),),
-                "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
+                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.SQRT_LINEAR}),
                 #"apply_mm_groupnorm_hack": ("BOOLEAN", {"default": True}),
             },
             "optional": {
@@ -93,7 +96,7 @@ class AnimateDiffLoaderWithContext:
                 "motion_lora": ("MOTION_LORA",),
                 "motion_model_settings": ("MOTION_MODEL_SETTINGS",),
                 "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
-                "apply_v2_models_properly": ("BOOLEAN", {"default": False}),
+                "apply_v2_models_properly": ("BOOLEAN", {"default": True}),
             }
         }
     
@@ -105,25 +108,24 @@ class AnimateDiffLoaderWithContext:
     def load_mm_and_inject_params(self,
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
-        context_options: ContextOptions=None, motion_lora: MotionLoRAList=None, motion_model_settings: MotionModelSettings=None,
+        context_options: ContextOptions=None, motion_lora: MotionLoraList=None, motion_model_settings: MotionModelSettings=None,
         motion_scale: float=1.0, apply_v2_models_properly: bool=False,
     ):
         # load motion module
-        mm = load_motion_module(model_name, motion_lora, model=model, motion_model_settings=motion_model_settings)
+        motion_model = load_motion_module(model_name, model, motion_lora=motion_lora, motion_model_settings=motion_model_settings)
         # set injection params
-        injection_params = InjectionParams(
+        params = InjectionParams(
                 video_length=None,
                 unlimited_area_hack=False,
                 apply_mm_groupnorm_hack=True,
                 beta_schedule=beta_schedule,
-                injector=mm.injector_version,
                 model_name=model_name,
                 apply_v2_models_properly=apply_v2_models_properly,
         )
         if context_options:
             # set context settings TODO: make this dynamic for future purposes
             if type(context_options) == UniformContextOptions:
-                injection_params.set_context(
+                params.set_context(
                         context_length=context_options.context_length,
                         context_stride=context_options.context_stride,
                         context_overlap=context_options.context_overlap,
@@ -131,17 +133,35 @@ class AnimateDiffLoaderWithContext:
                         closed_loop=context_options.closed_loop,
                         sync_context_to_pe=context_options.sync_context_to_pe,
                 )
-                injection_params.noise_type = context_options.noise_type
+                params.noise_type = context_options.noise_type
         if motion_lora:
-            injection_params.set_loras(motion_lora)
+            params.set_loras(motion_lora)
         # set motion_scale and motion_model_settings
         if not motion_model_settings:
             motion_model_settings = MotionModelSettings()
         motion_model_settings.attn_scale = motion_scale
-        injection_params.set_motion_model_settings(motion_model_settings)
-        # inject for use in sampling code
-        model = inject_params_into_model(model, injection_params)
+        params.set_motion_model_settings(motion_model_settings)
 
+        # apply scale multiplier, if needed
+        motion_model.model.set_scale_multiplier(params.motion_model_settings.attn_scale)
+
+        # apply scale mask, if needed
+        motion_model.model.set_masks(
+            masks=params.motion_model_settings.mask_attn_scale,
+            min_val=params.motion_model_settings.mask_attn_scale_min,
+            max_val=params.motion_model_settings.mask_attn_scale_max
+            )
+
+        model = ModelPatcherAndInjector(model)
+        model.motion_model = motion_model
+        model.motion_injection_params = params
+
+        # save model sampling from BetaSchedule as object patch
+        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+        if new_model_sampling is not None:
+            model.add_object_patch("model_sampling", new_model_sampling)
+
+        del motion_model
         return (model,)
 
 
@@ -212,7 +232,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffUniformContextOptionsExperimental": AnimateDiffUniformContextOptionsExperimental,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
-    "ADE_AnimateDiffLoRALoader": AnimateDiffLoRALoader,
+    "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
     "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
     # Experimental Nodes
     "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,

@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from typing import Union
-from einops import rearrange
 
 import torch
 import torch.nn.functional as F
@@ -12,7 +11,8 @@ from comfy.cli_args import args
 from comfy.ldm.modules.attention import attention_basic, attention_pytorch, attention_split, attention_sub_quad, default
 from comfy.controlnet import broadcast_image_to
 from comfy.utils import repeat_to_batch_size
-from .motion_lora import MotionLoRAInfo
+
+from .motion_lora import MotionLoraInfo
 from .logger import logger
 
 
@@ -31,8 +31,10 @@ else:
         optimized_attention_mm = attention_sub_quad
 
 
+# maintain backwards compatibility with the comfy.ops hasattr check (TODO: remove once a non-backwards compatible change happens)
 class CrossAttentionMM(nn.Module):
-    def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0., dtype=None, device=None, operations=comfy.ops):
+    def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0., dtype=None, device=None,
+                 operations=comfy.ops.disable_weight_init if hasattr(comfy.ops, "disable_weight_init") else comfy.ops):
         super().__init__()
         inner_dim = dim_head * heads
         context_dim = default(context_dim, query_dim)
@@ -137,14 +139,8 @@ class BlockType:
     MID = "mid"
 
 
-class InjectorVersion:
-    V1_V2 = "v1/v2"
-    ADXL_V1_V2 = "ADXL v1/v2"
-    HOTSHOTXL_V1 = "HSXL v1"
-
-
 class GenericMotionWrapper(nn.Module, ABC):
-    def __init__(self, mm_hash: str, mm_name: str, loras: list[MotionLoRAInfo]):
+    def __init__(self, mm_hash: str, mm_name: str, loras: list[MotionLoraInfo]):
         super().__init__()
         self.down_blocks: nn.ModuleList = None
         self.up_blocks: nn.ModuleList = None

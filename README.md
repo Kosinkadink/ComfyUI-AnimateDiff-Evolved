@@ -31,6 +31,17 @@ Examples shown here will also often make use of these helpful sets of nodes:
    - Place Motion LoRAs in ```ComfyUI/custom_nodes/ComfyUI-AnimateDiff-Evolved/motion_lora```. They can be renamed if you want.
 5. Get creative! If it works for normal image generation, it (probably) will work for AnimateDiff generations. Latent upscales? Go for it. ControlNets, one or more stacked? You betcha. Masking the conditioning of ControlNets to only affect part of the animation? Sure. Try stuff and you will be surprised by what you can do. Samples with workflows are included below.
 
+# Notable Updates
+### (December 6th, 2023) Massive rewrite of code 
+
+I just released a massive rework of the code that I've been working on the past week. Changes are almost all under the hood, and everything should still look the same generation-wise and performance-wise. ComfyUI design patterns and model management is used where possible now. If you experience any issues you did not have before, please report them so I can fix them quickly!
+Notable changes:
+- Slightly lower VRAM usage (0.3-0.8GB) depending on workflow
+- Motion model caching - speeds up consecutive sampling
+- fp8 support (by casting in places that need to be casted)
+- Model patches (like LCM) can be applied properly (no guarantees on improvements in generations though, might take some investigation to figure out why v2 models look weird with LCM)
+- dtype and device mismatch edge cases should now be fixed
+- Additional 'use existing' beta schedule to allow any ModelSampling nodes to take effect - will use beta schedule as the ModelSampling patch overwise
 
 # Features:
 - Compatible with a variety of samplers, vanilla KSampler nodes and KSampler (Effiecient) nodes.
@@ -42,6 +53,7 @@ Examples shown here will also often make use of these helpful sets of nodes:
 - Motion scaling and other motion model settings to influence motion amount **(introduced 10/30/23)**
 - Motion scaling masks in Motion Model Settings, allowing to choose how much motion to apply per frame or per area of each frame **(introduced 11/08/23)**. Can be used alongside inpainting (gradient masks supported for AnimateDiff masking)
 - AnimateDiff-SDXL support, with corresponding model. **(introduced 11/10/23)**. Currently, a beta version is out, which you can find info about at [AnimateDiff](https://github.com/guoyww/AnimateDiff/). NOTE: You will need to use ```linear (AnimateDiff-SDXL)``` beta_schedule. Other than that, same rules of thumb apply to AnimateDiff-SDXL as AnimateDiff.
+- fp8 support: requires newest ComfyUI and torch >= 2.1 **(introduced 12/06/23)**.
 
 # Upcoming features:
 - Alternate context schedulers and context types (in progress)
