@@ -14,7 +14,7 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import ContextSchedules
 from .logger import logger
-from .model_utils import get_available_motion_models, BetaSchedules
+from .model_utils import Folders, BetaSchedules, get_available_motion_models
 from .model_injection import ModelPatcherAndInjector, InjectionParams, load_motion_module
 
 
@@ -137,7 +137,7 @@ class AnimateDiffCombine_Deprecated:
         ffmpeg_path = shutil.which("ffmpeg")
         #Hide ffmpeg formats if ffmpeg isn't available
         if ffmpeg_path is not None:
-            ffmpeg_formats = ["video/"+x[:-5] for x in folder_paths.get_filename_list("video_formats")]
+            ffmpeg_formats = ["video/"+x[:-5] for x in folder_paths.get_filename_list(Folders.VIDEO_FORMATS)]
         else:
             ffmpeg_formats = []
             if not s.ffmpeg_warning_already_shown:
