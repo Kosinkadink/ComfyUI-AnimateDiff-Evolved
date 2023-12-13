@@ -44,8 +44,6 @@ class BetaSchedules:
         SQRT_LINEAR: "sqrt_linear",
         LINEAR_ADXL: "linear", # also linear, but has different linear_end (0.020)
         LINEAR: "linear",
-        USE_PATCHED: None,
-        USE_ORIGINAL: None,
         SQRT: "sqrt",
         COSINE: "cosine",
         SQUAREDCOS_CAP_V2: "squaredcos_cap_v2",
