@@ -90,6 +90,7 @@ class BetaScheduleCache:
 class Folders:
     ANIMATEDIFF_MODELS = "AnimateDiffEvolved_Models"
     MOTION_LORA = "AnimateDiffMotion_LoRA"
+    VIDEO_FORMATS = "AnimateDiffEvolved_video_formats"
 
 
 # register motion models folder(s)
@@ -110,9 +111,9 @@ folder_paths.folder_names_and_paths[Folders.MOTION_LORA] = (
 
 
 #Register video_formats folder
-folder_paths.folder_names_and_paths["video_formats"] = (
+folder_paths.folder_names_and_paths[Folders.VIDEO_FORMATS] = (
     [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "video_formats"),
+        str(Path(__file__).parent.parent / "video_formats")
     ],
     [".json"]
 )
