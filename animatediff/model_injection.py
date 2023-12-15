@@ -139,6 +139,13 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
     logger.info(f"Loading motion LoRA {lora.name}")
     state_dict = comfy.utils.load_torch_file(lora_path)
 
+    # remove all non-temporal keys (in case model has extra stuff in it)
+    for key in list(state_dict.keys()):
+        if "temporal" not in key:
+            del state_dict[key]
+    if len(state_dict) == 0:
+        raise ValueError(f"'{lora.name}' contains no temporal keys; it is not a valid motion LoRA!")
+
     model_has_midblock = motion_model.model.mid_block != None
     lora_has_midblock = has_mid_block(state_dict)
     logger.info(f"Applying a {get_version(lora_has_midblock)} LoRA ({lora.name}) to a { motion_model.model.mm_info.mm_version} motion model.")
