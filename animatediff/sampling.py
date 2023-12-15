@@ -15,7 +15,8 @@ import comfy.utils
 from comfy.controlnet import ControlBase
 
 from .context import get_context_scheduler
-from .motion_utils import GroupNormAD, NoiseType
+from .sample_settings import SeedNoiseType
+from .motion_utils import GroupNormAD
 from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
@@ -36,14 +37,6 @@ class AnimateDiffHelper_GlobalState:
         self.last_step: int = 0
         self.current_step: int = 0
         self.total_steps: int = 0
-        self.video_length: int  = 0
-        self.context_frames: int = None
-        self.context_stride: int = None
-        self.context_overlap: int = None
-        self.context_schedule: str = None
-        self.closed_loop: bool = False
-        self.sync_context_to_pe: bool = False
-        self.sub_idxs: list = None
         if self.motion_model is not None:
             del self.motion_model
             self.motion_model = None
@@ -52,26 +45,19 @@ class AnimateDiffHelper_GlobalState:
             self.params = None
     
     def update_with_inject_params(self, params: InjectionParams):
-        self.video_length = params.video_length
-        self.context_frames = params.context_length
-        self.context_stride = params.context_stride
-        self.context_overlap = params.context_overlap
-        self.context_schedule = params.context_schedule
-        self.closed_loop = params.closed_loop
-        self.sync_context_to_pe = params.sync_context_to_pe
         self.params = params
 
     def is_using_sliding_context(self):
-        return self.context_frames is not None
+        return self.params is not None and self.params.context_length is not None
     
     def create_exposed_params(self):
         # This dict will be exposed to be used by other extensions
         # DO NOT change any of the key names
         # or I will find you 👁.👁
         return {
-            "full_length": self.video_length,
-            "context_length": self.context_frames,
-            "sub_idxs": self.sub_idxs,
+            "full_length": self.params.video_length,
+            "context_length": self.params.context_length,
+            "sub_idxs": self.params.sub_idxs,
         }
 
 ADGS = AnimateDiffHelper_GlobalState()
@@ -260,7 +246,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             seed = kwargs["seed"]
             if not disable_noise:
                 # if context asks for specific noise, do it
-                noise = NoiseType.prepare_noise(params.noise_type, latents=latents, noise=noise, context_length=params.context_length, seed=seed)
+                noise = SeedNoiseType.prepare_noise(params.noise_type, latents=latents, noise=noise, context_length=params.context_length, seed=seed)
 
             # apply params to motion model
             apply_params_to_motion_model(model.motion_model, params)
@@ -533,9 +519,9 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
         # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
         def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
             # get context scheduler
-            context_scheduler = get_context_scheduler(ADGS.context_schedule)
+            context_scheduler = get_context_scheduler(ADGS.params.context_schedule)
             # figure out how input is split
-            axes_factor = x_in.size(0)//ADGS.video_length
+            axes_factor = x_in.size(0)//ADGS.params.video_length
 
             # prepare final cond, uncond, and out_count
             cond_final = torch.zeros_like(x_in)
@@ -546,8 +532,8 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                 if control.previous_controlnet is not None:
                     prepare_control_objects(control.previous_controlnet, full_idxs)
                 control.sub_idxs = full_idxs
-                control.full_latent_length = ADGS.video_length
-                control.context_length = ADGS.context_frames
+                control.full_latent_length = ADGS.params.video_length
+                control.context_length = ADGS.params.context_length
             
             def get_resized_cond(cond_in, full_idxs) -> list:
                 # reuse or resize cond items to match context requirements
@@ -574,7 +560,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                                     prepare_control_objects(control_item, full_idxs)
                                 else:
                                     raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; \
-                                                        use Control objects from Kosinkadink/Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
+                                                        use Control objects from Kosinkadink/ComfyUI-Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
                                 resized_actual_cond[key] = control_item
                                 del control_item
                             elif isinstance(cond_item, dict):
@@ -597,15 +583,14 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                 return resized_cond
 
             # perform calc_cond_uncond_batch per context window
-            for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames, ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
-                ADGS.sub_idxs = ctx_idxs
-                ADGS.params.sub_idxs = ADGS.sub_idxs
-                ADGS.motion_model.model.set_sub_idxs(ADGS.sub_idxs)
+            for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.params.video_length, ADGS.params.context_length, ADGS.params.context_stride, ADGS.params.context_overlap, ADGS.params.closed_loop):
+                ADGS.params.sub_idxs = ctx_idxs
+                ADGS.motion_model.model.set_sub_idxs(ctx_idxs)
                 # account for all portions of input frames
                 full_idxs = []
                 for n in range(axes_factor):
                     for ind in ctx_idxs:
-                        full_idxs.append((ADGS.video_length*n)+ind)
+                        full_idxs.append((ADGS.params.video_length*n)+ind)
                 # get subsections of x, timestep, cond, uncond, cond_concat
                 sub_x = x_in[full_idxs]
                 sub_timestep = timestep[full_idxs]

@@ -3,8 +3,6 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .motion_utils import NoiseType
-
 
 class ContextType:
     UNIFORM_WINDOW = "uniform window"
@@ -27,13 +25,9 @@ class UniformContextOptions(ContextOptions):
         self.context_schedule = context_schedule
         self.closed_loop = closed_loop
         self.sync_context_to_pe = False
-        self.noise_type = NoiseType.DEFAULT
     
     def set_sync_context_to_pe(self, sync_context_to_pe: bool):
         self.sync_context_to_pe = sync_context_to_pe
-    
-    def set_noise_type(self, noise_type: str):
-        self.noise_type = noise_type
 
 
 class ContextSchedules:
