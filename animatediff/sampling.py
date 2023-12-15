@@ -194,10 +194,10 @@ class FunctionInjectionHolder:
         openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
         if params.unlimited_area_hack:
             model.model.memory_required = unlimited_memory_required
-        # only apply groupnorm hack if not [AnimateDiff SD1.5 and v2 and should apply v2 properly]
+        # only apply groupnorm hack if not [v3 or (AnimateDiff SD1.5 and v2 and should apply v2 properly)]
         info: AnimateDiffInfo = model.motion_model.model.mm_info
-        if not (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and \
-                info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_models_properly):
+        if not (info.mm_version == AnimateDiffVersion.V3 or (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and
+                info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_models_properly)):
             torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
             if params.apply_mm_groupnorm_hack:
                 GroupNormAD.forward = groupnorm_mm_factory(params)
