@@ -21,7 +21,7 @@ Examples shown here will also often make use of these helpful sets of nodes:
 
 # How to Use:
 1. Download motion modules. You will need at least 1. Different modules produce different results.
-   - Original models ```mm_sd_v14```, ```mm_sd_v15```, and ```mm_sd_v15_v2```: [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836) | [Baidu NetDisk](https://pan.baidu.com/s/18ZpcSM6poBqxWNHtnyMcxg?pwd=et8y).
+   - Original models ```mm_sd_v14```, ```mm_sd_v15```, ```mm_sd_v15_v2```, ```v3_sd15_mm```: [Google Drive](https://drive.google.com/drive/folders/1EqLC65eR1-W-sGD0Im7fkED6c8GkiNFI) | [HuggingFace](https://huggingface.co/guoyww/animatediff) | [CivitAI](https://civitai.com/models/108836) | [Baidu NetDisk](https://pan.baidu.com/s/18ZpcSM6poBqxWNHtnyMcxg?pwd=et8y).
    - Stabilized finetunes of mm_sd_v14, ```mm-Stabilized_mid``` and ```mm-Stabilized_high```, by **manshoety**: [HuggingFace](https://huggingface.co/manshoety/AD_Stabilized_Motion/tree/main)
    - Finetunes of mm_sd_v15_v2, ```mm-p_0.5.pth``` and ```mm-p_0.75.pth```, by **manshoety**: [HuggingFace](https://huggingface.co/manshoety/beta_testing_models/tree/main)
    - Higher resolution finetune,```temporaldiff-v1-animatediff```  by **CiaraRowles**: [HuggingFace](https://huggingface.co/CiaraRowles/TemporalDiff/tree/main)
@@ -54,6 +54,7 @@ Notable changes:
 - Motion scaling masks in Motion Model Settings, allowing to choose how much motion to apply per frame or per area of each frame **(introduced 11/08/23)**. Can be used alongside inpainting (gradient masks supported for AnimateDiff masking)
 - AnimateDiff-SDXL support, with corresponding model. **(introduced 11/10/23)**. Currently, a beta version is out, which you can find info about at [AnimateDiff](https://github.com/guoyww/AnimateDiff/). NOTE: You will need to use ```linear (AnimateDiff-SDXL)``` beta_schedule. Other than that, same rules of thumb apply to AnimateDiff-SDXL as AnimateDiff.
 - fp8 support: requires newest ComfyUI and torch >= 2.1 **(introduced 12/06/23)**.
+- AnimateDiff v3 motion model support **(introduced 12/15/23)**.
 
 # Upcoming features:
 - Alternate context schedulers and context types (in progress)
