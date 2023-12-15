@@ -30,6 +30,7 @@ class AnimateDiffFormat:
 class AnimateDiffVersion:
     V1 = "v1"
     V2 = "v2"
+    V3 = "v3"
 
 
 class AnimateDiffInfo:
@@ -71,12 +72,12 @@ def has_mid_block(mm_state_dict: dict[str, Tensor]):
     return False
 
 
-def get_position_encoding_max_len(mm_state_dict: dict[str, Tensor], mm_info: AnimateDiffInfo) -> int:
+def get_position_encoding_max_len(mm_state_dict: dict[str, Tensor], mm_name: str) -> int:
     # use pos_encoder.pe entries to determine max length - [1, {max_length}, {320|640|1280}]
     for key in mm_state_dict.keys():
         if key.endswith("pos_encoder.pe"):
             return mm_state_dict[key].size(1) # get middle dim
-    raise MotionCompatibilityError(f"No pos_encoder.pe found in mm_state_dict - {mm_info.mm_name} is not a valid AnimateDiff motion module!")
+    raise MotionCompatibilityError(f"No pos_encoder.pe found in mm_state_dict - {mm_name} is not a valid AnimateDiff motion module!")
 
 
 _regex_hotshotxl_module_num = re.compile(r'temporal_attentions\.(\d+)\.')
@@ -109,6 +110,8 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
     mm_version = AnimateDiffVersion.V1
     if has_mid_block(mm_state_dict):
         mm_version = AnimateDiffVersion.V2
+    elif sd_type==ModelTypeSD.SD1_5 and get_position_encoding_max_len(mm_state_dict, mm_name)==32:
+        mm_version = AnimateDiffVersion.V3
     info = AnimateDiffInfo(sd_type=sd_type, mm_format=mm_format, mm_version=mm_version, mm_name=mm_name)
     # convert to AnimateDiff format, if needed
     if mm_format == AnimateDiffFormat.HOTSHOTXL:
@@ -139,7 +142,7 @@ class AnimateDiffModel(nn.Module):
         self.down_blocks: Iterable[MotionModule] = nn.ModuleList([])
         self.up_blocks: Iterable[MotionModule] = nn.ModuleList([])
         self.mid_block: Union[MotionModule, None] = None
-        self.encoding_max_len = get_position_encoding_max_len(mm_state_dict, mm_info)
+        self.encoding_max_len = get_position_encoding_max_len(mm_state_dict, mm_info.mm_name)
         # SDXL has 3 up/down blocks, SD1.5 has 4 up/down blocks
         if mm_info.sd_type == ModelTypeSD.SDXL:
             layer_channels = (320, 640, 1280)
