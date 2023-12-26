@@ -9,9 +9,10 @@ from .logger import logger
 from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelSettings, load_motion_module
-from .sample_settings import SeedNoiseType
+from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
+from .nodes_sample import SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
 from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
@@ -95,6 +96,7 @@ class AnimateDiffLoaderWithContext:
                 "context_options": ("CONTEXT_OPTIONS",),
                 "motion_lora": ("MOTION_LORA",),
                 "motion_model_settings": ("MOTION_MODEL_SETTINGS",),
+                "sample_settings": ("sample_settings",),
                 "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
                 "apply_v2_models_properly": ("BOOLEAN", {"default": True}),
             }
@@ -109,7 +111,7 @@ class AnimateDiffLoaderWithContext:
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
         context_options: ContextOptions=None, motion_lora: MotionLoraList=None, motion_model_settings: MotionModelSettings=None,
-        motion_scale: float=1.0, apply_v2_models_properly: bool=False,
+        sample_settings: SampleSettings=None, motion_scale: float=1.0, apply_v2_models_properly: bool=False,
     ):
         # load motion module
         motion_model = load_motion_module(model_name, model, motion_lora=motion_lora, motion_model_settings=motion_model_settings)
@@ -133,7 +135,6 @@ class AnimateDiffLoaderWithContext:
                         closed_loop=context_options.closed_loop,
                         sync_context_to_pe=context_options.sync_context_to_pe,
                 )
-                params.noise_type = context_options.noise_type
         if motion_lora:
             params.set_loras(motion_lora)
         # set motion_scale and motion_model_settings
@@ -154,6 +155,7 @@ class AnimateDiffLoaderWithContext:
 
         model = ModelPatcherAndInjector(model)
         model.motion_model = motion_model
+        model.sample_settings = sample_settings if sample_settings is not None else SampleSettings()
         model.motion_injection_params = params
 
         # save model sampling from BetaSchedule as object patch
@@ -195,45 +197,15 @@ class AnimateDiffUniformContextOptions:
         return (context_options,)
 
 
-class AnimateDiffUniformContextOptionsExperimental:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "context_length": ("INT", {"default": 16, "min": 1, "max": 32}), # keep an eye on these max values
-                "context_stride": ("INT", {"default": 1, "min": 1, "max": 32}),  # would need to be updated
-                "context_overlap": ("INT", {"default": 0, "min": 0, "max": 32}), # if new motion modules come out
-                "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
-                "closed_loop": ("BOOLEAN", {"default": False},),
-                "noise_override": (SeedNoiseType.LIST,)
-                #"sync_context_to_pe": ("BOOLEAN", {"default": False},),
-            },
-        }
-    
-    RETURN_TYPES = ("CONTEXT_OPTIONS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓"
-    FUNCTION = "create_options"
-
-    def create_options(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool,
-                       noise_override: str):
-        context_options = UniformContextOptions(
-            context_length=context_length,
-            context_stride=context_stride,
-            context_overlap=context_overlap,
-            context_schedule=context_schedule,
-            closed_loop=closed_loop,
-            )
-        context_options.set_noise_type(noise_override)
-        #context_options.set_sync_context_to_pe(sync_context_to_pe)
-        return (context_options,)
-
-
 NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
-    "ADE_AnimateDiffUniformContextOptionsExperimental": AnimateDiffUniformContextOptionsExperimental,
+    "ADE_AnimateDiffSamplingSettings": SampleSettingsNode,
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
     "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
+    # Noise Layer Nodes
+    "ADE_NoiseLayerAdd": NoiseLayerAddNode,
+    "ADE_NoiseLayerReplace": NoiseLayerReplaceNode,
     # Experimental Nodes
     "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
     "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
@@ -249,10 +221,13 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
-    "ADE_AnimateDiffUniformContextOptionsExperimental": "EXPERIMENTAL Uniform Context Options 🎭🅐🅓",
+    "ADE_AnimateDiffSamplingSettings": "Sample Settings 🎭🅐🅓",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓",
     "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader 🎭🅐🅓",
     "ADE_AnimateDiffModelSettings_Release": "Motion Model Settings 🎭🅐🅓",
+    # Noise Layer Nodes
+    "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
+    "ADE_NoiseLayerReplace": "Noise Layer [Replace] 🎭🅐🅓",
     # Experimental Nodes
     "ADE_AnimateDiffModelSettingsSimple": "EXP Motion Model Settings (Simple) 🎭🅐🅓",
     "ADE_AnimateDiffModelSettings": "EXP Motion Model Settings (Advanced) 🎭🅐🅓",

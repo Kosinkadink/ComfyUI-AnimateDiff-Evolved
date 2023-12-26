@@ -39,7 +39,7 @@ class CheckpointLoaderSimpleWithNoiseSelect:
             },
             "optional": {
                 "use_custom_scale_factor": ("BOOLEAN", {"default": False}),
-                "scale_factor": ("FLOAT", {"default": 0.18215, "min": 0.0, "max": 1.0})
+                "scale_factor": ("FLOAT", {"default": 0.18215, "min": 0.0, "max": 1.0, "step": 0.00001})
             }
         }
     RETURN_TYPES = ("MODEL", "CLIP", "VAE")

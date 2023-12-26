@@ -14,7 +14,7 @@ from .logger import logger
 from .motion_utils import MotionCompatibilityError, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_utils import get_motion_lora_path, get_motion_model_path, get_sd_model_type
-from .sample_settings import SeedNoiseType
+from .sample_settings import SampleSettings, SeedNoiseGeneration
 
 
 # some motion_model casts here might fail if model becomes metatensor or is not castable;
@@ -33,6 +33,7 @@ class ModelPatcherAndInjector(ModelPatcher):
 
         # injection stuff
         self.motion_injection_params: InjectionParams = None
+        self.sample_settings: SampleSettings = SampleSettings()
         self.motion_model: MotionModelPatcher = None
     
     def model_patches_to(self, device):
@@ -76,6 +77,7 @@ class ModelPatcherAndInjector(ModelPatcher):
     def clone(self):
         cloned = ModelPatcherAndInjector(self)
         cloned.motion_model = self.motion_model
+        cloned.sample_settings = self.sample_settings
         cloned.motion_injection_params = self.motion_injection_params
         return cloned
 
@@ -322,7 +324,7 @@ class InjectionParams:
         self.loras: MotionLoraList = None
         self.motion_model_settings = MotionModelSettings()
         self.sampling_settings = None
-        self.noise_type: str = SeedNoiseType.DEFAULT
+        self.noise_type: str = SeedNoiseGeneration.COMFY
         self.sub_idxs = None  # value should NOT be included in clone, so it will auto reset
     
 

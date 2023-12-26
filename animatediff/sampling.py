@@ -15,7 +15,7 @@ import comfy.utils
 from comfy.controlnet import ControlBase
 
 from .context import get_context_scheduler
-from .sample_settings import SeedNoiseType
+from .sample_settings import SeedNoiseGeneration
 from .motion_utils import GroupNormAD
 from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelPatcher
@@ -244,9 +244,12 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # apply custom noise, if needed
             disable_noise = kwargs.get("disable_noise") or False
             seed = kwargs["seed"]
-            if not disable_noise:
-                # if context asks for specific noise, do it
-                noise = SeedNoiseType.prepare_noise(params.noise_type, latents=latents, noise=noise, context_length=params.context_length, seed=seed)
+            
+            # if sampling settings provided, time to get wild with it
+            if model.sample_settings is not None:
+                # if noise is not disabled, do noise stuff
+                if not disable_noise:
+                    noise = model.sample_settings.prepare_noise(seed, latents, noise)
 
             # apply params to motion model
             apply_params_to_motion_model(model.motion_model, params)
