@@ -15,7 +15,7 @@ import comfy.utils
 from comfy.controlnet import ControlBase
 
 from .context import get_context_scheduler
-from .sample_settings import SeedNoiseGeneration
+from .sample_settings import SeedNoiseGeneration, prepare_mask_ad
 from .motion_utils import GroupNormAD
 from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelPatcher
@@ -147,16 +147,6 @@ def get_additional_models_factory(orig_get_additional_models: Callable, motion_m
 ##################################################################################
 
 
-def prepare_mask_ad(noise_mask, shape, device):
-    """ensures noise mask is of proper dimensions"""
-    noise_mask = torch.nn.functional.interpolate(noise_mask.reshape((-1, 1, noise_mask.shape[-2], noise_mask.shape[-1])), size=(shape[2], shape[3]), mode="bilinear")
-    #noise_mask = noise_mask.round()
-    noise_mask = torch.cat([noise_mask] * shape[1], dim=1)
-    noise_mask = comfy.utils.repeat_to_batch_size(noise_mask, shape[0])
-    noise_mask = noise_mask.to(device)
-    return noise_mask
-
-
 def apply_params_to_motion_model(motion_model: MotionModelPatcher, params: InjectionParams):
     if params.context_length and params.video_length > params.context_length:
         logger.info(f"Sliding context window activated - latents passed in ({params.video_length}) greater than context_length {params.context_length}.")
@@ -244,7 +234,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # apply custom noise, if needed
             disable_noise = kwargs.get("disable_noise") or False
             seed = kwargs["seed"]
-            
+
             # if sampling settings provided, time to get wild with it
             if model.sample_settings is not None:
                 # if noise is not disabled, do noise stuff

@@ -1,6 +1,6 @@
 from torch import Tensor
 
-from .sample_settings import NoiseLayerAdd, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, NoiseNormalize, SeedNoiseGeneration, SampleSettings
+from .sample_settings import NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, NoiseNormalize, SeedNoiseGeneration, SampleSettings
 
 
 class SampleSettingsNode:
@@ -8,10 +8,12 @@ class SampleSettingsNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "seed_gen": (SeedNoiseGeneration.LIST, ),
+                "batch_offset": ("INT", {"default": 0, "min": 0}),
+                "noise_type": (NoiseLayerType.LIST,),
+                "seed_gen": (SeedNoiseGeneration.LIST,),
             },
             "optional": {
-                "noise_layers": ("NOISE_LAYERS", ),
+                "noise_layers": ("NOISE_LAYERS",),
             }
         }
     
@@ -20,8 +22,8 @@ class SampleSettingsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "create_settings"
 
-    def create_settings(self, seed_gen: str, noise_layers: NoiseLayerGroup=None):
-        sampling_settings = SampleSettings(seed_gen=seed_gen, noise_layers=noise_layers)
+    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, noise_layers: NoiseLayerGroup=None):
+        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, noise_layers=noise_layers)
         return (sampling_settings,)
 
 
@@ -30,9 +32,10 @@ class NoiseLayerReplaceNode:
     def INPUT_TYPES(s):
         return {
             "required": {
+                "batch_offset": ("INT", {"default": 0, "min": 0}),
                 "noise_type": (NoiseLayerType.LIST,),
                 "seed_gen_override": (SeedNoiseGeneration.LIST_WITH_OVERRIDE,),
-                "seed_offset": ("INT", {"default": 0}),
+                "seed_offset": ("INT", {"default": 0, "min": -999999999999999}),
             },
             "optional": {
                 "prev_noise_layers": ("NOISE_LAYERS",),
@@ -45,14 +48,14 @@ class NoiseLayerReplaceNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/noise layers"
     FUNCTION = "create_layers"
 
-    def create_layers(self, noise_type: str, seed_gen_override: str, seed_offset: int,
+    def create_layers(self, batch_offset: int, noise_type: str, seed_gen_override: str, seed_offset: int,
                       prev_noise_layers: NoiseLayerGroup=None, mask_optional: Tensor=None, seed_override: int=None,):
         # prepare prev_noise_layers
         if prev_noise_layers is None:
             prev_noise_layers = NoiseLayerGroup()
         prev_noise_layers = prev_noise_layers.clone()
         # create layer
-        layer = NoiseLayerReplace(noise_type=noise_type, seed_gen_override=seed_gen_override, seed_offset=seed_offset,
+        layer = NoiseLayerReplace(noise_type=noise_type, batch_offset=batch_offset, seed_gen_override=seed_gen_override, seed_offset=seed_offset,
                                   seed_override=seed_override, mask=mask_optional)
         prev_noise_layers.add_to_start(layer)
         return (prev_noise_layers,)
@@ -63,13 +66,11 @@ class NoiseLayerAddNode:
     def INPUT_TYPES(s):
         return {
             "required": {
+                "batch_offset": ("INT", {"default": 0, "min": 0}),
                 "noise_type": (NoiseLayerType.LIST,),
                 "seed_gen_override": (SeedNoiseGeneration.LIST_WITH_OVERRIDE,),
                 "seed_offset": ("INT", {"default": 0, "min": -999999999999999}),
-                "weighted_average": ("BOOLEAN", {"default": True}),
                 "noise_weight": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 10.0, "step": 0.001}),
-                "balance_multiplier": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
-                "normalize": (NoiseNormalize.LIST,),
             },
             "optional": {
                 "prev_noise_layers": ("NOISE_LAYERS",),
@@ -82,16 +83,54 @@ class NoiseLayerAddNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/noise layers"
     FUNCTION = "create_layers"
 
-    def create_layers(self, noise_type: str, seed_gen_override: str, seed_offset: int,
-                      weighted_average: bool, noise_weight: float, balance_multiplier: float, normalize: str,
+    def create_layers(self, batch_offset: int, noise_type: str, seed_gen_override: str, seed_offset: int,
+                      noise_weight: float,
                       prev_noise_layers: NoiseLayerGroup=None, mask_optional: Tensor=None, seed_override: int=None,):
         # prepare prev_noise_layers
         if prev_noise_layers is None:
             prev_noise_layers = NoiseLayerGroup()
         prev_noise_layers = prev_noise_layers.clone()
         # create layer
-        layer = NoiseLayerAdd(noise_type=noise_type, seed_gen_override=seed_gen_override, seed_offset=seed_offset,
+        layer = NoiseLayerAdd(noise_type=noise_type, batch_offset=batch_offset, seed_gen_override=seed_gen_override, seed_offset=seed_offset,
                               seed_override=seed_override, mask=mask_optional,
-                              noise_weight=noise_weight, balance_multiplier=balance_multiplier, weighted_average=weighted_average, normalize=normalize)
+                              noise_weight=noise_weight)
+        prev_noise_layers.add_to_start(layer)
+        return (prev_noise_layers,)
+
+
+class NoiseLayerAddWeightedNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "batch_offset": ("INT", {"default": 0, "min": 0}),
+                "noise_type": (NoiseLayerType.LIST,),
+                "seed_gen_override": (SeedNoiseGeneration.LIST_WITH_OVERRIDE,),
+                "seed_offset": ("INT", {"default": 0, "min": -999999999999999}),
+                "noise_weight": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 10.0, "step": 0.001}),
+                "balance_multiplier": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
+            },
+            "optional": {
+                "prev_noise_layers": ("NOISE_LAYERS",),
+                "mask_optional": ("MASK",),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
+            }
+        }
+    
+    RETURN_TYPES = ("NOISE_LAYERS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/noise layers"
+    FUNCTION = "create_layers"
+
+    def create_layers(self, batch_offset: int, noise_type: str, seed_gen_override: str, seed_offset: int,
+                      noise_weight: float, balance_multiplier: float,
+                      prev_noise_layers: NoiseLayerGroup=None, mask_optional: Tensor=None, seed_override: int=None,):
+        # prepare prev_noise_layers
+        if prev_noise_layers is None:
+            prev_noise_layers = NoiseLayerGroup()
+        prev_noise_layers = prev_noise_layers.clone()
+        # create layer
+        layer = NoiseLayerAddWeighted(noise_type=noise_type, batch_offset=batch_offset, seed_gen_override=seed_gen_override, seed_offset=seed_offset,
+                              seed_override=seed_override, mask=mask_optional,
+                              noise_weight=noise_weight, balance_multiplier=balance_multiplier)
         prev_noise_layers.add_to_start(layer)
         return (prev_noise_layers,)

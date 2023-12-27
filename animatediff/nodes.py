@@ -12,7 +12,7 @@ from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionMod
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
-from .nodes_sample import SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode
+from .nodes_sample import NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
 from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
@@ -205,6 +205,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
+    "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
     "ADE_NoiseLayerReplace": NoiseLayerReplaceNode,
     # Experimental Nodes
     "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
@@ -227,6 +228,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffModelSettings_Release": "Motion Model Settings 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
+    "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
     "ADE_NoiseLayerReplace": "Noise Layer [Replace] 🎭🅐🅓",
     # Experimental Nodes
     "ADE_AnimateDiffModelSettingsSimple": "EXP Motion Model Settings (Simple) 🎭🅐🅓",
