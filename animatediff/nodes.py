@@ -12,14 +12,14 @@ from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionMod
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
-from .nodes_sample import NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode
+from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
 from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
 
 # override comfy_sample.sample with animatediff-support version
 comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
-comfy_sample.sample_custom = motion_sample_factory(comfy_sample.sample_custom)
+comfy_sample.sample_custom = motion_sample_factory(comfy_sample.sample_custom, is_custom=True)
 
 
 class AnimateDiffModelSettings:
@@ -207,6 +207,9 @@ NODE_CLASS_MAPPINGS = {
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
     "ADE_NoiseLayerReplace": NoiseLayerReplaceNode,
+    # Iteration Opts
+    "ADE_IterationOptsDefault": IterationOptionsNode,
+    "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
     # Experimental Nodes
     "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
     "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
@@ -230,6 +233,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
     "ADE_NoiseLayerReplace": "Noise Layer [Replace] 🎭🅐🅓",
+    # Iteration Opts
+    "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
+    "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",
     # Experimental Nodes
     "ADE_AnimateDiffModelSettingsSimple": "EXP Motion Model Settings (Simple) 🎭🅐🅓",
     "ADE_AnimateDiffModelSettings": "EXP Motion Model Settings (Advanced) 🎭🅐🅓",

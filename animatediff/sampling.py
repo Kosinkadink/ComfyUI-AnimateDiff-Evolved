@@ -9,13 +9,13 @@ from einops import rearrange
 import comfy.ldm.modules.attention as attention
 from comfy.ldm.modules.diffusionmodules import openaimodel
 import comfy.model_management as model_management
-import comfy.samplers as comfy_samplers
-import comfy.sample as comfy_sample
+import comfy.samplers
+import comfy.sample
 import comfy.utils
 from comfy.controlnet import ControlBase
 
 from .context import get_context_scheduler
-from .sample_settings import SeedNoiseGeneration, prepare_mask_ad
+from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
 from .motion_utils import GroupNormAD
 from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelPatcher
@@ -177,9 +177,9 @@ class FunctionInjectionHolder:
         self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnormad_forward = GroupNormAD.forward
-        self.orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
-        self.orig_prepare_mask = comfy_sample.prepare_mask
-        self.orig_get_additional_models = comfy_sample.get_additional_models
+        self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
+        self.orig_prepare_mask = comfy.sample.prepare_mask
+        self.orig_get_additional_models = comfy.sample.get_additional_models
         # Inject Functions
         openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
         if params.unlimited_area_hack:
@@ -191,9 +191,9 @@ class FunctionInjectionHolder:
             torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
             if params.apply_mm_groupnorm_hack:
                 GroupNormAD.forward = groupnorm_mm_factory(params)
-        comfy_samplers.sampling_function = sliding_sampling_function
-        comfy_sample.prepare_mask = prepare_mask_ad
-        comfy_sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_model)
+        comfy.samplers.sampling_function = sliding_sampling_function
+        comfy.sample.prepare_mask = prepare_mask_ad
+        comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_model)
         del info
 
     def restore_functions(self, model: ModelPatcherAndInjector):
@@ -203,27 +203,29 @@ class FunctionInjectionHolder:
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             GroupNormAD.forward = self.orig_groupnormad_forward
-            comfy_samplers.sampling_function = self.orig_sampling_function
-            comfy_sample.prepare_mask = self.orig_prepare_mask
-            comfy_sample.get_additional_models = self.orig_get_additional_models
+            comfy.samplers.sampling_function = self.orig_sampling_function
+            comfy.sample.prepare_mask = self.orig_prepare_mask
+            comfy.sample.get_additional_models = self.orig_get_additional_models
         except AttributeError:
             logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
                          "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
 
 
-def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
+def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) -> Callable:
     def motion_sample(model: ModelPatcherAndInjector, noise: Tensor, *args, **kwargs):
         # check if model is intended for injecting
         if type(model) != ModelPatcherAndInjector:
             return orig_comfy_sample(model, noise, *args, **kwargs)
         # otherwise, injection time
         latents = None
+        cached_latents = None
+        cached_noise = None
         function_injections = FunctionInjectionHolder()
         try:
             # clone params from model
             params = model.motion_injection_params.clone()
             # get amount of latents passed in, and store in params
-            latents = args[-1]
+            latents: Tensor = args[-1]
             params.video_length = latents.size(0)
             params.full_length = latents.size(0)
             # reset global state
@@ -244,12 +246,7 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # apply params to motion model
             apply_params_to_motion_model(model.motion_model, params)
 
-            # handle GLOBALSTATE vars and step tally
-            ADGS.update_with_inject_params(params)
-            ADGS.start_step = kwargs.get("start_step") or 0
-            ADGS.current_step = ADGS.start_step
-            ADGS.last_step = kwargs.get("last_step") or 0
-
+            # callback setup
             original_callback = kwargs.get("callback", None)
             def ad_callback(step, x0, x, total_steps):
                 if original_callback is not None:
@@ -259,11 +256,50 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             kwargs["callback"] = ad_callback
             ADGS.motion_model = model.motion_model
 
-            model.motion_model.pre_run()
-            return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
+            iter_opts = IterationOptions()
+            if model.sample_settings is not None:
+                iter_opts = model.sample_settings.iter_opts
+            iter_opts.initialize(latents)
+            # cache initial noise and latents, if needed
+            if iter_opts.cache_init_latents:
+                cached_latents = latents.clone()
+            if iter_opts.cache_init_noise:
+                cached_noise = noise.clone()
+            # prepare iter opts preprocess kwargs, if needed
+            iter_kwargs = {}
+            if iter_opts.need_sampler:
+                # -5 for sampler_name (not custom) and sampler (custom)
+                if is_custom:
+                    iter_kwargs[IterationOptions.SAMPLER] = args[-5]
+                else:
+                    iter_kwargs[IterationOptions.SAMPLER] = comfy.samplers.KSampler(
+                        model.model, steps=args[-7],
+                        device=model.current_device, sampler=args[-5],
+                        scheduler=args[-4], denoise=kwargs["denoise"],
+                        model_options=model.model_options)
+
+            args = list(args)
+            for curr_i in range(iter_opts.iterations):
+                # handle GLOBALSTATE vars and step tally
+                ADGS.update_with_inject_params(params)
+                ADGS.start_step = kwargs.get("start_step") or 0
+                ADGS.current_step = ADGS.start_step
+                ADGS.last_step = kwargs.get("last_step") or 0
+                if iter_opts.iterations > 1:
+                    logger.info(f"Iteration {curr_i+1}/{iter_opts.iterations}")
+                # perform any iter_opts preprocessing on latents
+                latents, noise = iter_opts.preprocess_latents(curr_i=curr_i, model=model, latents=latents, noise=noise,
+                                                              cached_latents=cached_latents, cached_noise=cached_noise)
+                args[-1] = latents
+
+                model.motion_model.pre_run()
+                latents = wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
+            return latents
         finally:
             del latents
             del noise
+            del cached_latents
+            del cached_noise
             # reset global state
             ADGS.reset()
             # restore injected functions

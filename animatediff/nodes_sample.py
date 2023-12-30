@@ -1,6 +1,7 @@
 from torch import Tensor
 
-from .sample_settings import NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, NoiseNormalize, SeedNoiseGeneration, SampleSettings
+from .freeinit import FreeInitFilter
+from .sample_settings import FreeInitOptions, IterationOptions, NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, NoiseNormalize, SeedNoiseGeneration, SampleSettings
 
 
 class SampleSettingsNode:
@@ -14,6 +15,7 @@ class SampleSettingsNode:
             },
             "optional": {
                 "noise_layers": ("NOISE_LAYERS",),
+                "iter_opts": ("ITER_OPTS",),
             }
         }
     
@@ -22,8 +24,8 @@ class SampleSettingsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "create_settings"
 
-    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, noise_layers: NoiseLayerGroup=None):
-        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, noise_layers=noise_layers)
+    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, noise_layers: NoiseLayerGroup=None, iter_opts: IterationOptions=None):
+        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, noise_layers=noise_layers, iter_opts=iter_opts)
         return (sampling_settings,)
 
 
@@ -134,3 +136,47 @@ class NoiseLayerAddWeightedNode:
                               noise_weight=noise_weight, balance_multiplier=balance_multiplier)
         prev_noise_layers.add_to_start(layer)
         return (prev_noise_layers,)
+
+
+class IterationOptionsNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "iterations": ("INT", {"default": 1, "min": 1}),
+            }
+        }
+    
+    RETURN_TYPES = ("ITER_OPTS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/iter opts"
+    FUNCTION = "create_iter_opts"
+
+    def create_iter_opts(self, iterations: int):
+        iter_opts = IterationOptions(iterations=iterations)
+        return (iter_opts,)
+
+
+class FreeInitOptionsNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "iterations": ("INT", {"default": 2, "min": 1}),
+                "filter": (FreeInitFilter.LIST,),
+                "d_s": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "d_t": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "n_butterworth": ("INT", {"default": 4, "min": 1, "max": 100},),
+                "sigma_step": ("INT", {"default": 999, "min": 1, "max": 999}),
+                "apply_to_1st_iter": ("BOOLEAN", {"default": False}),
+            }
+        }
+    
+    RETURN_TYPES = ("ITER_OPTS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/iter opts"
+    FUNCTION = "create_iter_opts"
+
+    def create_iter_opts(self, iterations: int, filter: str, d_s: float, d_t: float, n_butterworth: int,
+                         sigma_step: int, apply_to_1st_iter: bool):
+        iter_opts = FreeInitOptions(iterations=iterations, step=sigma_step, apply_to_1st_iter=apply_to_1st_iter,
+                                    filter=filter, d_s=d_s, d_t=d_t, n=n_butterworth)
+        return (iter_opts,)
