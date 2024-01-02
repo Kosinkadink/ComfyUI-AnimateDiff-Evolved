@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 import torch
 from torch import Tensor
 
@@ -43,22 +44,29 @@ class NoiseNormalize:
 
 
 class SampleSettings:
-    def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, noise_layers: 'NoiseLayerGroup'=None, iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False):
+    def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None, iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
         self.noise_layers = noise_layers if noise_layers else NoiseLayerGroup()
         self.iteration_opts = iteration_opts if iteration_opts else IterationOptions()
+        self.seed_offset = seed_offset
         self.seed_override = seed_override
         self.negative_cond_flipflop = negative_cond_flipflop
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
             seed = self.seed_override
-        # replace initial noise if not batch_offset 0 or Comfy seed_gen or not NoiseType default
-        if self.batch_offset != 0 or self.noise_type != NoiseLayerType.DEFAULT or self.seed_gen != SeedNoiseGeneration.COMFY or force_create_noise:
-            noise = SeedNoiseGeneration.create_noise(seed=seed+extra_seed_offset, latents=latents, existing_seed_gen=self.seed_gen, seed_gen=self.seed_gen,
-                                                     noise_type=self.noise_type, batch_offset=self.batch_offset, extra_args=extra_args)
+        # if seed is iterable, attempt to do per-latent noises
+        if isinstance(seed, Iterable):
+            noise = SeedNoiseGeneration.create_noise_individual_seeds(seeds=seed, latents=latents, seed_offset=self.seed_offset+extra_seed_offset, extra_args=extra_args)
+            seed = seed[0]+self.seed_offset
+        else:
+            seed += self.seed_offset
+            # replace initial noise if not batch_offset 0 or Comfy seed_gen or not NoiseType default
+            if self.batch_offset != 0 or self.seed_offset != 0 or self.noise_type != NoiseLayerType.DEFAULT or self.seed_gen != SeedNoiseGeneration.COMFY or force_create_noise:
+                noise = SeedNoiseGeneration.create_noise(seed=seed+extra_seed_offset, latents=latents, existing_seed_gen=self.seed_gen, seed_gen=self.seed_gen,
+                                                        noise_type=self.noise_type, batch_offset=self.batch_offset, extra_args=extra_args)
         # apply noise layers
         for noise_layer in self.noise_layers.layers:
             # first, generate new noise matching seed gen override
@@ -83,6 +91,9 @@ class NoiseLayer:
     def create_layer_noise(self, existing_seed_gen: str, seed: int, latents: Tensor, extra_seed_offset=0, extra_args:dict={}) -> Tensor:
         if self.seed_override is not None:
             seed = self.seed_override
+         # if seed is iterable, attempt to do per-latent noises
+        if isinstance(seed, Iterable):
+            return SeedNoiseGeneration.create_noise_individual_seeds(seeds=seed, latents=latents, seed_offset=self.seed_offset+extra_seed_offset, extra_args=extra_args)
         seed += self.seed_offset + extra_seed_offset
         return SeedNoiseGeneration.create_noise(seed=seed, latents=latents, existing_seed_gen=existing_seed_gen, seed_gen=self.seed_gen_override,
                                                 noise_type=self.noise_type, batch_offset=self.batch_offset, extra_args=extra_args)
@@ -163,8 +174,6 @@ class SeedNoiseGeneration:
     LIST = [COMFY, AUTO1111]
     LIST_WITH_OVERRIDE = [USE_EXISTING, COMFY, AUTO1111]
 
-    
-
     @classmethod
     def create_noise(cls, seed: int, latents: Tensor, existing_seed_gen: str=COMFY, seed_gen: str=USE_EXISTING, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}):
         # determine if should use existing type
@@ -224,6 +233,19 @@ class SeedNoiseGeneration:
             return derivative_noise
         return final_noise
     
+    @staticmethod
+    def create_noise_individual_seeds(seeds: list[int], latents: Tensor, seed_offset: int=0, extra_args: dict={}):
+        length = latents.shape[0]
+        if len(seeds) < length:
+            raise ValueError(f"{len(seeds)} seeds in seed_override were provided, but at least {length} are required to work with the current latents.")
+        seeds = seeds[:length]
+        single_shape = (1, latents.shape[1], latents.shape[2], latents.shape[3])
+        all_noises = []
+        for seed in seeds:
+            generator = torch.manual_seed(seed+seed_offset)
+            all_noises.append(torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu"))
+        return torch.cat(all_noises, dim=0)
+
     @staticmethod
     def _create_common_noise(seed: int, latents: Tensor, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}):
         if noise_type == NoiseLayerType.EMPTY:
