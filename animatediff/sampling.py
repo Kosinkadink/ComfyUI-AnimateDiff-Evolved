@@ -259,7 +259,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
 
             iter_opts = IterationOptions()
             if model.sample_settings is not None:
-                iter_opts = model.sample_settings.iter_opts
+                iter_opts = model.sample_settings.iteration_opts
             iter_opts.initialize(latents)
             # cache initial noise and latents, if needed
             if iter_opts.cache_init_latents:

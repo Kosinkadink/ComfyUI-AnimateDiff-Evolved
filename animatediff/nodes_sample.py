@@ -15,7 +15,7 @@ class SampleSettingsNode:
             },
             "optional": {
                 "noise_layers": ("NOISE_LAYERS",),
-                "iter_opts": ("ITER_OPTS",),
+                "iteration_opts": ("ITERATION_OPTS",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             }
         }
@@ -25,8 +25,8 @@ class SampleSettingsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "create_settings"
 
-    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, noise_layers: NoiseLayerGroup=None, iter_opts: IterationOptions=None, seed_override: int=None,):
-        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, noise_layers=noise_layers, iter_opts=iter_opts, seed_override=seed_override)
+    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, noise_layers: NoiseLayerGroup=None, iteration_opts: IterationOptions=None, seed_override: int=None,):
+        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, noise_layers=noise_layers, iteration_opts=iteration_opts, seed_override=seed_override)
         return (sampling_settings,)
 
 
@@ -148,7 +148,7 @@ class IterationOptionsNode:
             }
         }
     
-    RETURN_TYPES = ("ITER_OPTS",)
+    RETURN_TYPES = ("ITERATION_OPTS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/iteration opts"
     FUNCTION = "create_iter_opts"
 
@@ -173,7 +173,7 @@ class FreeInitOptionsNode:
             }
         }
     
-    RETURN_TYPES = ("ITER_OPTS",)
+    RETURN_TYPES = ("ITERATION_OPTS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/iteration opts"
     FUNCTION = "create_iter_opts"
 

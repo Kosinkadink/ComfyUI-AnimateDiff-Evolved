@@ -43,12 +43,12 @@ class NoiseNormalize:
 
 
 class SampleSettings:
-    def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, noise_layers: 'NoiseLayerGroup'=None, iter_opts=None, seed_override:int=None, negative_cond_flipflop=False):
+    def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, noise_layers: 'NoiseLayerGroup'=None, iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
         self.noise_layers = noise_layers if noise_layers else NoiseLayerGroup()
-        self.iter_opts = iter_opts if iter_opts else IterationOptions()
+        self.iteration_opts = iteration_opts if iteration_opts else IterationOptions()
         self.seed_override = seed_override
         self.negative_cond_flipflop = negative_cond_flipflop
     
