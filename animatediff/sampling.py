@@ -237,14 +237,15 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             disable_noise = kwargs.get("disable_noise") or False
             seed = kwargs["seed"]
 
-            # if sampling settings provided, time to get wild with it
-            if model.sample_settings is not None:
-                # if noise is not disabled, do noise stuff
-                if not disable_noise:
-                    noise = model.sample_settings.prepare_noise(seed, latents, noise)
-
             # apply params to motion model
             apply_params_to_motion_model(model.motion_model, params)
+
+            # prepare noise_extra_args for noise generation purposes
+            noise_extra_args = {"disable_noise": disable_noise}
+            params.set_noise_extra_args(noise_extra_args)
+            # if noise is not disabled, do noise stuff
+            if not disable_noise:
+                noise = model.sample_settings.prepare_noise(seed, latents, noise, extra_args=noise_extra_args, force_create_noise=False)
 
             # callback setup
             original_callback = kwargs.get("callback", None)
@@ -289,7 +290,9 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                     logger.info(f"Iteration {curr_i+1}/{iter_opts.iterations}")
                 # perform any iter_opts preprocessing on latents
                 latents, noise = iter_opts.preprocess_latents(curr_i=curr_i, model=model, latents=latents, noise=noise,
-                                                              cached_latents=cached_latents, cached_noise=cached_noise)
+                                                              cached_latents=cached_latents, cached_noise=cached_noise,
+                                                              seed=seed,
+                                                              sample_settings=model.sample_settings, noise_extra_args=noise_extra_args)
                 args[-1] = latents
 
                 model.motion_model.pre_run()

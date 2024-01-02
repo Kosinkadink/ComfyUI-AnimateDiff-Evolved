@@ -16,6 +16,7 @@ class SampleSettingsNode:
             "optional": {
                 "noise_layers": ("NOISE_LAYERS",),
                 "iter_opts": ("ITER_OPTS",),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             }
         }
     
@@ -24,8 +25,8 @@ class SampleSettingsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "create_settings"
 
-    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, noise_layers: NoiseLayerGroup=None, iter_opts: IterationOptions=None):
-        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, noise_layers=noise_layers, iter_opts=iter_opts)
+    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, noise_layers: NoiseLayerGroup=None, iter_opts: IterationOptions=None, seed_override: int=None,):
+        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, noise_layers=noise_layers, iter_opts=iter_opts, seed_override=seed_override)
         return (sampling_settings,)
 
 
@@ -148,7 +149,7 @@ class IterationOptionsNode:
         }
     
     RETURN_TYPES = ("ITER_OPTS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/iter opts"
+    CATEGORY = "Animate Diff 🎭🅐🅓/iteration opts"
     FUNCTION = "create_iter_opts"
 
     def create_iter_opts(self, iterations: int):
@@ -168,15 +169,17 @@ class FreeInitOptionsNode:
                 "n_butterworth": ("INT", {"default": 4, "min": 1, "max": 100},),
                 "sigma_step": ("INT", {"default": 999, "min": 1, "max": 999}),
                 "apply_to_1st_iter": ("BOOLEAN", {"default": False}),
+                "init_type": (FreeInitOptions.LIST,)
             }
         }
     
     RETURN_TYPES = ("ITER_OPTS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/iter opts"
+    CATEGORY = "Animate Diff 🎭🅐🅓/iteration opts"
     FUNCTION = "create_iter_opts"
 
     def create_iter_opts(self, iterations: int, filter: str, d_s: float, d_t: float, n_butterworth: int,
-                         sigma_step: int, apply_to_1st_iter: bool):
+                         sigma_step: int, apply_to_1st_iter: bool, init_type: str):
+        # init_type does nothing for now, not until I add more methods of applying low+high freq noise
         iter_opts = FreeInitOptions(iterations=iterations, step=sigma_step, apply_to_1st_iter=apply_to_1st_iter,
                                     filter=filter, d_s=d_s, d_t=d_t, n=n_butterworth)
         return (iter_opts,)
