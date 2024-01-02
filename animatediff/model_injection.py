@@ -11,9 +11,10 @@ from comfy.model_patcher import ModelPatcher
 
 from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
-from .motion_utils import MotionCompatibilityError, NoiseType, normalize_min_max
+from .motion_utils import MotionCompatibilityError, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_utils import get_motion_lora_path, get_motion_model_path, get_sd_model_type
+from .sample_settings import SampleSettings, SeedNoiseGeneration
 
 
 # some motion_model casts here might fail if model becomes metatensor or is not castable;
@@ -32,8 +33,8 @@ class ModelPatcherAndInjector(ModelPatcher):
 
         # injection stuff
         self.motion_injection_params: InjectionParams = None
+        self.sample_settings: SampleSettings = SampleSettings()
         self.motion_model: MotionModelPatcher = None
-        self.motion_model_sampling = None
     
     def model_patches_to(self, device):
         super().model_patches_to(device)
@@ -76,8 +77,8 @@ class ModelPatcherAndInjector(ModelPatcher):
     def clone(self):
         cloned = ModelPatcherAndInjector(self)
         cloned.motion_model = self.motion_model
+        cloned.sample_settings = self.sample_settings
         cloned.motion_injection_params = self.motion_injection_params
-        cloned.motion_model_sampling = self.motion_model_sampling
         return cloned
 
 
@@ -322,9 +323,12 @@ class InjectionParams:
         self.sync_context_to_pe = False
         self.loras: MotionLoraList = None
         self.motion_model_settings = MotionModelSettings()
-        self.noise_type: str = NoiseType.DEFAULT
+        self.sampling_settings = None
+        self.noise_type: str = SeedNoiseGeneration.COMFY
         self.sub_idxs = None  # value should NOT be included in clone, so it will auto reset
     
+    def set_noise_extra_args(self, noise_extra_args: dict):
+        noise_extra_args["context_length"] = self.context_length
 
     def set_context(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool, sync_context_to_pe: bool=False):
         self.context_length = context_length

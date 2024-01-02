@@ -9,13 +9,14 @@ from einops import rearrange
 import comfy.ldm.modules.attention as attention
 from comfy.ldm.modules.diffusionmodules import openaimodel
 import comfy.model_management as model_management
-import comfy.samplers as comfy_samplers
-import comfy.sample as comfy_sample
+import comfy.samplers
+import comfy.sample
 import comfy.utils
 from comfy.controlnet import ControlBase
 
 from .context import get_context_scheduler
-from .motion_utils import GroupNormAD, NoiseType
+from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
+from .motion_utils import GroupNormAD
 from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
@@ -36,14 +37,6 @@ class AnimateDiffHelper_GlobalState:
         self.last_step: int = 0
         self.current_step: int = 0
         self.total_steps: int = 0
-        self.video_length: int  = 0
-        self.context_frames: int = None
-        self.context_stride: int = None
-        self.context_overlap: int = None
-        self.context_schedule: str = None
-        self.closed_loop: bool = False
-        self.sync_context_to_pe: bool = False
-        self.sub_idxs: list = None
         if self.motion_model is not None:
             del self.motion_model
             self.motion_model = None
@@ -52,26 +45,19 @@ class AnimateDiffHelper_GlobalState:
             self.params = None
     
     def update_with_inject_params(self, params: InjectionParams):
-        self.video_length = params.video_length
-        self.context_frames = params.context_length
-        self.context_stride = params.context_stride
-        self.context_overlap = params.context_overlap
-        self.context_schedule = params.context_schedule
-        self.closed_loop = params.closed_loop
-        self.sync_context_to_pe = params.sync_context_to_pe
         self.params = params
 
     def is_using_sliding_context(self):
-        return self.context_frames is not None
+        return self.params is not None and self.params.context_length is not None
     
     def create_exposed_params(self):
         # This dict will be exposed to be used by other extensions
         # DO NOT change any of the key names
         # or I will find you 👁.👁
         return {
-            "full_length": self.video_length,
-            "context_length": self.context_frames,
-            "sub_idxs": self.sub_idxs,
+            "full_length": self.params.video_length,
+            "context_length": self.params.context_length,
+            "sub_idxs": self.params.sub_idxs,
         }
 
 ADGS = AnimateDiffHelper_GlobalState()
@@ -161,16 +147,6 @@ def get_additional_models_factory(orig_get_additional_models: Callable, motion_m
 ##################################################################################
 
 
-def prepare_mask_ad(noise_mask, shape, device):
-    """ensures noise mask is of proper dimensions"""
-    noise_mask = torch.nn.functional.interpolate(noise_mask.reshape((-1, 1, noise_mask.shape[-2], noise_mask.shape[-1])), size=(shape[2], shape[3]), mode="bilinear")
-    #noise_mask = noise_mask.round()
-    noise_mask = torch.cat([noise_mask] * shape[1], dim=1)
-    noise_mask = comfy.utils.repeat_to_batch_size(noise_mask, shape[0])
-    noise_mask = noise_mask.to(device)
-    return noise_mask
-
-
 def apply_params_to_motion_model(motion_model: MotionModelPatcher, params: InjectionParams):
     if params.context_length and params.video_length > params.context_length:
         logger.info(f"Sliding context window activated - latents passed in ({params.video_length}) greater than context_length {params.context_length}.")
@@ -201,9 +177,9 @@ class FunctionInjectionHolder:
         self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnormad_forward = GroupNormAD.forward
-        self.orig_sampling_function = comfy_samplers.sampling_function # used to support sliding context windows in samplers
-        self.orig_prepare_mask = comfy_sample.prepare_mask
-        self.orig_get_additional_models = comfy_sample.get_additional_models
+        self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
+        self.orig_prepare_mask = comfy.sample.prepare_mask
+        self.orig_get_additional_models = comfy.sample.get_additional_models
         # Inject Functions
         openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
         if params.unlimited_area_hack:
@@ -215,9 +191,9 @@ class FunctionInjectionHolder:
             torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
             if params.apply_mm_groupnorm_hack:
                 GroupNormAD.forward = groupnorm_mm_factory(params)
-        comfy_samplers.sampling_function = sliding_sampling_function
-        comfy_sample.prepare_mask = prepare_mask_ad
-        comfy_sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_model)
+        comfy.samplers.sampling_function = sliding_sampling_function
+        comfy.sample.prepare_mask = prepare_mask_ad
+        comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_model)
         del info
 
     def restore_functions(self, model: ModelPatcherAndInjector):
@@ -227,27 +203,29 @@ class FunctionInjectionHolder:
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             GroupNormAD.forward = self.orig_groupnormad_forward
-            comfy_samplers.sampling_function = self.orig_sampling_function
-            comfy_sample.prepare_mask = self.orig_prepare_mask
-            comfy_sample.get_additional_models = self.orig_get_additional_models
+            comfy.samplers.sampling_function = self.orig_sampling_function
+            comfy.sample.prepare_mask = self.orig_prepare_mask
+            comfy.sample.get_additional_models = self.orig_get_additional_models
         except AttributeError:
             logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
                          "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
 
 
-def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
+def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) -> Callable:
     def motion_sample(model: ModelPatcherAndInjector, noise: Tensor, *args, **kwargs):
         # check if model is intended for injecting
         if type(model) != ModelPatcherAndInjector:
             return orig_comfy_sample(model, noise, *args, **kwargs)
         # otherwise, injection time
         latents = None
+        cached_latents = None
+        cached_noise = None
         function_injections = FunctionInjectionHolder()
         try:
             # clone params from model
             params = model.motion_injection_params.clone()
             # get amount of latents passed in, and store in params
-            latents = args[-1]
+            latents: Tensor = args[-1]
             params.video_length = latents.size(0)
             params.full_length = latents.size(0)
             # reset global state
@@ -258,19 +236,18 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             # apply custom noise, if needed
             disable_noise = kwargs.get("disable_noise") or False
             seed = kwargs["seed"]
-            if not disable_noise:
-                # if context asks for specific noise, do it
-                noise = NoiseType.prepare_noise(params.noise_type, latents=latents, noise=noise, context_length=params.context_length, seed=seed)
 
             # apply params to motion model
             apply_params_to_motion_model(model.motion_model, params)
 
-            # handle GLOBALSTATE vars and step tally
-            ADGS.update_with_inject_params(params)
-            ADGS.start_step = kwargs.get("start_step") or 0
-            ADGS.current_step = ADGS.start_step
-            ADGS.last_step = kwargs.get("last_step") or 0
+            # prepare noise_extra_args for noise generation purposes
+            noise_extra_args = {"disable_noise": disable_noise}
+            params.set_noise_extra_args(noise_extra_args)
+            # if noise is not disabled, do noise stuff
+            if not disable_noise:
+                noise = model.sample_settings.prepare_noise(seed, latents, noise, extra_args=noise_extra_args, force_create_noise=False)
 
+            # callback setup
             original_callback = kwargs.get("callback", None)
             def ad_callback(step, x0, x, total_steps):
                 if original_callback is not None:
@@ -280,11 +257,52 @@ def motion_sample_factory(orig_comfy_sample: Callable) -> Callable:
             kwargs["callback"] = ad_callback
             ADGS.motion_model = model.motion_model
 
-            model.motion_model.pre_run()
-            return wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
+            iter_opts = IterationOptions()
+            if model.sample_settings is not None:
+                iter_opts = model.sample_settings.iteration_opts
+            iter_opts.initialize(latents)
+            # cache initial noise and latents, if needed
+            if iter_opts.cache_init_latents:
+                cached_latents = latents.clone()
+            if iter_opts.cache_init_noise:
+                cached_noise = noise.clone()
+            # prepare iter opts preprocess kwargs, if needed
+            iter_kwargs = {}
+            if iter_opts.need_sampler:
+                # -5 for sampler_name (not custom) and sampler (custom)
+                if is_custom:
+                    iter_kwargs[IterationOptions.SAMPLER] = args[-5]
+                else:
+                    iter_kwargs[IterationOptions.SAMPLER] = comfy.samplers.KSampler(
+                        model.model, steps=args[-7],
+                        device=model.current_device, sampler=args[-5],
+                        scheduler=args[-4], denoise=kwargs["denoise"],
+                        model_options=model.model_options)
+
+            args = list(args)
+            for curr_i in range(iter_opts.iterations):
+                # handle GLOBALSTATE vars and step tally
+                ADGS.update_with_inject_params(params)
+                ADGS.start_step = kwargs.get("start_step") or 0
+                ADGS.current_step = ADGS.start_step
+                ADGS.last_step = kwargs.get("last_step") or 0
+                if iter_opts.iterations > 1:
+                    logger.info(f"Iteration {curr_i+1}/{iter_opts.iterations}")
+                # perform any iter_opts preprocessing on latents
+                latents, noise = iter_opts.preprocess_latents(curr_i=curr_i, model=model, latents=latents, noise=noise,
+                                                              cached_latents=cached_latents, cached_noise=cached_noise,
+                                                              seed=seed,
+                                                              sample_settings=model.sample_settings, noise_extra_args=noise_extra_args)
+                args[-1] = latents
+
+                model.motion_model.pre_run()
+                latents = wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
+            return latents
         finally:
             del latents
             del noise
+            del cached_latents
+            del cached_noise
             # reset global state
             ADGS.reset()
             # restore injected functions
@@ -533,9 +551,9 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
         # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
         def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
             # get context scheduler
-            context_scheduler = get_context_scheduler(ADGS.context_schedule)
+            context_scheduler = get_context_scheduler(ADGS.params.context_schedule)
             # figure out how input is split
-            axes_factor = x_in.size(0)//ADGS.video_length
+            axes_factor = x_in.size(0)//ADGS.params.video_length
 
             # prepare final cond, uncond, and out_count
             cond_final = torch.zeros_like(x_in)
@@ -546,8 +564,8 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                 if control.previous_controlnet is not None:
                     prepare_control_objects(control.previous_controlnet, full_idxs)
                 control.sub_idxs = full_idxs
-                control.full_latent_length = ADGS.video_length
-                control.context_length = ADGS.context_frames
+                control.full_latent_length = ADGS.params.video_length
+                control.context_length = ADGS.params.context_length
             
             def get_resized_cond(cond_in, full_idxs) -> list:
                 # reuse or resize cond items to match context requirements
@@ -574,7 +592,7 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                                     prepare_control_objects(control_item, full_idxs)
                                 else:
                                     raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; \
-                                                        use Control objects from Kosinkadink/Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
+                                                        use Control objects from Kosinkadink/ComfyUI-Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
                                 resized_actual_cond[key] = control_item
                                 del control_item
                             elif isinstance(cond_item, dict):
@@ -597,15 +615,14 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
                 return resized_cond
 
             # perform calc_cond_uncond_batch per context window
-            for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.video_length, ADGS.context_frames, ADGS.context_stride, ADGS.context_overlap, ADGS.closed_loop):
-                ADGS.sub_idxs = ctx_idxs
-                ADGS.params.sub_idxs = ADGS.sub_idxs
-                ADGS.motion_model.model.set_sub_idxs(ADGS.sub_idxs)
+            for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.params.video_length, ADGS.params.context_length, ADGS.params.context_stride, ADGS.params.context_overlap, ADGS.params.closed_loop):
+                ADGS.params.sub_idxs = ctx_idxs
+                ADGS.motion_model.model.set_sub_idxs(ctx_idxs)
                 # account for all portions of input frames
                 full_idxs = []
                 for n in range(axes_factor):
                     for ind in ctx_idxs:
-                        full_idxs.append((ADGS.video_length*n)+ind)
+                        full_idxs.append((ADGS.params.video_length*n)+ind)
                 # get subsections of x, timestep, cond, uncond, cond_concat
                 sub_x = x_in[full_idxs]
                 sub_timestep = timestep[full_idxs]

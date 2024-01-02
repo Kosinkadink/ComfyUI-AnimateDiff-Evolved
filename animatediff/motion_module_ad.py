@@ -10,8 +10,10 @@ from comfy.ldm.modules.attention import FeedForward, SpatialTransformer
 from comfy.model_patcher import ModelPatcher
 from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
+from comfy.controlnet import broadcast_image_to
+from comfy.utils import repeat_to_batch_size
 
-from .motion_utils import GroupNormAD, BlockType, CrossAttentionMM, MotionCompatibilityError, TemporalTransformerGeneric
+from .motion_utils import GroupNormAD, BlockType, CrossAttentionMM, MotionCompatibilityError, prepare_mask_batch
 from .model_utils import ModelTypeSD
 
 
@@ -390,7 +392,7 @@ class VanillaTemporalModule(nn.Module):
         return output_tensor
 
 
-class TemporalTransformer3DModel(nn.Module, TemporalTransformerGeneric):
+class TemporalTransformer3DModel(nn.Module):
     def __init__(
         self,
         in_channels,
@@ -412,7 +414,15 @@ class TemporalTransformer3DModel(nn.Module, TemporalTransformerGeneric):
         temporal_position_encoding_max_len=24,
     ):
         super().__init__()
-        super().temporal_transformer_init(default_length=16)
+        self.video_length = 16
+        self.full_length = 16
+        self.scale_min = 1.0
+        self.scale_max = 1.0
+        self.raw_scale_mask: Union[Tensor, None] = None
+        self.temp_scale_mask: Union[Tensor, None] = None
+        self.sub_idxs: Union[list[int], None] = None
+        self.prev_hidden_states_batch = 0
+
 
         inner_dim = num_attention_heads * attention_head_dim
 
@@ -460,6 +470,54 @@ class TemporalTransformer3DModel(nn.Module, TemporalTransformerGeneric):
         self.sub_idxs = sub_idxs
         for block in self.transformer_blocks:
             block.set_sub_idxs(sub_idxs)
+
+    def reset_temp_vars(self):
+        del self.temp_scale_mask
+        self.temp_scale_mask = None
+        self.prev_hidden_states_batch = 0
+
+    def get_scale_mask(self, hidden_states: Tensor) -> Union[Tensor, None]:
+        # if no raw mask, return None
+        if self.raw_scale_mask is None:
+            return None
+        shape = hidden_states.shape
+        batch, channel, height, width = shape
+        # if temp mask already calculated, return it
+        if self.temp_scale_mask != None:
+            # check if hidden_states batch matches
+            if batch == self.prev_hidden_states_batch:
+                if self.sub_idxs is not None:
+                    return self.temp_scale_mask[:, self.sub_idxs, :]
+                return self.temp_scale_mask
+            # if does not match, reset cached temp_scale_mask and recalculate it
+            del self.temp_scale_mask
+            self.temp_scale_mask = None
+        # otherwise, calculate temp mask
+        self.prev_hidden_states_batch = batch
+        mask = prepare_mask_batch(self.raw_scale_mask, shape=(self.full_length, 1, height, width))
+        mask = repeat_to_batch_size(mask, self.full_length)
+        # if mask not the same amount length as full length, make it match
+        if self.full_length != mask.shape[0]:
+            mask = broadcast_image_to(mask, self.full_length, 1)
+        # reshape mask to attention K shape (h*w, latent_count, 1)
+        batch, channel, height, width = mask.shape
+        # first, perform same operations as on hidden_states,
+        # turning (b, c, h, w) -> (b, h*w, c)
+        mask = mask.permute(0, 2, 3, 1).reshape(batch, height*width, channel)
+        # then, make it the same shape as attention's k, (h*w, b, c)
+        mask = mask.permute(1, 0, 2)
+        # make masks match the expected length of h*w
+        batched_number = shape[0] // self.video_length
+        if batched_number > 1:
+            mask = torch.cat([mask] * batched_number, dim=0)
+        # cache mask and set to proper device
+        self.temp_scale_mask = mask
+        # move temp_scale_mask to proper dtype + device
+        self.temp_scale_mask = self.temp_scale_mask.to(dtype=hidden_states.dtype, device=hidden_states.device)
+        # return subset of masks, if needed
+        if self.sub_idxs is not None:
+            return self.temp_scale_mask[:, self.sub_idxs, :]
+        return self.temp_scale_mask
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
         batch, channel, height, width = hidden_states.shape
