@@ -1,7 +1,7 @@
 from torch import Tensor
 
 from .freeinit import FreeInitFilter
-from .sample_settings import FreeInitOptions, IterationOptions, NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, NoiseNormalize, SeedNoiseGeneration, SampleSettings
+from .sample_settings import FreeInitOptions, IterationOptions, NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, SeedNoiseGeneration, SampleSettings
 
 
 class SampleSettingsNode:
