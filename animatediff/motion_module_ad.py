@@ -13,7 +13,7 @@ from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
 from comfy.controlnet import broadcast_image_to
 from comfy.utils import repeat_to_batch_size
 
-from .motion_utils import GroupNormAD, BlockType, CrossAttentionMM, MotionCompatibilityError, prepare_mask_batch
+from .motion_utils import GroupNormAD, CrossAttentionMM, MotionCompatibilityError, prepare_mask_batch
 from .model_utils import ModelTypeSD
 
 
@@ -137,6 +137,13 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
     return mm_state_dict, info
 
 
+class BlockType:
+    UP = "up"
+    DOWN = "down"
+    MID = "mid"
+
+
+# TODO: use comfy.ops style operations input for tensor operations to be in line with new ComfyUI practices
 class AnimateDiffModel(nn.Module):
     def __init__(self, mm_state_dict: dict[str, Tensor], mm_info: AnimateDiffInfo):
         super().__init__()
@@ -206,12 +213,12 @@ class AnimateDiffModel(nn.Module):
                     res_idx = idx
             # if SpatialTransformer exists, inject right after
             if st_idx >= 0:
-                #logger.info(f"ADXL: injecting after ST({st_idx})")
+                #logger.info(f"AD: injecting after ST({st_idx})")
                 unet_blocks[unet_idx].insert(st_idx+1, mm_blocks[mm_blk_idx].motion_modules[mm_vtm_idx])
                 injection_count += 1
             # otherwise, if only ResBlock exists, inject right after
             elif res_idx >= 0:
-                #logger.info(f"ADXL: injecting after Res({res_idx})")
+                #logger.info(f"AD: injecting after Res({res_idx})")
                 unet_blocks[unet_idx].insert(res_idx+1, mm_blocks[mm_blk_idx].motion_modules[mm_vtm_idx])
                 injection_count += 1
             # increment unet_idx

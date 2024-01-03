@@ -12,6 +12,8 @@ from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionMod
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
+from .nodes_gen1 import AnimateDiffLoaderWithContext
+from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode
 from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
@@ -82,91 +84,6 @@ class AnimateDiffLoraLoader:
         return (prev_motion_lora,)
 
 
-class AnimateDiffLoaderWithContext:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "model": ("MODEL",),
-                "model_name": (get_available_motion_models(),),
-                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.SQRT_LINEAR}),
-                #"apply_mm_groupnorm_hack": ("BOOLEAN", {"default": True}),
-            },
-            "optional": {
-                "context_options": ("CONTEXT_OPTIONS",),
-                "motion_lora": ("MOTION_LORA",),
-                "motion_model_settings": ("MOTION_MODEL_SETTINGS",),
-                "sample_settings": ("sample_settings",),
-                "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
-                "apply_v2_models_properly": ("BOOLEAN", {"default": True}),
-            }
-        }
-    
-    RETURN_TYPES = ("MODEL",)
-    CATEGORY = "Animate Diff 🎭🅐🅓"
-    FUNCTION = "load_mm_and_inject_params"
-
-
-    def load_mm_and_inject_params(self,
-        model: ModelPatcher,
-        model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
-        context_options: ContextOptions=None, motion_lora: MotionLoraList=None, motion_model_settings: MotionModelSettings=None,
-        sample_settings: SampleSettings=None, motion_scale: float=1.0, apply_v2_models_properly: bool=False,
-    ):
-        # load motion module
-        motion_model = load_motion_module(model_name, model, motion_lora=motion_lora, motion_model_settings=motion_model_settings)
-        # set injection params
-        params = InjectionParams(
-                video_length=None,
-                unlimited_area_hack=False,
-                apply_mm_groupnorm_hack=True,
-                beta_schedule=beta_schedule,
-                model_name=model_name,
-                apply_v2_models_properly=apply_v2_models_properly,
-        )
-        if context_options:
-            # set context settings TODO: make this dynamic for future purposes
-            if type(context_options) == UniformContextOptions:
-                params.set_context(
-                        context_length=context_options.context_length,
-                        context_stride=context_options.context_stride,
-                        context_overlap=context_options.context_overlap,
-                        context_schedule=context_options.context_schedule,
-                        closed_loop=context_options.closed_loop,
-                        sync_context_to_pe=context_options.sync_context_to_pe,
-                )
-        if motion_lora:
-            params.set_loras(motion_lora)
-        # set motion_scale and motion_model_settings
-        if not motion_model_settings:
-            motion_model_settings = MotionModelSettings()
-        motion_model_settings.attn_scale = motion_scale
-        params.set_motion_model_settings(motion_model_settings)
-
-        # apply scale multiplier, if needed
-        motion_model.model.set_scale_multiplier(params.motion_model_settings.attn_scale)
-
-        # apply scale mask, if needed
-        motion_model.model.set_masks(
-            masks=params.motion_model_settings.mask_attn_scale,
-            min_val=params.motion_model_settings.mask_attn_scale_min,
-            max_val=params.motion_model_settings.mask_attn_scale_max
-            )
-
-        model = ModelPatcherAndInjector(model)
-        model.motion_model = motion_model
-        model.sample_settings = sample_settings if sample_settings is not None else SampleSettings()
-        model.motion_injection_params = params
-
-        # save model sampling from BetaSchedule as object patch
-        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
-        if new_model_sampling is not None:
-            model.add_object_patch("model_sampling", new_model_sampling)
-
-        del motion_model
-        return (model,)
-
-
 class AnimateDiffUniformContextOptions:
     @classmethod
     def INPUT_TYPES(s):
@@ -198,9 +115,9 @@ class AnimateDiffUniformContextOptions:
 
 
 NODE_CLASS_MAPPINGS = {
+    "ADE_ApplyAnimateDiffModel": ApplyAnimateDiffModelNode,
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffSamplingSettings": SampleSettingsNode,
-    "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
     "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
     # Noise Layer Nodes
@@ -218,15 +135,17 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
+    # Gen1 Nodes
+    "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
     "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "ADE_ApplyAnimateDiffModel": "Apply AnimateDiff Model 🎭🅐🅓②",
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
     "ADE_AnimateDiffSamplingSettings": "Sample Settings 🎭🅐🅓",
-    "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓",
     "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader 🎭🅐🅓",
     "ADE_AnimateDiffModelSettings_Release": "Motion Model Settings 🎭🅐🅓",
     # Noise Layer Nodes
@@ -244,6 +163,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select 🎭🅐🅓",
+    # Gen1 Nodes
+    "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓①",
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",

@@ -65,13 +65,7 @@ class CrossAttentionMM(nn.Module):
         out = optimized_attention_mm(q, k, v, self.heads, mask)
         return self.to_out(out)
 
-
-class BlockType:
-    UP = "up"
-    DOWN = "down"
-    MID = "mid"
-
-
+# TODO: set up comfy.ops style classes for groupnorm and other functions
 class GroupNormAD(torch.nn.GroupNorm):
     def __init__(self, num_groups: int, num_channels: int, eps: float = 1e-5, affine: bool = True,
                  device=None, dtype=None) -> None:

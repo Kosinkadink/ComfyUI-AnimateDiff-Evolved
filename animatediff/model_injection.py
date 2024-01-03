@@ -114,6 +114,30 @@ class MotionModelPatcher(ModelPatcher):
             self.model.cleanup()
 
 
+class MotionModelGroup:
+    def __init__(self):
+        self.models: list[MotionModelPatcher] = []
+
+    def add(self, mm: MotionModelPatcher):
+        # add to end of list
+        self.models.append(mm)
+
+    def add_to_start(self, mm: MotionModelPatcher):
+        self.models.insert(0, mm)
+
+    def __getitem__(self, index) -> MotionModelPatcher:
+        return self.layers[index]
+    
+    def is_empty(self) -> bool:
+        return len(self.layers) == 0
+    
+    def clone(self) -> 'MotionModelGroup':
+        cloned = MotionModelGroup()
+        for mm in self.models:
+            cloned.add(mm)
+        return cloned
+
+
 def get_vanilla_model_patcher(m: ModelPatcher) -> ModelPatcher:
     model = ModelPatcher(m.model, m.load_device, m.offload_device, m.size, m.current_device, weight_inplace_update=m.weight_inplace_update)
     model.patches = {}
@@ -206,6 +230,36 @@ def load_motion_module(model_name: str, model: ModelPatcher, motion_lora: Motion
         for lora in motion_lora.loras:
             load_motion_lora_as_patches(motion_model, lora)
     return motion_model
+
+
+def load_motion_module_gen2(model_name: str, motion_model_settings: 'MotionModelSettings' = None) -> MotionModelPatcher:
+    model_path = get_motion_model_path(model_name)
+    logger.info(f"Loading motion module {model_name} via Gen2")
+    mm_state_dict = comfy.utils.load_torch_file(model_path, safe_load=True)
+    # TODO: check for empty state dict?
+    # get normalized state_dict and motion model info (converts alternate AD models like HotshotXL into AD keys)
+    mm_state_dict, mm_info = normalize_ad_state_dict(mm_state_dict=mm_state_dict, mm_name=model_name)
+    # apply motion model settings
+    mm_state_dict = apply_mm_settings(model_dict=mm_state_dict, mm_settings=motion_model_settings)
+    # initialize AnimateDiffModelWrapper
+    ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
+    ad_wrapper.to(comfy.model_management.unet_dtype)
+    ad_wrapper.to(comfy.model_management.unet_offload_device)
+    load_result = ad_wrapper.load_state_dict(mm_state_dict)
+    # TODO: report load_result of motion_module loading?
+    # wrap motion_module into a ModelPatcher, to allow motion lora patches
+    motion_model = MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
+                                      offload_device=comfy.model_management.unet_offload_device())
+    return motion_model
+
+
+def validate_model_compatibility_gen2(model: ModelPatcher, motion_model: MotionModelPatcher):
+    # check that motion model is compatible with sd model
+    model_sd_type = get_sd_model_type(model)
+    mm_info = motion_model.model.mm_info
+    if model_sd_type != mm_info.sd_type:
+        raise MotionCompatibilityError(f"Motion module '{mm_info.mm_name}' is intended for {mm_info.sd_type} models, " \
+                                       + f"but the provided model is type {model_sd_type}.")
 
 
 def interpolate_pe_to_length(model_dict: dict[str, Tensor], key: str, new_length: int):
