@@ -419,7 +419,7 @@ class VanillaTemporalModule(nn.Module):
     def set_effect(self, multival: Union[float, Tensor]):
         if type(multival) == Tensor:
             self.effect = multival
-        elif math.isclose(multival, 1.0):
+        elif multival is not None and math.isclose(multival, 1.0):
             self.effect = None
         else:
             self.effect = multival

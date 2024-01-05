@@ -119,6 +119,7 @@ class MotionModelPatcher(ModelPatcher):
         self.prepare_weights()
         # TODO: prepare timestep kf percents
         # TODO: make this combined with timestep kfs
+        self.model.reset()
         self.model.set_scale(self.scale_multival)
         self.model.set_effect(self.effect_multival)
 
