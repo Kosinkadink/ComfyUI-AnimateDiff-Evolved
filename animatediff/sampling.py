@@ -139,8 +139,9 @@ def groupnorm_mm_factory(params: InjectionParams):
 def get_additional_models_factory(orig_get_additional_models: Callable, motion_models: MotionModelGroup):
     def get_additional_models_with_motion(*args, **kwargs):
         models, inference_memory = orig_get_additional_models(*args, **kwargs)
-        for motion_model in motion_models.models:
-            models.append(motion_model)
+        if motion_models is not None:
+            for motion_model in motion_models.models:
+                models.append(motion_model)
         # TODO: account for inference memory as well?
         return models, inference_memory
     return get_additional_models_with_motion
@@ -155,21 +156,22 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
     else:
         logger.info(f"Regular AnimateDiff activated - latents passed in ({params.full_length}) less or equal to context_length {params.context_length}.")
         params.reset_context()
-    # if no context_length, treat video length as intended AD frame window
-    if not params.context_length:
-        for motion_model in motion_models.models:
-            if params.full_length > motion_model.model.encoding_max_len:
-                raise ValueError(f"Without a context window, AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames, but received {params.full_length} latents.")
-        motion_models.set_video_length(params.full_length, params.full_length)
-    # otherwise, treat context_length as intended AD frame window
-    else:
-        for motion_model in motion_models.models:
-            if params.context_length > motion_model.model.encoding_max_len:
-                raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
-        motion_models.set_video_length(params.context_length, params.full_length)
-    # inject model
-    module_str = "modules" if len(motion_models.models) > 1 else "module"
-    logger.info(f"Using motion {module_str} {motion_models.get_name_string(show_version=True)}.")
+    if motion_models is not None:
+        # if no context_length, treat video length as intended AD frame window
+        if not params.context_length:
+            for motion_model in motion_models.models:
+                if params.full_length > motion_model.model.encoding_max_len:
+                    raise ValueError(f"Without a context window, AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames, but received {params.full_length} latents.")
+            motion_models.set_video_length(params.full_length, params.full_length)
+        # otherwise, treat context_length as intended AD frame window
+        else:
+            for motion_model in motion_models.models:
+                if params.context_length > motion_model.model.encoding_max_len:
+                    raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
+            motion_models.set_video_length(params.context_length, params.full_length)
+        # inject model
+        module_str = "modules" if len(motion_models.models) > 1 else "module"
+        logger.info(f"Using motion {module_str} {motion_models.get_name_string(show_version=True)}.")
     return params
 
 
@@ -190,17 +192,18 @@ class FunctionInjectionHolder:
         openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
         if params.unlimited_area_hack:
             model.model.memory_required = unlimited_memory_required
-        # only apply groupnorm hack if not [v3 or (AnimateDiff SD1.5 and v2 and should apply v2 properly)]
-        info: AnimateDiffInfo = model.motion_models[0].model.mm_info
-        if not (info.mm_version == AnimateDiffVersion.V3 or (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and
-                info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
-            torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
-            if params.apply_mm_groupnorm_hack:
-                GroupNormAD.forward = groupnorm_mm_factory(params)
+        if model.motion_models is not None:
+            # only apply groupnorm hack if not [v3 or (AnimateDiff SD1.5 and v2 and should apply v2 properly)]
+            info: AnimateDiffInfo = model.motion_models[0].model.mm_info
+            if not (info.mm_version == AnimateDiffVersion.V3 or (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and
+                    info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
+                torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
+                if params.apply_mm_groupnorm_hack:
+                    GroupNormAD.forward = groupnorm_mm_factory(params)
+            del info
         comfy.samplers.sampling_function = sliding_sampling_function
         comfy.sample.prepare_mask = prepare_mask_ad
         comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
-        del info
 
     def restore_functions(self, model: ModelPatcherAndInjector):
         # Restoration
@@ -300,7 +303,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                                                               sample_settings=model.sample_settings, noise_extra_args=noise_extra_args)
                 args[-1] = latents
 
-                model.motion_models.pre_run(model)
+                if model.motion_models is not None:
+                    model.motion_models.pre_run(model)
                 latents = wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
             return latents
         finally:
@@ -622,7 +626,8 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             # perform calc_cond_uncond_batch per context window
             for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.params.full_length, ADGS.params.context_length, ADGS.params.context_stride, ADGS.params.context_overlap, ADGS.params.closed_loop):
                 ADGS.params.sub_idxs = ctx_idxs
-                ADGS.motion_models.set_sub_idxs(ctx_idxs)
+                if ADGS.motion_models is not None:
+                    ADGS.motion_models.set_sub_idxs(ctx_idxs)
                 # TODO: support dynamic context lengths - call set_video_length on motion_models
                 # account for all portions of input frames
                 full_idxs = []
