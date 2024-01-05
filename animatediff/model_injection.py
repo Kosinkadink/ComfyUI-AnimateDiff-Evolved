@@ -1,4 +1,5 @@
 import copy
+from typing import Union
 
 from einops import rearrange
 from torch import Tensor
@@ -34,15 +35,16 @@ class ModelPatcherAndInjector(ModelPatcher):
         # injection stuff
         self.motion_injection_params: InjectionParams = None
         self.sample_settings: SampleSettings = SampleSettings()
-        self.motion_model: MotionModelPatcher = None
+        self.motion_models: MotionModelGroup = None
     
     def model_patches_to(self, device):
         super().model_patches_to(device)
-        if self.motion_model is not None:
-            try:
-                self.motion_model.model.to(device)
-            except Exception:
-                pass
+        if self.motion_models is not None:
+            for motion_model in self.motion_models.models:
+                try:
+                    motion_model.model.to(device)
+                except Exception:
+                    pass
 
     def patch_model(self, device_to=None):
         # first, perform model patching
@@ -58,27 +60,28 @@ class ModelPatcherAndInjector(ModelPatcher):
         return super().unpatch_model(device_to)
 
     def inject_model(self, device_to=None):
-        if self.motion_model is not None:
-            self.motion_model.model.eject(self)
-            self.motion_model.model.inject(self)
-            try:
-                self.motion_model.model.to(device_to)
-            except Exception:
-                pass
+        if self.motion_models is not None:
+            for motion_model in self.motion_models.models:
+                motion_model.model.inject(self)
+                try:
+                    motion_model.model.to(device_to)
+                except Exception:
+                    pass
 
     def eject_model(self, device_to=None):
-        if self.motion_model is not None:
-            self.motion_model.model.eject(self)
-            try:
-                self.motion_model.model.to(device_to)
-            except Exception:
-                pass
+        if self.motion_models is not None:
+            for motion_model in self.motion_models.models:
+                motion_model.model.eject(self)
+                try:
+                    motion_model.model.to(device_to)
+                except Exception:
+                    pass
 
     def clone(self):
         cloned = ModelPatcherAndInjector(self)
-        cloned.motion_model = self.motion_model
+        cloned.motion_models = self.motion_models.clone() if self.motion_models else self.motion_models
         cloned.sample_settings = self.sample_settings
-        cloned.motion_injection_params = self.motion_injection_params
+        cloned.motion_injection_params = self.motion_injection_params.clone() if self.motion_injection_params else self.motion_injection_params
         return cloned
 
 
@@ -87,6 +90,12 @@ class MotionModelPatcher(ModelPatcher):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.model: AnimateDiffModel = self.model
+        self.timestep_percent_range = (0.0, 1.0)
+        self.timestep_range = None
+        self.timestep_keyframes = None
+
+        self.scale_multival = None
+        self.effect_multival = None
 
     def patch_model(self, *args, **kwargs):
         # patch as normal, but prepare_weights so that lowvram meta device works properly
@@ -104,19 +113,46 @@ class MotionModelPatcher(ModelPatcher):
                 comfy.utils.set_attr(self.model, key, weight)
             except Exception:
                 pass
-    
-    def pre_run(self):
+
+    def pre_run(self, model: ModelPatcherAndInjector):
         # just in case, prepare_weights before every run
         self.prepare_weights()
+        # TODO: prepare timestep kf percents
+        # TODO: make this combined with timestep kfs
+        self.model.set_scale(self.scale_multival)
+        self.model.set_effect(self.effect_multival)
+
+    def prepare_current_timestep(self, t: Tensor, batched_number: int):
+        # TODO: dynamically 
+        pass
 
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
 
+    def clone(self):
+        # normal ModelPatcher clone actions
+        n = MotionModelPatcher(self.model, self.load_device, self.offload_device, self.size, self.current_device, weight_inplace_update=self.weight_inplace_update)
+        n.patches = {}
+        for k in self.patches:
+            n.patches[k] = self.patches[k][:]
+
+        n.object_patches = self.object_patches.copy()
+        n.model_options = copy.deepcopy(self.model_options)
+        n.model_keys = self.model_keys
+        # extra cloned params
+        n.timestep_percent_range = self.timestep_percent_range
+        n.timestep_keyframes = self.timestep_keyframes
+        n.scale_multival = self.scale_multival
+        n.effect_multival = self.effect_multival
+        return n
+
 
 class MotionModelGroup:
-    def __init__(self):
+    def __init__(self, init_motion_model: MotionModelPatcher=None):
         self.models: list[MotionModelPatcher] = []
+        if init_motion_model is not None:
+            self.add(init_motion_model)
 
     def add(self, mm: MotionModelPatcher):
         # add to end of list
@@ -126,16 +162,47 @@ class MotionModelGroup:
         self.models.insert(0, mm)
 
     def __getitem__(self, index) -> MotionModelPatcher:
-        return self.layers[index]
+        return self.models[index]
     
     def is_empty(self) -> bool:
-        return len(self.layers) == 0
+        return len(self.models) == 0
     
     def clone(self) -> 'MotionModelGroup':
         cloned = MotionModelGroup()
         for mm in self.models:
             cloned.add(mm)
         return cloned
+    
+    def set_sub_idxs(self, sub_idxs: list[int]):
+        for motion_model in self.models:
+            motion_model.model.set_sub_idxs(sub_idxs=sub_idxs)
+    
+    def set_video_length(self, video_length: int, full_length: int):
+        for motion_model in self.models:
+            motion_model.model.set_video_length(video_length=video_length, full_length=full_length)
+    
+    def set_scale(self, multival: Union[float, Tensor]):
+        pass
+
+    def set_strength(self, multival: Union[float, Tensor]):
+        pass
+
+    def pre_run(self, model: ModelPatcherAndInjector):
+        for motion_model in self.models:
+            motion_model.pre_run(model)
+    
+    def prepare_current_timestep(self, t: Tensor, batched_number: int):
+        for motion_model in self.models:
+            motion_model.prepare_current_timestep(t=t, batched_number=batched_number)
+
+    def get_name_string(self, show_version=False):
+        identifiers = []
+        for motion_model in self.models:
+            id = motion_model.model.mm_info.mm_name
+            if show_version:
+                id += f":{motion_model.model.mm_info.mm_version}"
+            identifiers.append(id)
+        return ", ".join(identifiers)
 
 
 def get_vanilla_model_patcher(m: ModelPatcher) -> ModelPatcher:
@@ -243,8 +310,8 @@ def load_motion_module_gen2(model_name: str, motion_model_settings: 'MotionModel
     mm_state_dict = apply_mm_settings(model_dict=mm_state_dict, mm_settings=motion_model_settings)
     # initialize AnimateDiffModelWrapper
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
-    ad_wrapper.to(comfy.model_management.unet_dtype)
-    ad_wrapper.to(comfy.model_management.unet_offload_device)
+    ad_wrapper.to(comfy.model_management.unet_dtype())
+    ad_wrapper.to(comfy.model_management.unet_offload_device())
     load_result = ad_wrapper.load_state_dict(mm_state_dict)
     # TODO: report load_result of motion_module loading?
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
@@ -360,25 +427,20 @@ def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: 'MotionModelSe
 
 
 class InjectionParams:
-    def __init__(self, video_length: int, unlimited_area_hack: bool, apply_mm_groupnorm_hack: bool, beta_schedule: str, model_name: str,
-                 apply_v2_models_properly: bool=False) -> None:
-        self.video_length = video_length
+    def __init__(self, unlimited_area_hack: bool=False, apply_mm_groupnorm_hack: bool=True, model_name: str="",
+                 apply_v2_properly: bool=True) -> None:
         self.full_length = None
         self.unlimited_area_hack = unlimited_area_hack
         self.apply_mm_groupnorm_hack = apply_mm_groupnorm_hack
-        self.beta_schedule = beta_schedule
         self.model_name = model_name
-        self.apply_v2_models_properly = apply_v2_models_properly
+        self.apply_v2_properly = apply_v2_properly
         self.context_length: int = None
         self.context_stride: int = None
         self.context_overlap: int = None
         self.context_schedule: str = None
         self.closed_loop: bool = False
         self.sync_context_to_pe = False
-        self.loras: MotionLoraList = None
-        self.motion_model_settings = MotionModelSettings()
-        self.sampling_settings = None
-        self.noise_type: str = SeedNoiseGeneration.COMFY
+        self.motion_model_settings = MotionModelSettings() # Gen1
         self.sub_idxs = None  # value should NOT be included in clone, so it will auto reset
     
     def set_noise_extra_args(self, noise_extra_args: dict):
@@ -392,10 +454,7 @@ class InjectionParams:
         self.closed_loop = closed_loop
         self.sync_context_to_pe = sync_context_to_pe
     
-    def set_loras(self, loras: MotionLoraList):
-        self.loras = loras.clone()
-    
-    def set_motion_model_settings(self, motion_model_settings: 'MotionModelSettings'):
+    def set_motion_model_settings(self, motion_model_settings: 'MotionModelSettings'): # Gen1
         if motion_model_settings is None:
             self.motion_model_settings = MotionModelSettings()
         else:
@@ -410,19 +469,16 @@ class InjectionParams:
     
     def clone(self) -> 'InjectionParams':
         new_params = InjectionParams(
-            self.video_length, self.unlimited_area_hack, self.apply_mm_groupnorm_hack,
-            self.beta_schedule, self.model_name, apply_v2_models_properly=self.apply_v2_models_properly,
+            self.unlimited_area_hack, self.apply_mm_groupnorm_hack,
+            self.model_name, apply_v2_properly=self.apply_v2_properly,
             )
         new_params.full_length = self.full_length
-        new_params.noise_type = self.noise_type
         new_params.set_context(
             context_length=self.context_length, context_stride=self.context_stride,
             context_overlap=self.context_overlap, context_schedule=self.context_schedule,
             closed_loop=self.closed_loop, sync_context_to_pe=self.sync_context_to_pe,
             )
-        if self.loras is not None:
-            new_params.loras = self.loras.clone()
-        new_params.set_motion_model_settings(self.motion_model_settings)
+        new_params.set_motion_model_settings(self.motion_model_settings) # Gen1
         return new_params
 
 

@@ -13,8 +13,9 @@ from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
 from comfy.controlnet import broadcast_image_to
 from comfy.utils import repeat_to_batch_size
 
-from .motion_utils import GroupNormAD, CrossAttentionMM, MotionCompatibilityError, prepare_mask_batch
+from .motion_utils import GroupNormAD, CrossAttentionMM, MotionCompatibilityError, extend_to_batch_size, prepare_mask_batch
 from .model_utils import ModelTypeSD
+from .logger import logger
 
 
 def zero_module(module):
@@ -254,21 +255,23 @@ class AnimateDiffModel(nn.Module):
         if self.mid_block is not None:
             self.mid_block.set_video_length(video_length, full_length)
     
-    def set_scale_multiplier(self, multiplier: Union[float, None]):
+    def set_scale(self, multival: Union[float, Tensor]):
+        if multival is None:
+            multival = 1.0
+        if type(multival) == float:
+            self._set_scale_multiplier(multival)
+            self._set_scale_mask(None)
+        elif type(multival) == Tensor:
+            self._set_scale_multiplier(1.0)
+            self._set_scale_mask(multival)
+    
+    def set_effect(self, multival: Union[float, Tensor]):
         for block in self.down_blocks:
-            block.set_scale_multiplier(multiplier)
+            block.set_effect(multival)
         for block in self.up_blocks:
-            block.set_scale_multiplier(multiplier)
+            block.set_effect(multival)
         if self.mid_block is not None:
-            self.mid_block.set_scale_multiplier(multiplier)
-
-    def set_masks(self, masks: Tensor, min_val: float, max_val: float):
-        for block in self.down_blocks:
-            block.set_masks(masks, min_val, max_val)
-        for block in self.up_blocks:
-            block.set_masks(masks, min_val, max_val)
-        if self.mid_block is not None:
-            self.mid_block.set_masks(masks, min_val, max_val)
+            self.mid_block.set_effect(multival)
 
     def set_sub_idxs(self, sub_idxs: list[int]):
         for block in self.down_blocks:
@@ -277,8 +280,29 @@ class AnimateDiffModel(nn.Module):
             block.set_sub_idxs(sub_idxs)
         if self.mid_block is not None:
             self.mid_block.set_sub_idxs(sub_idxs)
+
+    def reset(self):
+        self._reset_sub_idxs()
+        self._reset_scale_multiplier()
+        self._reset_temp_vars()
+
+    def _set_scale_multiplier(self, multiplier: Union[float, None]):
+        for block in self.down_blocks:
+            block.set_scale_multiplier(multiplier)
+        for block in self.up_blocks:
+            block.set_scale_multiplier(multiplier)
+        if self.mid_block is not None:
+            self.mid_block.set_scale_multiplier(multiplier)
+
+    def _set_scale_mask(self, mask: Tensor):
+        for block in self.down_blocks:
+            block.set_scale_mask(mask)
+        for block in self.up_blocks:
+            block.set_scale_mask(mask)
+        if self.mid_block is not None:
+            self.mid_block.set_scale_mask(mask)
     
-    def reset_temp_vars(self):
+    def _reset_temp_vars(self):
         for block in self.down_blocks:
             block.reset_temp_vars()
         for block in self.up_blocks:
@@ -286,16 +310,11 @@ class AnimateDiffModel(nn.Module):
         if self.mid_block is not None:
             self.mid_block.reset_temp_vars()
 
-    def reset_scale_multiplier(self):
-        self.set_scale_multiplier(None)
+    def _reset_scale_multiplier(self):
+        self._set_scale_multiplier(None)
 
-    def reset_sub_idxs(self):
+    def _reset_sub_idxs(self):
         self.set_sub_idxs(None)
-
-    def reset(self):
-        self.reset_sub_idxs()
-        self.reset_scale_multiplier()
-        self.reset_temp_vars()
 
 
 class MotionModule(nn.Module):
@@ -324,9 +343,13 @@ class MotionModule(nn.Module):
         for motion_module in self.motion_modules:
             motion_module.set_scale_multiplier(multiplier)
     
-    def set_masks(self, masks: Tensor, min_val: float, max_val: float):
+    def set_scale_mask(self, mask: Tensor):
         for motion_module in self.motion_modules:
-            motion_module.set_masks(masks, min_val, max_val)
+            motion_module.set_scale_mask(mask)
+    
+    def set_effect(self, multival: Union[float, Tensor]):
+        for motion_module in self.motion_modules:
+            motion_module.set_effect(multival)
     
     def set_sub_idxs(self, sub_idxs: list[int]):
         for motion_module in self.motion_modules:
@@ -356,6 +379,14 @@ class VanillaTemporalModule(nn.Module):
     ):
         super().__init__()
 
+        self.video_length = 16
+        self.full_length = 16
+        self.sub_idxs = None
+
+        self.effect = None
+        self.temp_effect_mask: Tensor = None
+        self.prev_input_tensor_batch = 0
+
         self.temporal_transformer = TemporalTransformer3DModel(
             in_channels=in_channels,
             num_attention_heads=num_attention_heads,
@@ -375,28 +406,69 @@ class VanillaTemporalModule(nn.Module):
             )
 
     def set_video_length(self, video_length: int, full_length: int):
+        self.video_length = video_length
+        self.full_length = full_length
         self.temporal_transformer.set_video_length(video_length, full_length)
     
     def set_scale_multiplier(self, multiplier: Union[float, None]):
         self.temporal_transformer.set_scale_multiplier(multiplier)
 
-    def set_masks(self, masks: Tensor, min_val: float, max_val: float):
-        self.temporal_transformer.set_masks(masks, min_val, max_val)
-    
+    def set_scale_mask(self, mask: Tensor):
+        self.temporal_transformer.set_scale_mask(mask)
+
+    def set_effect(self, multival: Union[float, Tensor]):
+        if type(multival) == Tensor:
+            self.effect = multival
+        elif math.isclose(multival, 1.0):
+            self.effect = None
+        else:
+            self.effect = multival
+        self.temp_effect_mask = None
+
     def set_sub_idxs(self, sub_idxs: list[int]):
+        self.sub_idxs = sub_idxs
         self.temporal_transformer.set_sub_idxs(sub_idxs)
 
     def reset_temp_vars(self):
+        self.set_effect(None)
         self.temporal_transformer.reset_temp_vars()
 
-    def forward(self, input_tensor, encoder_hidden_states=None, attention_mask=None):
-        return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)
-        #portion = output_tensor.shape[2] // 4 + output_tensor.shape[2] // 2
-        portion = output_tensor.shape[2] // 2
-        ad_effect = 0.7
-        #output_tensor[:,:,portion:] = input_tensor[:,:,portion:] * (1-ad_effect) + output_tensor[:,:,portion:] * ad_effect
-        #output_tensor[:,:,portion:] = input_tensor[:,:,portion:] #* 0.5
-        return output_tensor
+    def get_effect_mask(self, input_tensor: Tensor):
+        batch, channel, height, width = input_tensor.shape
+        batched_number = batch // self.video_length
+        full_batched_idxs = list(range(self.video_length))*batched_number
+        # if there is a cached temp_effect_mask and it is valid for current input, return it
+        if batch == self.prev_input_tensor_batch and self.temp_effect_mask is not None:
+            if self.sub_idxs is not None:
+                return self.temp_effect_mask[self.sub_idxs*batched_number]
+            return self.temp_effect_mask[full_batched_idxs]
+        # clear any existing mask
+        del self.temp_effect_mask
+        self.temp_effect_mask = None
+        # recalculate temp mask
+        self.prev_input_tensor_batch = batch
+        # make sure mask matches expected dimensions
+        mask = prepare_mask_batch(self.effect, shape=(self.full_length, 1, height, width))
+        # make sure mask is as long as full_length - clone last element of list if too short
+        self.temp_effect_mask = extend_to_batch_size(mask, self.full_length).to(
+            dtype=input_tensor.dtype, device=input_tensor.device)
+        # return finalized mask
+        if self.sub_idxs is not None:
+            return self.temp_effect_mask[self.sub_idxs*batched_number]
+        return self.temp_effect_mask[full_batched_idxs]
+
+    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None):
+        if self.effect is None:
+            return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)
+        # return weighted average of input_tensor and AD output
+        if type(self.effect) != Tensor:
+            effect = self.effect
+            # do nothing if effect is 0
+            if math.isclose(effect, 0.0):
+                return input_tensor
+        else:
+            effect = self.get_effect_mask(input_tensor)
+        return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)*effect
 
 
 class TemporalTransformer3DModel(nn.Module):
@@ -423,8 +495,6 @@ class TemporalTransformer3DModel(nn.Module):
         super().__init__()
         self.video_length = 16
         self.full_length = 16
-        self.scale_min = 1.0
-        self.scale_max = 1.0
         self.raw_scale_mask: Union[Tensor, None] = None
         self.temp_scale_mask: Union[Tensor, None] = None
         self.sub_idxs: Union[list[int], None] = None
@@ -468,10 +538,8 @@ class TemporalTransformer3DModel(nn.Module):
         for block in self.transformer_blocks:
             block.set_scale_multiplier(multiplier)
 
-    def set_masks(self, masks: Tensor, min_val: float, max_val: float):
-        self.scale_min = min_val
-        self.scale_max = max_val
-        self.raw_scale_mask = masks
+    def set_scale_mask(self, mask: Tensor):
+        self.raw_scale_mask = mask
 
     def set_sub_idxs(self, sub_idxs: list[int]):
         self.sub_idxs = sub_idxs
@@ -705,7 +773,7 @@ class VersatileAttention(CrossAttentionMM):
 
     def set_scale_multiplier(self, multiplier: Union[float, None]):
         if multiplier is None or math.isclose(multiplier, 1.0):
-            self.scale = None
+            self.scale = 1.0
         else:
             self.scale = multiplier
 

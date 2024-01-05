@@ -15,7 +15,7 @@ from comfy.model_patcher import ModelPatcher
 from .context import ContextSchedules
 from .logger import logger
 from .model_utils import Folders, BetaSchedules, get_available_motion_models
-from .model_injection import ModelPatcherAndInjector, InjectionParams, load_motion_module
+from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module
 
 
 class AnimateDiffLoader_Deprecated:
@@ -32,7 +32,7 @@ class AnimateDiffLoader_Deprecated:
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
+    CATEGORY = ""
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(
@@ -44,22 +44,21 @@ class AnimateDiffLoader_Deprecated:
         # load motion module
         motion_model = load_motion_module(model_name, model)
         # get total frames
-        init_frames_len = len(latents["samples"])
+        init_frames_len = len(latents["samples"])  # deprecated - no longer used for anything lol
         # set injection params
         params = InjectionParams(
-                video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
                 apply_mm_groupnorm_hack=True,
-                beta_schedule=beta_schedule,
                 model_name=model_name,
+                apply_v2_properly=False,
         )
         # inject for use in sampling code
         model = ModelPatcherAndInjector(model)
-        model.motion_model = motion_model
+        model.motion_models = MotionModelGroup(motion_model)
         model.motion_injection_params = params
 
         # save model sampling from BetaSchedule as object patch
-        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+        new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
         if new_model_sampling is not None:
             model.add_object_patch("model_sampling", new_model_sampling)
 
@@ -86,7 +85,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
+    CATEGORY = ""
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(self,
@@ -99,14 +98,13 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         # load motion module
         motion_model = load_motion_module(model_name, model)
         # get total frames
-        init_frames_len = len(latents["samples"])
+        init_frames_len = len(latents["samples"])  # deprecated - no longer used for anything lol
         # set injection params
         params = InjectionParams(
-                video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
                 apply_mm_groupnorm_hack=True,
-                beta_schedule=beta_schedule,
                 model_name=model_name,
+                apply_v2_properly=False,
         )
         # set context settings
         params.set_context(
@@ -118,11 +116,11 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         )
         # inject for use in sampling code
         model = ModelPatcherAndInjector(model)
-        model.motion_model = motion_model
+        model.motion_models = MotionModelGroup(motion_model)
         model.motion_injection_params = params
 
         # save model sampling from BetaSchedule as object patch
-        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+        new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
         if new_model_sampling is not None:
             model.add_object_patch("model_sampling", new_model_sampling)
 
@@ -164,7 +162,7 @@ class AnimateDiffCombine_Deprecated:
 
     RETURN_TYPES = ("GIF",)
     OUTPUT_NODE = True
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
+    CATEGORY = ""
     FUNCTION = "generate_gif"
 
     def generate_gif(

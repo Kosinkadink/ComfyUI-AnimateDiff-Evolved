@@ -14,6 +14,7 @@ from .sampling import motion_sample_factory
 
 from .nodes_gen1 import AnimateDiffLoaderWithContext
 from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode
+from .nodes_multival import MultivalDynamicNode, MultivalFloatNode, MultivalScaledMaskNode
 from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
@@ -38,7 +39,7 @@ class AnimateDiffModelSettings:
         }
     
     RETURN_TYPES = ("MOTION_MODEL_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/motion settings"
+    CATEGORY = "Animate Diff 🎭🅐🅓/gen1 nodes ①/motion settings"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, mask_motion_scale: torch.Tensor=None, min_motion_scale: float=1.0, max_motion_scale: float=1.0):
@@ -115,11 +116,17 @@ class AnimateDiffUniformContextOptions:
 
 
 NODE_CLASS_MAPPINGS = {
+    # Unencapsulated/Gen2
+    "ADE_UseEvolvedSampling": UseEvolvedSamplingNode,
     "ADE_ApplyAnimateDiffModel": ApplyAnimateDiffModelNode,
+    "ADE_ApplyAnimateDiffModelSimple": ApplyAnimateDiffModelBasicNode,
+    "ADE_LoadAnimateDiffModel": LoadAnimateDiffModelNode,
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffSamplingSettings": SampleSettingsNode,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
-    "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
+    # Multival Nodes
+    "ADE_MultivalDynamic": MultivalDynamicNode,
+    "ADE_MultivalScaledMask": MultivalScaledMaskNode,
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
@@ -127,27 +134,33 @@ NODE_CLASS_MAPPINGS = {
     # Iteration Opts
     "ADE_IterationOptsDefault": IterationOptionsNode,
     "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
-    # Experimental Nodes
-    "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
-    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
-    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": AnimateDiffModelSettingsAdvancedAttnStrengths,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderWithContext": AnimateDiffLoaderWithContext,
+    "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
+    "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
+    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
+    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": AnimateDiffModelSettingsAdvancedAttnStrengths,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
     "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ADE_ApplyAnimateDiffModel": "Apply AnimateDiff Model 🎭🅐🅓②",
+    # Unencapsulated/Gen2
+    "ADE_UseEvolvedSampling": "Use Evolved Sampling 🎭🅐🅓②",
+    "ADE_ApplyAnimateDiffModel": "Apply AnimateDiff Model (Adv.) 🎭🅐🅓②",
+    "ADE_ApplyAnimateDiffModelSimple": "Apply AnimateDiff Model (Basic) 🎭🅐🅓②",
+    "ADE_LoadAnimateDiffModel": "Load AnimateDiff Model 🎭🅐🅓②",
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
     "ADE_AnimateDiffSamplingSettings": "Sample Settings 🎭🅐🅓",
-    "ADE_AnimateDiffLoRALoader": "AnimateDiff LoRA Loader 🎭🅐🅓",
-    "ADE_AnimateDiffModelSettings_Release": "Motion Model Settings 🎭🅐🅓",
+    "ADE_AnimateDiffLoRALoader": "Load AnimateDiff LoRA 🎭🅐🅓",
+    # Multival Nodes
+    "ADE_MultivalDynamic": "Multival Dynamic 🎭🅐🅓",
+    "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
@@ -155,16 +168,16 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Iteration Opts
     "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
     "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",
-    # Experimental Nodes
-    "ADE_AnimateDiffModelSettingsSimple": "EXP Motion Model Settings (Simple) 🎭🅐🅓",
-    "ADE_AnimateDiffModelSettings": "EXP Motion Model Settings (Advanced) 🎭🅐🅓",
-    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": "EXP Motion Model Settings (Adv. Attn) 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select 🎭🅐🅓",
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettings_Release": "Motion Model Settings 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettingsSimple": "EXP Motion Model Settings (Simple) 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettings": "EXP Motion Model Settings (Advanced) 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": "EXP Motion Model Settings (Adv. Attn) 🎭🅐🅓①",
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
