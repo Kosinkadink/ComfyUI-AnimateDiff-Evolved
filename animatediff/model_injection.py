@@ -9,10 +9,11 @@ import torch
 import comfy.model_management
 import comfy.utils
 from comfy.model_patcher import ModelPatcher
+from comfy.model_base import BaseModel
 
 from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
-from .motion_utils import MotionCompatibilityError, normalize_min_max
+from .motion_utils import ADKeyframe, ADKeygrameGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_utils import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -91,11 +92,19 @@ class MotionModelPatcher(ModelPatcher):
         super().__init__(*args, **kwargs)
         self.model: AnimateDiffModel = self.model
         self.timestep_percent_range = (0.0, 1.0)
-        self.timestep_range = None
-        self.timestep_keyframes = None
+        self.timestep_range: tuple[float, float] = None
+        self.keyframes: ADKeygrameGroup = ADKeygrameGroup()
 
         self.scale_multival = None
         self.effect_multival = None
+        # temporary variables
+        self.current_keyframe: ADKeyframe = None
+        self.current_index = -1
+        self.current_scale: Union[float, Tensor] = None
+        self.current_effect: Union[float, Tensor] = None
+        self.combined_scale: Union[float, Tensor] = None
+        self.combined_effect: Union[float, Tensor] = None
+        self.was_within_range = False
 
     def patch_model(self, *args, **kwargs):
         # patch as normal, but prepare_weights so that lowvram meta device works properly
@@ -106,6 +115,7 @@ class MotionModelPatcher(ModelPatcher):
     def prepare_weights(self):
         # in case lowvram is active and meta device is used, need to convert weights
         # otherwise, will get exceptions thrown related to meta device
+        # TODO: with new comfy lowvram system, this is unnecessary
         state_dict = self.model.state_dict()
         for key in state_dict:
             weight = comfy.model_management.resolve_lowvram_weight(state_dict[key], self.model, key)
@@ -115,21 +125,76 @@ class MotionModelPatcher(ModelPatcher):
                 pass
 
     def pre_run(self, model: ModelPatcherAndInjector):
+        self.cleanup()
+        self.model.reset()
         # just in case, prepare_weights before every run
         self.prepare_weights()
-        # TODO: prepare timestep kf percents
-        # TODO: make this combined with timestep kfs
-        self.model.reset()
         self.model.set_scale(self.scale_multival)
         self.model.set_effect(self.effect_multival)
 
-    def prepare_current_timestep(self, t: Tensor, batched_number: int):
-        # TODO: dynamically 
-        pass
+    def initialize_timesteps(self, model: BaseModel):
+        self.timestep_range = (model.model_sampling.percent_to_sigma(self.timestep_percent_range[0]),
+                               model.model_sampling.percent_to_sigma(self.timestep_percent_range[1]))
+        if self.keyframes is not None:
+            for keyframe in self.keyframes.keyframes:
+                keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
+
+    def prepare_current_keyframe(self, t: Tensor):
+        curr_t: float = t[0]
+        prev_index = self.current_index
+        # if has next index, loop through and see if need to switch
+        if self.keyframes.has_index(self.current_index+1):
+            for i in range(self.current_index+1, len(self.keyframes)):
+                eval_kf = self.keyframes[i]
+                # check if start_t is greater or equal to curr_t
+                # NOTE: t is in terms of sigmas, not percent, so smaller number = later step in sampling
+                if eval_kf.start_t >= curr_t:
+                    self.current_index = i
+                    self.current_keyframe = eval_kf
+                    # keep track of scale and effect multivals, accounting for inherit_missing
+                    if self.current_keyframe.has_scale():
+                        self.current_scale = self.current_keyframe.scale_multival
+                    elif not self.current_keyframe.inherit_missing:
+                        self.current_scale = None
+                    if self.current_keyframe.has_effect():
+                        self.current_effect = self.current_keyframe.effect_multival
+                    elif not self.current_keyframe.inherit_missing:
+                        self.current_effect = None
+                    # if guarantee_usage, stop searching for other keyframes
+                    if self.current_keyframe.guarantee_usage:
+                        break
+                # if eval_kf is outside the percent range, stop looking further
+                else:
+                    break
+        # if index changed, apply new combined values
+        if prev_index != self.current_index:
+            # combine model's scale and effect with keyframe's scale and effect
+            self.combined_scale = get_combined_multival(self.scale_multival, self.current_scale)
+            self.combined_effect = get_combined_multival(self.effect_multival, self.current_effect)
+            # apply scale and effect
+            self.model.set_scale(self.combined_scale)
+            self.model.set_effect(self.combined_effect)
+        # apply effect - if not within range, set effect to 0, effectively turning model off
+        if curr_t > self.timestep_range[0] or curr_t < self.timestep_range[1]:
+            self.model.set_effect(0.0)
+            self.was_within_range = False
+        else:
+            # if was not in range last step, apply effect to toggle AD status
+            if not self.was_within_range:
+                self.model.set_effect(self.combined_effect)
+                self.was_within_range = True            
+
 
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
+        self.current_keyframe = None
+        self.current_index = -1
+        self.current_scale = None
+        self.current_effect = None
+        self.combined_scale = None
+        self.combined_effect = None
+        self.was_within_range = False
 
     def clone(self):
         # normal ModelPatcher clone actions
@@ -143,7 +208,8 @@ class MotionModelPatcher(ModelPatcher):
         n.model_keys = self.model_keys
         # extra cloned params
         n.timestep_percent_range = self.timestep_percent_range
-        n.timestep_keyframes = self.timestep_keyframes
+        n.timestep_range = self.timestep_range
+        n.keyframes = self.keyframes.clone()
         n.scale_multival = self.scale_multival
         n.effect_multival = self.effect_multival
         return n
@@ -182,19 +248,17 @@ class MotionModelGroup:
         for motion_model in self.models:
             motion_model.model.set_video_length(video_length=video_length, full_length=full_length)
     
-    def set_scale(self, multival: Union[float, Tensor]):
-        pass
-
-    def set_strength(self, multival: Union[float, Tensor]):
-        pass
+    def initialize_timesteps(self, model: BaseModel):
+        for motion_model in self.models:
+            motion_model.initialize_timesteps(model)
 
     def pre_run(self, model: ModelPatcherAndInjector):
         for motion_model in self.models:
             motion_model.pre_run(model)
     
-    def prepare_current_timestep(self, t: Tensor, batched_number: int):
+    def prepare_current_keyframe(self, t: Tensor):
         for motion_model in self.models:
-            motion_model.prepare_current_timestep(t=t, batched_number=batched_number)
+            motion_model.prepare_current_keyframe(t=t)
 
     def get_name_string(self, show_version=False):
         identifiers = []

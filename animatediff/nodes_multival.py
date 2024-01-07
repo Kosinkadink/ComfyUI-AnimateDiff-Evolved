@@ -44,10 +44,10 @@ class MultivalDynamicNode:
         else:
             if not float_is_iterable:
                 return (float_val,)
-            # create a dummy mask of b,c,h,w=float_len,1,1,1 (1 channel, sigle pixel)
+            # create a dummy mask of b,h,w=float_len,1,1 (sigle pixel)
             # purpose is for float input to work with mask code, without special cases
             float_len = len(float_val) if float_is_iterable else 1
-            shape = (float_len,1,1,1)
+            shape = (float_len,1,1)
             mask_optional = torch.ones(shape)
             mask_optional = mask_optional * float_val
             return (mask_optional,)

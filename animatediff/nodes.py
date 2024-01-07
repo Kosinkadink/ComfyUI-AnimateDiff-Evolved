@@ -13,7 +13,7 @@ from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
 from .nodes_gen1 import AnimateDiffLoaderWithContext
-from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode
+from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode
 from .nodes_multival import MultivalDynamicNode, MultivalFloatNode, MultivalScaledMaskNode
 from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
@@ -121,9 +121,10 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ApplyAnimateDiffModel": ApplyAnimateDiffModelNode,
     "ADE_ApplyAnimateDiffModelSimple": ApplyAnimateDiffModelBasicNode,
     "ADE_LoadAnimateDiffModel": LoadAnimateDiffModelNode,
+    "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
     "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffSamplingSettings": SampleSettingsNode,
-    "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
+    "ADE_AnimateDiffKeyframe": ADKeyframeNode,
     # Multival Nodes
     "ADE_MultivalDynamic": MultivalDynamicNode,
     "ADE_MultivalScaledMask": MultivalScaledMaskNode,
@@ -155,9 +156,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_ApplyAnimateDiffModel": "Apply AnimateDiff Model (Adv.) 🎭🅐🅓②",
     "ADE_ApplyAnimateDiffModelSimple": "Apply AnimateDiff Model (Basic) 🎭🅐🅓②",
     "ADE_LoadAnimateDiffModel": "Load AnimateDiff Model 🎭🅐🅓②",
+    "ADE_AnimateDiffLoRALoader": "Load AnimateDiff LoRA 🎭🅐🅓",
     "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
     "ADE_AnimateDiffSamplingSettings": "Sample Settings 🎭🅐🅓",
-    "ADE_AnimateDiffLoRALoader": "Load AnimateDiff LoRA 🎭🅐🅓",
+    "ADE_AnimateDiffKeyframe": "AnimateDiff Keyframe 🎭🅐🅓",
     # Multival Nodes
     "ADE_MultivalDynamic": "Multival Dynamic 🎭🅐🅓",
     "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",

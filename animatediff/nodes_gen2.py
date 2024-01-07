@@ -7,8 +7,10 @@ from comfy.model_patcher import ModelPatcher
 from .context import ContextOptions, ContextSchedules, UniformContextOptions
 from .logger import logger
 from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
+from .motion_utils import ADKeygrameGroup, ADKeyframe
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings, load_motion_module, load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2
+from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings,
+                              load_motion_module, load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
@@ -85,9 +87,9 @@ class ApplyAnimateDiffModelNode:
             },
             "optional": {
                 "motion_lora": ("MOTION_LORA",),
-                "mm_timestep_kf": ("MM_TIMESTEP_KF",),
                 "scale_multival": ("MULTIVAL",),
                 "effect_multival": ("MULTIVAL",),
+                "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
             }
         }
@@ -97,7 +99,7 @@ class ApplyAnimateDiffModelNode:
     FUNCTION = "apply_motion_model"
 
     def apply_motion_model(self, motion_model: MotionModelPatcher, start_percent: float=0.0, end_percent: float=1.0,
-                           motion_lora: MotionLoraList=None, mm_timestep_kf=None,
+                           motion_lora: MotionLoraList=None, ad_keyframes: ADKeygrameGroup=None,
                            scale_multival=None, effect_multival=None,
                            prev_m_models: MotionModelGroup=None,):
         # set up motion models list
@@ -109,9 +111,10 @@ class ApplyAnimateDiffModelNode:
         if motion_lora is not None:
             for lora in motion_lora.loras:
                 load_motion_lora_as_patches(motion_model, lora)
-        # TODO: handle mm_timestep_kf
         motion_model.scale_multival = scale_multival
         motion_model.effect_multival = effect_multival
+        motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeygrameGroup()
+        motion_model.timestep_percent_range = (start_percent, end_percent)
         # add to beginning, so that after injection, it will be the earliest of prev_m_models to be run
         prev_m_models.add_to_start(mm=motion_model)
         return (prev_m_models,)
@@ -122,11 +125,13 @@ class ApplyAnimateDiffModelBasicNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "motion_model": ("MOTION_M",),
+                "motion_model": ("MOTION_MODEL_ADE",),
             },
             "optional": {
                 "motion_lora": ("MOTION_LORA",),
                 "scale_multival": ("MULTIVAL",),
+                "effect_multival": ("MULTIVAL",),
+                "ad_keyframes": ("AD_KEYFRAMES",),
             }
         }
     
@@ -136,10 +141,11 @@ class ApplyAnimateDiffModelBasicNode:
 
     def apply_motion_model(self,
                            motion_model: MotionModelPatcher, motion_lora: MotionLoraList=None,
-                           scale_multival=None,):
+                           scale_multival=None, effect_multival=None, ad_keyframes=None):
         # just a subset of normal ApplyAnimateDiffModelNode inputs
         return ApplyAnimateDiffModelNode.apply_motion_model(self, motion_model, motion_lora=motion_lora,
-                                                            scale_multival=scale_multival)
+                                                            scale_multival=scale_multival, effect_multival=effect_multival,
+                                                            ad_keyframes=ad_keyframes)
 
 
 class LoadAnimateDiffModelNode:
@@ -150,7 +156,7 @@ class LoadAnimateDiffModelNode:
                 "model_name": (get_available_motion_models(),),
             },
             "optional": {
-                "mm_settings": ("MOTION_MODEL_SETTINGS",),
+                "ad_settings": ("MOTION_MODEL_SETTINGS",),
             }
         }
 
@@ -159,7 +165,41 @@ class LoadAnimateDiffModelNode:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "load_motion_model"
 
-    def load_motion_model(self, model_name: str, mm_settings: MotionModelSettings=None):
+    def load_motion_model(self, model_name: str, ad_settings: MotionModelSettings=None):
         # load motion module and motion settings, if included
-        motion_model = load_motion_module_gen2(model_name=model_name, motion_model_settings=mm_settings)
+        motion_model = load_motion_module_gen2(model_name=model_name, motion_model_settings=ad_settings)
         return (motion_model,)
+
+
+class ADKeyframeNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}, ),
+            },
+            "optional": {
+                "prev_ad_keyframes": ("AD_KEYFRAMES", ),
+                "scale_multival": ("MULTIVAL",),
+                "effect_multival": ("MULTIVAL",),
+                "inherit_missing": ("BOOLEAN", {"default": True}, ),
+                "guarantee_usage": ("BOOLEAN", {"default": True}, ),
+            }
+        }
+    
+    RETURN_TYPES = ("AD_KEYFRAMES", )
+    FUNCTION = "load_keyframe"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓"
+
+    def load_keyframe(self,
+                      start_percent: float, prev_ad_keyframes=None,
+                      scale_multival: [float, torch.Tensor]=None, effect_multival: [float, torch.Tensor]=None,
+                      inherit_missing: bool=True, guarantee_usage: bool=True):
+        if not prev_ad_keyframes:
+            prev_ad_keyframes = ADKeygrameGroup()
+        prev_ad_keyframes.clone()
+        keyframe = ADKeyframe(start_percent=start_percent, scale_multival=scale_multival, effect_multival=effect_multival,
+                              inherit_missing=inherit_missing, guarantee_usage=guarantee_usage)
+        prev_ad_keyframes.add(keyframe)
+        return (prev_ad_keyframes,)

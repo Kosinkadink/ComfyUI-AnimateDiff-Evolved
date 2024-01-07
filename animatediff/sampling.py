@@ -32,7 +32,15 @@ class AnimateDiffHelper_GlobalState:
         self.params: InjectionParams = None
         self.reset()
     
+    def initialize(self, model):
+        # this function is to be run in sampling func
+        if not self.initialized:
+            self.initialized = True
+            if self.motion_models is not None:
+                self.motion_models.initialize_timesteps(model)
+
     def reset(self):
+        self.initialized = False
         self.start_step: int = 0
         self.last_step: int = 0
         self.current_step: int = 0
@@ -318,7 +326,6 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             function_injections.restore_functions(model)
             del function_injections
     return motion_sample
-
 
 
 def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None):
@@ -652,6 +659,9 @@ def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             del out_count_final
             return cond_final, uncond_final
 
+        ADGS.initialize(model)
+        if ADGS.motion_models is not None:
+            ADGS.motion_models.prepare_current_keyframe(t=timestep)
 
         if math.isclose(cond_scale, 1.0):
             uncond = None

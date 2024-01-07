@@ -540,6 +540,7 @@ class TemporalTransformer3DModel(nn.Module):
 
     def set_scale_mask(self, mask: Tensor):
         self.raw_scale_mask = mask
+        self.temp_scale_mask = None
 
     def set_sub_idxs(self, sub_idxs: list[int]):
         self.sub_idxs = sub_idxs
