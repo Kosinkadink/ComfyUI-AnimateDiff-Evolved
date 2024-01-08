@@ -3,9 +3,10 @@ import torch
 from torch import Tensor
 
 import comfy.sample
+import comfy.samplers
 from comfy.model_patcher import ModelPatcher
 
-from .freeinit import FreeInitFilter, freq_mix_3d, get_freq_filter
+from . import freeinit
 from .logger import logger
 
 
@@ -76,6 +77,11 @@ class SampleSettings:
             noise = noise_layer.apply_layer_noise(new_noise=layer_noise, old_noise=noise)
         # noise prepared now
         return noise
+    
+    def clone(self):
+        return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
+                           noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
+                           negative_cond_flipflop=self.negative_cond_flipflop)
 
 
 class NoiseLayer:
@@ -169,6 +175,7 @@ class NoiseLayerGroup:
 class SeedNoiseGeneration:
     COMFY = "comfy"
     AUTO1111 = "auto1111"
+    AUTO1111GPU = "auto1111 [gpu]" # TODO: implement this
     USE_EXISTING = "use existing"
 
     LIST = [COMFY, AUTO1111]
@@ -181,7 +188,7 @@ class SeedNoiseGeneration:
             seed_gen = existing_seed_gen
         if seed_gen == cls.COMFY:
             return cls.create_noise_comfy(seed, latents, noise_type, batch_offset, extra_args)
-        elif seed_gen == cls.AUTO1111:
+        elif seed_gen in [cls.AUTO1111, cls.AUTO1111GPU]:
             return cls.create_noise_auto1111(seed, latents, noise_type, batch_offset, extra_args)
         raise ValueError(f"Noise seed_gen {seed_gen} is not recognized.")
 
@@ -277,10 +284,13 @@ DERIVATIVE_NOISE_FUNC_MAP = {NoiseLayerType.REPEATED_CONTEXT: SeedNoiseGeneratio
 class IterationOptions:
     SAMPLER = "sampler"
 
-    def __init__(self, iterations: int=1, cache_init_noise=False, cache_init_latents=False):
+    def __init__(self, iterations: int=1, cache_init_noise=False, cache_init_latents=False,
+                 iter_batch_offset: int=0, iter_seed_offset: int=0):
         self.iterations = iterations
         self.cache_init_noise = cache_init_noise
         self.cache_init_latents = cache_init_latents
+        self.iter_batch_offset = iter_batch_offset
+        self.iter_seed_offset = iter_seed_offset
         self.need_sampler = False
 
     def get_sigma(self, model: ModelPatcher, step: int):
@@ -292,18 +302,29 @@ class IterationOptions:
     def initialize(self, latents: Tensor):
         pass
 
-    def preprocess_latents(self, curr_i: int, model: ModelPatcher, latents: Tensor, noise: Tensor, **kwargs):
-        return latents, noise
+    def preprocess_latents(self, curr_i: int, model: ModelPatcher, latents: Tensor, noise: Tensor,
+                           seed: int, sample_settings: SampleSettings, noise_extra_args: dict, **kwargs):
+        if curr_i == 0 or (self.iter_batch_offset == 0 and self.iter_seed_offset == 0):
+            return latents, noise
+        temp_sample_settings = sample_settings.clone()
+        temp_sample_settings.batch_offset += self.iter_batch_offset * curr_i
+        temp_sample_settings.seed_offset += self.iter_seed_offset * curr_i
+        return latents, temp_sample_settings.prepare_noise(seed=seed, latents=latents, noise=None,
+                                                    extra_args=noise_extra_args, force_create_noise=True)
 
 
 class FreeInitOptions(IterationOptions):
+    FREEINIT_SAMPLER = "FreeInit [sampler sigma]"
+    FREEINIT_MODEL = "FreeInit [model sigma]"
     DINKINIT_V1 = "DinkInit_v1"
 
-    LIST = [DINKINIT_V1]
+    LIST = [FREEINIT_SAMPLER, FREEINIT_MODEL, DINKINIT_V1]
 
     def __init__(self, iterations: int, step: int=999, apply_to_1st_iter: bool=False,
-                 filter=FreeInitFilter.GAUSSIAN, d_s=0.25, d_t=0.25, n=4):
-        super().__init__(iterations=iterations, cache_init_noise=True, cache_init_latents=True)
+                 filter=freeinit.FreeInitFilter.GAUSSIAN, d_s=0.25, d_t=0.25, n=4, init_type=FREEINIT_SAMPLER,
+                 iter_batch_offset: int=0, iter_seed_offset: int=1):
+        super().__init__(iterations=iterations, cache_init_noise=True, cache_init_latents=True,
+                         iter_batch_offset=iter_batch_offset, iter_seed_offset=iter_seed_offset)
         self.apply_to_1st_iter = apply_to_1st_iter
         self.step = step
         self.filter = filter
@@ -311,56 +332,58 @@ class FreeInitOptions(IterationOptions):
         self.d_t = d_t
         self.n = n
         self.freq_filter = None
-        self.need_sampler = True
+        self.freq_filter2 = None
+        self.need_sampler = True if init_type in [self.FREEINIT_SAMPLER] else False
+        self.init_type = init_type
 
     def initialize(self, latents: Tensor):
-        self.freq_filter = get_freq_filter(latents.shape, device=latents.device, filter_type=self.filter,
+        self.freq_filter = freeinit.get_freq_filter(latents.shape, device=latents.device, filter_type=self.filter,
                                            n=self.n, d_s=self.d_s, d_t=self.d_t)
     
     def preprocess_latents(self, curr_i: int, model: ModelPatcher, latents: Tensor, noise: Tensor, cached_latents: Tensor, cached_noise: Tensor,
-                           seed:int, sample_settings: SampleSettings, noise_extra_args: dict, **kwargs):
+                           seed:int, sample_settings: SampleSettings, noise_extra_args: dict, sampler: comfy.samplers.KSampler=None, **kwargs):
         # if first iter and should not apply, do nothing
         if curr_i == 0 and not self.apply_to_1st_iter:
             return latents, noise
-        # otherwise, do FreeInit stuff - DinkInit_v1
-        # 1. apply initial noise with appropriate step sigma
-        sigma = self.get_sigma(model, self.step).to(latents.device)
-        alpha_cumprod = 1 / ((sigma * sigma) + 1) #1 / ((sigma * sigma)) # 1 / ((sigma * sigma) + 1)
-        noised_latents = (latents + (cached_noise * sigma)) * alpha_cumprod
-        # 2. create random noise z_rand for high frequency
-        z_rand = sample_settings.prepare_noise(seed=seed, latents=latents, noise=None, extra_seed_offset=curr_i,
-                                                extra_args=noise_extra_args, force_create_noise=True)
-        ####z_rand = torch.randn_like(latents, dtype=latents.dtype, device=latents.device)
-        # 3. noise reinitialization - combines low freq. noise from noised_latents and high freq. noise from z_rand
-        noise = freq_mix_3d(x=noised_latents, noise=z_rand.to(dtype=latents.dtype, device=latents.device), LPF=self.freq_filter)
-        return cached_latents, noise
-    
-        #noised_latents, noise
-
-
         # otherwise, do FreeInit stuff
-        # 1. apply initial noise with appropriate step sigma
-        sigma = self.get_sigma(model, self.step).to(latents.device)
-        #####latents = model.model.process_latent_in(latents)
-        latents += noise * sigma
-        # 2. create random noise z_rand for high frequency
-        # Note: original implementation does not use a generator for this... could this cause repeatability issues?
-        z_rand = torch.randn_like(latents, dtype=latents.dtype, device=latents.device)
-        # 3. noise reinitialization
-        #latents = freq_mix_3d(x=latents, noise=z_rand, LPF=self.freq_filter)
-        noise = freq_mix_3d(x=noise, noise=z_rand, LPF=self.freq_filter)
-        # treat latents as empty, and freq-mixed latents as noise
-        #####latents = model.model.process_latent_out(latents)
-        return latents, noise
-        ######return torch.zeros_like(latents), latents
-
-        # otherwise, do FreeInit stuff
-        # 1. apply initial noise with appropriate step sigma (default=999)
-        sigma = self.get_sigma(model, self.step).to(latents.device)
-        latents += noise * sigma
-        # 2. create random noise z_rand for high frequency
-        # Note: original implementation does not use a generator for this... could this cause repeatability issues?
-        z_rand = torch.randn_like(latents, dtype=latents.dtype, device=latents.device)
-        # 3. noise reinitialization
-        latents = freq_mix_3d(x=latents, noise=z_rand, LPF=self.freq_filter)
-        return latents, noise
+        if self.init_type in [self.FREEINIT_SAMPLER, self.FREEINIT_MODEL]:
+            # NOTE: This should be very close (if not exactly) to how FreeInit is intended to initialize noise the latents.
+            #       The trick is that FreeInit is dependent on the behavior of diffuser's DDIMScheduler.add_noise function.
+            #       The typical noising method of latents + noise * sigma will NOT work.
+            # 1. apply initial noise with appropriate step sigma, normalized against scale_factor
+            if sampler is not None:
+                sigma = sampler.sigmas[999-self.step].to(latents.device) / (model.model.latent_format.scale_factor)
+            else:
+                sigma = self.get_sigma(model, self.step).to(latents.device) / (model.model.latent_format.scale_factor)
+            alpha_cumprod = 1 / ((sigma * sigma) + 1)
+            sqrt_alpha_prod = alpha_cumprod ** 0.5
+            sqrt_one_minus_alpha_prod = (1 - alpha_cumprod) ** 0.5
+            noised_latents = latents * sqrt_alpha_prod + noise * sqrt_one_minus_alpha_prod
+            # 2. create random noise z_rand for high frequency
+            temp_sample_settings = sample_settings.clone()
+            temp_sample_settings.batch_offset += self.iter_batch_offset * curr_i
+            temp_sample_settings.seed_offset += self.iter_seed_offset * curr_i
+            z_rand = temp_sample_settings.prepare_noise(seed=seed, latents=latents, noise=None,
+                                                    extra_args=noise_extra_args, force_create_noise=True)
+            # 3. noise reinitialization - combines low freq. noise from noised_latents and high freq. noise from z_rand
+            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand.to(dtype=latents.dtype, device=latents.device), LPF=self.freq_filter)
+            return cached_latents, noised_latents
+        elif self.init_type == self.DINKINIT_V1:
+            # NOTE: This was my first attempt at implementing FreeInit; it sorta works due to my alpha_cumprod shenanigans,
+            #       but completely by accident.
+            # 1. apply initial noise with appropriate step sigma
+            sigma = self.get_sigma(model, self.step).to(latents.device)
+            alpha_cumprod = 1 / ((sigma * sigma) + 1) #1 / ((sigma * sigma)) # 1 / ((sigma * sigma) + 1)
+            noised_latents = (latents + (cached_noise * sigma)) * alpha_cumprod
+            # 2. create random noise z_rand for high frequency
+            temp_sample_settings = sample_settings.clone()
+            temp_sample_settings.batch_offset += self.iter_batch_offset * curr_i
+            temp_sample_settings.seed_offset += self.iter_seed_offset * curr_i
+            z_rand = temp_sample_settings.prepare_noise(seed=seed, latents=latents, noise=None,
+                                                    extra_args=noise_extra_args, force_create_noise=True)
+            ####z_rand = torch.randn_like(latents, dtype=latents.dtype, device=latents.device)
+            # 3. noise reinitialization - combines low freq. noise from noised_latents and high freq. noise from z_rand
+            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand.to(dtype=latents.dtype, device=latents.device), LPF=self.freq_filter)
+            return cached_latents, noised_latents
+        else:
+            raise ValueError(f"FreeInit init_type '{self.init_type}' is not recognized.")

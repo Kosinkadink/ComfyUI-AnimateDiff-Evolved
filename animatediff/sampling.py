@@ -286,11 +286,12 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             iter_kwargs = {}
             if iter_opts.need_sampler:
                 # -5 for sampler_name (not custom) and sampler (custom)
+                model_management.load_model_gpu(model)
                 if is_custom:
-                    iter_kwargs[IterationOptions.SAMPLER] = args[-5]
+                    iter_kwargs[IterationOptions.SAMPLER] = None #args[-5]
                 else:
                     iter_kwargs[IterationOptions.SAMPLER] = comfy.samplers.KSampler(
-                        model.model, steps=args[-7],
+                        model.model, steps=999, #steps=args[-7],
                         device=model.current_device, sampler=args[-5],
                         scheduler=args[-4], denoise=kwargs["denoise"],
                         model_options=model.model_options)
@@ -308,7 +309,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                 latents, noise = iter_opts.preprocess_latents(curr_i=curr_i, model=model, latents=latents, noise=noise,
                                                               cached_latents=cached_latents, cached_noise=cached_noise,
                                                               seed=seed,
-                                                              sample_settings=model.sample_settings, noise_extra_args=noise_extra_args)
+                                                              sample_settings=model.sample_settings, noise_extra_args=noise_extra_args,
+                                                              **iter_kwargs)
                 args[-1] = latents
 
                 if model.motion_models is not None:

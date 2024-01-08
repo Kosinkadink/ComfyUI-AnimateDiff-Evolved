@@ -139,7 +139,8 @@ class AnimateDiffCombine_Deprecated:
         else:
             ffmpeg_formats = []
             if not s.ffmpeg_warning_already_shown:
-                logger.warning("This warning can be ignored, you should not be using the deprecated AnimateDiff Combine node anyway. If you are, use Video Combine from ComfyUI-VideoHelperSuite instead. ffmpeg could not be found. Outputs that require it have been disabled")
+                # Deprecated node are now hidden, so no need to show warning unless node is used.
+                # logger.warning("This warning can be ignored, you should not be using the deprecated AnimateDiff Combine node anyway. If you are, use Video Combine from ComfyUI-VideoHelperSuite instead. ffmpeg could not be found. Outputs that require it have been disabled")
                 s.ffmpeg_warning_already_shown = True
         return {
             "required": {

@@ -161,6 +161,8 @@ def calculate_model_hash(model: ModelPatcher):
         m.update(buf.cpu().numpy().view(np.uint8))
     return m.hexdigest()
 
+BIGMIN = -(2**63-1)
+BIGMAX = (2**63-1)
 
 class ModelTypeSD:
     SD1_5 = "SD1.5"
