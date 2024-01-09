@@ -510,6 +510,7 @@ class InjectionParams:
     
     def set_noise_extra_args(self, noise_extra_args: dict):
         noise_extra_args["context_length"] = self.context_length
+        noise_extra_args["context_overlap"] = self.context_overlap
 
     def set_context(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool, sync_context_to_pe: bool=False):
         self.context_length = context_length

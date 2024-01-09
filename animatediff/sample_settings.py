@@ -25,8 +25,9 @@ class NoiseLayerType:
     CONSTANT = "constant"
     EMPTY = "empty"
     REPEATED_CONTEXT = "repeated_context"
+    FREENOISE = "FreeNoise"
 
-    LIST = [DEFAULT, CONSTANT, EMPTY, REPEATED_CONTEXT]
+    LIST = [DEFAULT, CONSTANT, EMPTY, REPEATED_CONTEXT, FREENOISE]
 
 
 class NoiseApplication:
@@ -209,7 +210,7 @@ class SeedNoiseGeneration:
         final_noise = torch.randn(offset_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu")
         final_noise = final_noise[batch_offset:]
         # convert to derivative noise type, if needed
-        derivative_noise = SeedNoiseGeneration._create_derivative_noise(final_noise, noise_type=noise_type, extra_args=extra_args)
+        derivative_noise = SeedNoiseGeneration._create_derivative_noise(final_noise, noise_type=noise_type, seed=seed, extra_args=extra_args)
         if derivative_noise is not None:
             return derivative_noise
         return final_noise
@@ -235,7 +236,7 @@ class SeedNoiseGeneration:
             all_noises.append(torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu"))
         final_noise = torch.cat(all_noises, dim=0)
         # convert to derivative noise type, if needed
-        derivative_noise = SeedNoiseGeneration._create_derivative_noise(final_noise, noise_type=noise_type, extra_args=extra_args)
+        derivative_noise = SeedNoiseGeneration._create_derivative_noise(final_noise, noise_type=noise_type, seed=seed, extra_args=extra_args)
         if derivative_noise is not None:
             return derivative_noise
         return final_noise
@@ -260,14 +261,14 @@ class SeedNoiseGeneration:
         return None
     
     @staticmethod
-    def _create_derivative_noise(noise: Tensor, noise_type: str, extra_args: dict):
+    def _create_derivative_noise(noise: Tensor, noise_type: str, seed: int, extra_args: dict):
         derivative_func = DERIVATIVE_NOISE_FUNC_MAP.get(noise_type, None)
         if derivative_func is None:
             return None
-        return derivative_func(noise=noise, extra_args=extra_args)
+        return derivative_func(noise=noise, seed=seed, extra_args=extra_args)
 
     @staticmethod
-    def _convert_to_repeated_context(noise: Tensor, extra_args: dict):
+    def _convert_to_repeated_context(noise: Tensor, extra_args: dict, **kwargs):
         # if no context_length, return unmodified noise
         context_length: int = extra_args["context_length"]
         if context_length is None:
@@ -277,8 +278,50 @@ class SeedNoiseGeneration:
         cat_count = (length // context_length) + 1
         return torch.cat([noise] * cat_count, dim=0)[:length]
 
+    @staticmethod
+    def _convert_to_freenoise(noise: Tensor, extra_args: dict, seed: int, **kwargs):
+        # if no context_length, return unmodified noise
+        context_length: int = extra_args["context_length"]
+        context_overlap: int = extra_args["context_overlap"]
+        video_length: int = noise.shape[0]
+        if context_length is None:
+            return noise
+        delta = context_length - context_overlap
+        generator = torch.manual_seed(seed)
 
-DERIVATIVE_NOISE_FUNC_MAP = {NoiseLayerType.REPEATED_CONTEXT: SeedNoiseGeneration._convert_to_repeated_context,}
+        for start_idx in range(0, video_length-context_length, delta):
+            # start_idx corresponds to the beginning of a context window
+            # goal: place shuffled in the delta region right after the end of the context window
+            #       if space after context window is not enough to place the noise, adjust and finish
+            place_idx = start_idx + context_length
+            # if place_idx is outside the valid indexes, we are already finished
+            if place_idx >= video_length:
+                break
+            end_idx = place_idx - 1
+            # if there is not enough room to copy delta amount of indexes, copy limited amount and finish
+            if end_idx + delta >= video_length:
+                final_delta = video_length - place_idx
+                # generate list of indexes in final delta region
+                list_idx = torch.Tensor(list(range(start_idx,start_idx+final_delta))).to(torch.long)
+                # shuffle list
+                list_idx = list_idx[torch.randperm(final_delta, generator=generator)]
+                # apply shuffled indexes
+                noise[place_idx:place_idx+final_delta] = noise[list_idx]
+                break
+            # otherwise, do normal behavior
+            # generate list of indexes in delta region
+            list_idx = torch.Tensor(list(range(start_idx,start_idx+delta))).to(torch.long)
+            # shuffle list
+            list_idx = list_idx[torch.randperm(delta, generator=generator)]
+            # apply shuffled indexes
+            noise[place_idx:place_idx+delta] = noise[list_idx]
+        return noise
+
+
+DERIVATIVE_NOISE_FUNC_MAP = {
+    NoiseLayerType.REPEATED_CONTEXT: SeedNoiseGeneration._convert_to_repeated_context,
+    NoiseLayerType.FREENOISE: SeedNoiseGeneration._convert_to_freenoise,
+    }
 
 
 class IterationOptions:

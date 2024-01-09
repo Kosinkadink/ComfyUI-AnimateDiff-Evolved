@@ -78,49 +78,31 @@ ADGS = AnimateDiffHelper_GlobalState()
 
 # refer to forward_timestep_embed in comfy/ldm/modules/diffusionmodules/openaimodel.py
 def forward_timestep_embed_factory() -> Callable:
-    if hasattr(attention, "SpatialVideoTransformer"):
-        def forward_timestep_embed(ts, x, emb, context=None, transformer_options={}, output_shape=None, time_context=None, num_video_frames=None, image_only_indicator=None):
-            for layer in ts:
-                if isinstance(layer, openaimodel.VideoResBlock):
-                    x = layer(x, emb, num_video_frames, image_only_indicator)
-                elif isinstance(layer, openaimodel.TimestepBlock):
-                    x = layer(x, emb)
-                elif isinstance(layer, VanillaTemporalModule):
-                    x = layer(x, context)
-                elif isinstance(layer, attention.SpatialVideoTransformer):
-                    x = layer(x, context, time_context, num_video_frames, image_only_indicator, transformer_options)
-                    if "transformer_index" in transformer_options:
-                        transformer_options["transformer_index"] += 1
-                    if "current_index" in transformer_options: # keep this for backward compat, for now
-                        transformer_options["current_index"] += 1
-                elif isinstance(layer, attention.SpatialTransformer):
-                    x = layer(x, context, transformer_options)
-                    if "transformer_index" in transformer_options:
-                        transformer_options["transformer_index"] += 1
-                    if "current_index" in transformer_options:  # keep this for backward compat, for now
-                        transformer_options["current_index"] += 1
-                elif isinstance(layer, openaimodel.Upsample):
-                    x = layer(x, output_shape=output_shape)
-                else:
-                    x = layer(x)
-            return x
-    # keep old version for backwards compatibility (TODO: remove at end of 2023)
-    else:
-        def forward_timestep_embed(ts, x, emb, context=None, transformer_options={}, output_shape=None):
-            for layer in ts:
-                if isinstance(layer, openaimodel.TimestepBlock):
-                    x = layer(x, emb)
-                elif isinstance(layer, VanillaTemporalModule):
-                    x = layer(x, context)
-                elif isinstance(layer, attention.SpatialTransformer):
-                    x = layer(x, context, transformer_options)
-                    if "current_index" in transformer_options:
-                        transformer_options["current_index"] += 1
-                elif isinstance(layer, openaimodel.Upsample):
-                    x = layer(x, output_shape=output_shape)
-                else:
-                    x = layer(x)
-            return x
+    def forward_timestep_embed(ts, x, emb, context=None, transformer_options={}, output_shape=None, time_context=None, num_video_frames=None, image_only_indicator=None):
+        for layer in ts:
+            if isinstance(layer, openaimodel.VideoResBlock):
+                x = layer(x, emb, num_video_frames, image_only_indicator)
+            elif isinstance(layer, openaimodel.TimestepBlock):
+                x = layer(x, emb)
+            elif isinstance(layer, VanillaTemporalModule):
+                x = layer(x, context)
+            elif isinstance(layer, attention.SpatialVideoTransformer):
+                x = layer(x, context, time_context, num_video_frames, image_only_indicator, transformer_options)
+                if "transformer_index" in transformer_options:
+                    transformer_options["transformer_index"] += 1
+                if "current_index" in transformer_options: # keep this for backward compat, for now
+                    transformer_options["current_index"] += 1
+            elif isinstance(layer, attention.SpatialTransformer):
+                x = layer(x, context, transformer_options)
+                if "transformer_index" in transformer_options:
+                    transformer_options["transformer_index"] += 1
+                if "current_index" in transformer_options:  # keep this for backward compat, for now
+                    transformer_options["current_index"] += 1
+            elif isinstance(layer, openaimodel.Upsample):
+                x = layer(x, output_shape=output_shape)
+            else:
+                x = layer(x)
+        return x
     return forward_timestep_embed
 
 
