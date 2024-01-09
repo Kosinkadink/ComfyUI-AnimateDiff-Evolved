@@ -330,7 +330,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
     return motion_sample
 
 
-def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None):
+def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS.initialize(model)
     if ADGS.motion_models is not None:
         ADGS.motion_models.prepare_current_keyframe(t=timestep)
@@ -341,6 +341,7 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
         uncond_ = uncond
 
     # add AD/evolved-sampling params to model_options (transformer_options)
+    model_options = model_options.copy()
     if "tranformer_options" not in model_options:
         model_options["tranformer_options"] = {}
     model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
