@@ -4,30 +4,50 @@ from typing import Callable, Optional
 import numpy as np
 
 
+class ContextFuseMethod:
+    FLAT = "flat"
+    PYRAMID = "pyramid"
+
+    LIST = [FLAT, PYRAMID]
+
+
 class ContextType:
     UNIFORM_WINDOW = "uniform window"
 
 
 class ContextOptions:
-    CONTEXT_TYPE = None
-
     def __init__(self):
-        pass
+        self.context_length = None
+        self.context_stride = None
+        self.context_overlap = None
+        self.context_schedule = None
+        self.closed_loop = None
+        self.fuse_method = None
+        self.sync_context_to_pe = False
+    
+    def clone(self):
+        return ContextOptions()
 
 
 class UniformContextOptions(ContextOptions):
-    CONTEXT_TYPE = ContextType.UNIFORM_WINDOW
-
-    def __init__(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool):
+    def __init__(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool,
+                 fuse_method: str=ContextFuseMethod.FLAT):
         self.context_length = context_length
         self.context_stride = context_stride
         self.context_overlap = context_overlap
         self.context_schedule = context_schedule
         self.closed_loop = closed_loop
+        self.fuse_method = fuse_method
         self.sync_context_to_pe = False
     
     def set_sync_context_to_pe(self, sync_context_to_pe: bool):
         self.sync_context_to_pe = sync_context_to_pe
+
+    def clone(self):
+        n = UniformContextOptions(context_length=self.context_length, context_stride=self.context_stride,
+                                  context_overlap=self.context_overlap, context_schedule=self.context_schedule,
+                                  closed_loop=self.closed_loop, fuse_method=self.fuse_method)
+        return n
 
 
 class ContextSchedules:
@@ -36,6 +56,16 @@ class ContextSchedules:
     UNIFORM_V2 = "uniform v2"
 
     CONTEXT_SCHEDULE_LIST = [UNIFORM] # only include somewhat functional contexts here
+
+
+def generate_distance_weight(n):
+    if n % 2 == 0:
+        max_weight = n // 2
+        weight_sequence = list(range(1, max_weight + 1, 1)) + list(range(max_weight, 0, -1))
+    else:
+        max_weight = (n + 1) // 2
+        weight_sequence = list(range(1, max_weight, 1)) + [max_weight] + list(range(max_weight - 1, 0, -1))
+    return weight_sequence
 
 
 # Returns fraction that has denominator that is a power of 2
@@ -56,33 +86,29 @@ def ordered_halving(val, print_final=False):
 
 # Generator that returns lists of latent indeces to diffuse on
 def uniform(
-    step: int = ...,
-    num_steps: Optional[int] = None,
-    num_frames: int = ...,
-    context_size: Optional[int] = None,
-    context_stride: int = 3,
-    context_overlap: int = 4,
-    closed_loop: bool = True,
+    step: int,
+    num_frames: int,
+    opts: ContextOptions,
     print_final: bool = False,
 ):
-    if num_frames <= context_size:
+    if num_frames <= opts.context_length:
         yield list(range(num_frames))
         return
 
-    context_stride = min(context_stride, int(np.ceil(np.log2(num_frames / context_size))) + 1)
+    context_stride = min(opts.context_stride, int(np.ceil(np.log2(num_frames / opts.context_length))) + 1)
 
     for context_step in 1 << np.arange(context_stride):
         pad = int(round(num_frames * ordered_halving(step, print_final)))
         for j in range(
             int(ordered_halving(step) * context_step) + pad,
-            num_frames + pad + (0 if closed_loop else -context_overlap),
-            (context_size * context_step - context_overlap),
+            num_frames + pad + (0 if opts.closed_loop else -opts.context_overlap),
+            (opts.context_length * context_step - opts.context_overlap),
         ):
-            yield [e % num_frames for e in range(j, j + context_size * context_step, context_step)]
+            yield [e % num_frames for e in range(j, j + opts.context_length * context_step, context_step)]
+
 
 def uniform_v2(
     step: int = ...,
-    num_steps: Optional[int] = None,
     num_frames: int = ...,
     context_size: Optional[int] = None,
     context_stride: int = 3,
@@ -128,7 +154,6 @@ def uniform_v2(
 
 def uniform_constant(
     step: int = ...,
-    num_steps: Optional[int] = None,
     num_frames: int = ...,
     context_size: Optional[int] = None,
     context_stride: int = 3,
@@ -171,8 +196,8 @@ def uniform_constant(
 # This needs to stay here below the context functions
 UNIFORM_CONTEXT_MAPPING = {
     ContextSchedules.UNIFORM: uniform,
-    ContextSchedules.UNIFORM_CONSTANT: uniform_constant,
-    ContextSchedules.UNIFORM_V2: uniform_v2,
+    #ContextSchedules.UNIFORM_CONSTANT: uniform_constant,
+    #ContextSchedules.UNIFORM_V2: uniform_v2,
 }
 
 
@@ -183,7 +208,8 @@ def get_context_scheduler(name: str) -> Callable:
         raise ValueError(f"Unknown context_overlap policy {name}")
     return context_func
 
-
+#################################
+#  helper funcs for testing
 def get_total_steps(
     scheduler,
     timesteps: list[int],

@@ -53,16 +53,7 @@ class AnimateDiffLoaderWithContext:
                 apply_v2_properly=apply_v2_models_properly,
         )
         if context_options:
-            # set context settings TODO: make this dynamic for future purposes
-            if type(context_options) == UniformContextOptions:
-                params.set_context(
-                        context_length=context_options.context_length,
-                        context_stride=context_options.context_stride,
-                        context_overlap=context_options.context_overlap,
-                        context_schedule=context_options.context_schedule,
-                        closed_loop=context_options.closed_loop,
-                        sync_context_to_pe=context_options.sync_context_to_pe,
-                )
+            params.set_context(context_options)
         # set motion_scale and motion_model_settings
         if not motion_model_settings:
             motion_model_settings = MotionModelSettings()

@@ -11,6 +11,7 @@ import comfy.utils
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
 
+from .context import ContextOptions, UniformContextOptions
 from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
 from .motion_utils import ADKeyframe, ADKeygrameGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
@@ -499,27 +500,19 @@ class InjectionParams:
         self.apply_mm_groupnorm_hack = apply_mm_groupnorm_hack
         self.model_name = model_name
         self.apply_v2_properly = apply_v2_properly
-        self.context_length: int = None
-        self.context_stride: int = None
-        self.context_overlap: int = None
-        self.context_schedule: str = None
-        self.closed_loop: bool = False
-        self.sync_context_to_pe = False
+        self.context_options: ContextOptions = ContextOptions()
         self.motion_model_settings = MotionModelSettings() # Gen1
         self.sub_idxs = None  # value should NOT be included in clone, so it will auto reset
     
     def set_noise_extra_args(self, noise_extra_args: dict):
-        noise_extra_args["context_length"] = self.context_length
-        noise_extra_args["context_overlap"] = self.context_overlap
+        noise_extra_args["context_options"] = self.context_options.clone()
 
-    def set_context(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: str, closed_loop: bool, sync_context_to_pe: bool=False):
-        self.context_length = context_length
-        self.context_stride = context_stride
-        self.context_overlap = context_overlap
-        self.context_schedule = context_schedule
-        self.closed_loop = closed_loop
-        self.sync_context_to_pe = sync_context_to_pe
+    def set_context(self, context_options: ContextOptions):
+        self.context_options = context_options.clone() if context_options else ContextOptions()
     
+    def is_using_sliding_context(self) -> bool:
+        return self.context_options.context_length is not None
+
     def set_motion_model_settings(self, motion_model_settings: 'MotionModelSettings'): # Gen1
         if motion_model_settings is None:
             self.motion_model_settings = MotionModelSettings()
@@ -527,11 +520,7 @@ class InjectionParams:
             self.motion_model_settings = motion_model_settings
 
     def reset_context(self):
-        self.context_length = None
-        self.context_stride = None
-        self.context_overlap = None
-        self.context_schedule = None
-        self.closed_loop = False
+        self.context_options = ContextOptions()
     
     def clone(self) -> 'InjectionParams':
         new_params = InjectionParams(
@@ -539,11 +528,7 @@ class InjectionParams:
             self.model_name, apply_v2_properly=self.apply_v2_properly,
             )
         new_params.full_length = self.full_length
-        new_params.set_context(
-            context_length=self.context_length, context_stride=self.context_stride,
-            context_overlap=self.context_overlap, context_schedule=self.context_schedule,
-            closed_loop=self.closed_loop, sync_context_to_pe=self.sync_context_to_pe,
-            )
+        new_params.set_context(self.context_options)
         new_params.set_motion_model_settings(self.motion_model_settings) # Gen1
         return new_params
 

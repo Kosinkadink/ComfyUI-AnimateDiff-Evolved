@@ -14,7 +14,7 @@ import comfy.sample
 import comfy.utils
 from comfy.controlnet import ControlBase
 
-from .context import get_context_scheduler
+from .context import ContextFuseMethod, generate_distance_weight, get_context_scheduler
 from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
 from .motion_utils import GroupNormAD
 from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
@@ -56,7 +56,7 @@ class AnimateDiffHelper_GlobalState:
         self.params = params
 
     def is_using_sliding_context(self):
-        return self.params is not None and self.params.context_length is not None
+        return self.params is not None and self.params.is_using_sliding_context()
     
     def create_exposed_params(self):
         # This dict will be exposed to be used by other extensions
@@ -64,7 +64,7 @@ class AnimateDiffHelper_GlobalState:
         # or I will find you 👁.👁
         return {
             "full_length": self.params.full_length,
-            "context_length": self.params.context_length,
+            "context_length": self.params.context_options.context_length,
             "sub_idxs": self.params.sub_idxs,
         }
 
@@ -114,10 +114,10 @@ def groupnorm_mm_factory(params: InjectionParams):
     def groupnorm_mm_forward(self, input: Tensor) -> Tensor:
         # axes_factor normalizes batch based on total conds and unconds passed in batch;
         # the conds and unconds per batch can change based on VRAM optimizations that may kick in
-        if not ADGS.is_using_sliding_context():
+        if not params.is_using_sliding_context():
             axes_factor = input.size(0)//params.full_length
         else:
-            axes_factor = input.size(0)//params.context_length
+            axes_factor = input.size(0)//params.context_options.context_length
 
         input = rearrange(input, "(b f) c h w -> b c f h w", b=axes_factor)
         input = group_norm(input, self.num_groups, self.weight, self.bias, self.eps)
@@ -141,14 +141,14 @@ def get_additional_models_factory(orig_get_additional_models: Callable, motion_m
 
 def apply_params_to_motion_models(motion_models: MotionModelGroup, params: InjectionParams):
     params = params.clone()
-    if params.context_length and params.full_length > params.context_length:
-        logger.info(f"Sliding context window activated - latents passed in ({params.full_length}) greater than context_length {params.context_length}.")
+    if params.context_options.context_length and params.full_length > params.context_options.context_length:
+        logger.info(f"Sliding context window activated - latents passed in ({params.full_length}) greater than context_length {params.context_options.context_length}.")
     else:
-        logger.info(f"Regular AnimateDiff activated - latents passed in ({params.full_length}) less or equal to context_length {params.context_length}.")
+        logger.info(f"Regular AnimateDiff activated - latents passed in ({params.full_length}) less or equal to context_length {params.context_options.context_length}.")
         params.reset_context()
     if motion_models is not None:
         # if no context_length, treat video length as intended AD frame window
-        if not params.context_length:
+        if not params.context_options.context_length:
             for motion_model in motion_models.models:
                 if params.full_length > motion_model.model.encoding_max_len:
                     raise ValueError(f"Without a context window, AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames, but received {params.full_length} latents.")
@@ -156,9 +156,9 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
         # otherwise, treat context_length as intended AD frame window
         else:
             for motion_model in motion_models.models:
-                if params.context_length > motion_model.model.encoding_max_len:
-                    raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_length}.")
-            motion_models.set_video_length(params.context_length, params.full_length)
+                if params.context_options.context_length > motion_model.model.encoding_max_len:
+                    raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_options.context_length}.")
+            motion_models.set_video_length(params.context_options.context_length, params.full_length)
         # inject model
         module_str = "modules" if len(motion_models.models) > 1 else "module"
         logger.info(f"Using motion {module_str} {motion_models.get_name_string(show_version=True)}.")
@@ -228,15 +228,16 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             params.full_length = latents.size(0)
             # reset global state
             ADGS.reset()
-            # store and inject functions
-            function_injections.inject_functions(model, params)
 
             # apply custom noise, if needed
             disable_noise = kwargs.get("disable_noise") or False
             seed = kwargs["seed"]
 
             # apply params to motion model
-            apply_params_to_motion_models(model.motion_models, params)
+            params = apply_params_to_motion_models(model.motion_models, params)
+
+            # store and inject functions
+            function_injections.inject_functions(model, params)
 
             # prepare noise_extra_args for noise generation purposes
             noise_extra_args = {"disable_noise": disable_noise}
@@ -350,23 +351,13 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
 
 # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
-def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
-    # get context scheduler
-    context_scheduler = get_context_scheduler(ADGS.params.context_schedule)
-    # figure out how input is split
-    axes_factor = x_in.size(0)//ADGS.params.full_length
-
-    # prepare final cond, uncond, and out_count
-    cond_final = torch.zeros_like(x_in)
-    uncond_final = torch.zeros_like(x_in)
-    out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
-
+def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, model_options):
     def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
         if control.previous_controlnet is not None:
             prepare_control_objects(control.previous_controlnet, full_idxs)
         control.sub_idxs = full_idxs
         control.full_latent_length = ADGS.params.full_length
-        control.context_length = ADGS.params.context_length
+        control.context_length = ADGS.params.context_options.context_length
     
     def get_resized_cond(cond_in, full_idxs) -> list:
         # reuse or resize cond items to match context requirements
@@ -415,8 +406,18 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_op
             resized_cond.append(resized_actual_cond)
         return resized_cond
 
+    # get context scheduler
+    context_scheduler = get_context_scheduler(ADGS.params.context_options.context_schedule)
+    # figure out how input is split
+    axes_factor = x_in.size(0)//ADGS.params.full_length
+
+    # prepare final cond, uncond, and out_count
+    cond_final = torch.zeros_like(x_in)
+    uncond_final = torch.zeros_like(x_in)
+    out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
+
     # perform calc_cond_uncond_batch per context window
-    for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.params.full_length, ADGS.params.context_length, ADGS.params.context_stride, ADGS.params.context_overlap, ADGS.params.closed_loop):
+    for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.params.full_length, ADGS.params.context_options):
         ADGS.params.sub_idxs = ctx_idxs
         if ADGS.motion_models is not None:
             ADGS.motion_models.set_sub_idxs(ctx_idxs)
@@ -434,9 +435,18 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_op
 
         sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
 
-        cond_final[full_idxs] += sub_cond_out
-        uncond_final[full_idxs] += sub_uncond_out
-        out_count_final[full_idxs] += 1 # increment which indeces were used
+        if ADGS.params.context_options.fuse_method == ContextFuseMethod.FLAT:
+            # equal weights for idxs
+            cond_final[full_idxs] += sub_cond_out
+            uncond_final[full_idxs] += sub_uncond_out
+            out_count_final[full_idxs] += 1  # increment which indeces were used
+        elif ADGS.params.context_options.fuse_method == ContextFuseMethod.PYRAMID:
+            # greater weight towards center of idxs
+            weights = torch.Tensor(generate_distance_weight(len(ctx_idxs)) * axes_factor).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            cond_final[full_idxs] += sub_cond_out * weights
+            uncond_final[full_idxs] += sub_uncond_out * weights
+            out_count_final[full_idxs] += weights
+
 
     # normalize cond and uncond via division by context usage counts
     cond_final /= out_count_final

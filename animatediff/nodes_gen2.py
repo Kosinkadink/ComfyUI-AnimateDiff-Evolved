@@ -51,15 +51,7 @@ class UseEvolvedSamplingNode:
             params = InjectionParams()
         # apply context options
         if context_options:
-            if type(context_options) == UniformContextOptions:
-                params.set_context(
-                        context_length=context_options.context_length,
-                        context_stride=context_options.context_stride,
-                        context_overlap=context_options.context_overlap,
-                        context_schedule=context_options.context_schedule,
-                        closed_loop=context_options.closed_loop,
-                        sync_context_to_pe=context_options.sync_context_to_pe,
-                )
+            params.set_context(context_options)
         # need to use a ModelPatcher that supports injection of motion modules into unet
         model = ModelPatcherAndInjector(model)
         model.motion_models = m_models

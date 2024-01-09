@@ -4,7 +4,7 @@ import torch
 import comfy.sample as comfy_sample
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextOptions, ContextSchedules, UniformContextOptions
+from .context import ContextFuseMethod, ContextOptions, ContextSchedules, UniformContextOptions
 from .logger import logger
 from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .motion_lora import MotionLoraInfo, MotionLoraList
@@ -97,19 +97,24 @@ class AnimateDiffUniformContextOptions:
                 "closed_loop": ("BOOLEAN", {"default": False},),
                 #"sync_context_to_pe": ("BOOLEAN", {"default": False},),
             },
+            "optional": {
+                "fuse_method": (ContextFuseMethod.LIST,),
+            }
         }
     
     RETURN_TYPES = ("CONTEXT_OPTIONS",)
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "create_options"
 
-    def create_options(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool):
+    def create_options(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool,
+                       fuse_method: str=ContextFuseMethod.FLAT):
         context_options = UniformContextOptions(
             context_length=context_length,
             context_stride=context_stride,
             context_overlap=context_overlap,
             context_schedule=context_schedule,
-            closed_loop=closed_loop
+            closed_loop=closed_loop,
+            fuse_method=fuse_method,
             )
         #context_options.set_sync_context_to_pe(sync_context_to_pe)
         return (context_options,)
