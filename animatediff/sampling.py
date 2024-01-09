@@ -209,7 +209,7 @@ class FunctionInjectionHolder:
                 if params.apply_mm_groupnorm_hack:
                     GroupNormAD.forward = groupnorm_mm_factory(params)
             del info
-        comfy.samplers.sampling_function = sliding_sampling_function
+        comfy.samplers.sampling_function = evolved_sampling_function
         comfy.sample.prepare_mask = prepare_mask_ad
         comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
 
@@ -330,350 +330,133 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
     return motion_sample
 
 
-def sliding_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None):
-        def get_area_and_mult(conds, x_in, timestep_in):
-            area = (x_in.shape[2], x_in.shape[3], 0, 0)
-            strength = 1.0
+def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options={}, seed=None):
+    ADGS.initialize(model)
+    if ADGS.motion_models is not None:
+        ADGS.motion_models.prepare_current_keyframe(t=timestep)
 
-            if 'timestep_start' in conds:
-                timestep_start = conds['timestep_start']
-                if timestep_in[0] > timestep_start:
-                    return None
-            if 'timestep_end' in conds:
-                timestep_end = conds['timestep_end']
-                if timestep_in[0] < timestep_end:
-                    return None
-            if 'area' in conds:
-                area = conds['area']
-            if 'strength' in conds:
-                strength = conds['strength']
+    if math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
+        uncond_ = None
+    else:
+        uncond_ = uncond
 
-            input_x = x_in[:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]]
-            if 'mask' in conds:
-                # Scale the mask to the size of the input
-                # The mask should have been resized as we began the sampling process
-                mask_strength = 1.0
-                if "mask_strength" in conds:
-                    mask_strength = conds["mask_strength"]
-                mask = conds['mask']
-                assert(mask.shape[1] == x_in.shape[2])
-                assert(mask.shape[2] == x_in.shape[3])
-                mask = mask[:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]] * mask_strength
-                mask = mask.unsqueeze(1).repeat(input_x.shape[0] // mask.shape[0], input_x.shape[1], 1, 1)
-            else:
-                mask = torch.ones_like(input_x)
-            mult = mask * strength
+    # add AD/evolved-sampling params to model_options (transformer_options)
+    if "tranformer_options" not in model_options:
+        model_options["tranformer_options"] = {}
+    model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
-            if 'mask' not in conds:
-                rr = 8
-                if area[2] != 0:
-                    for t in range(rr):
-                        mult[:,:,t:1+t,:] *= ((1.0/rr) * (t + 1))
-                if (area[0] + area[2]) < x_in.shape[2]:
-                    for t in range(rr):
-                        mult[:,:,area[0] - 1 - t:area[0] - t,:] *= ((1.0/rr) * (t + 1))
-                if area[3] != 0:
-                    for t in range(rr):
-                        mult[:,:,:,t:1+t] *= ((1.0/rr) * (t + 1))
-                if (area[1] + area[3]) < x_in.shape[3]:
-                    for t in range(rr):
-                        mult[:,:,:,area[1] - 1 - t:area[1] - t] *= ((1.0/rr) * (t + 1))
+    if not ADGS.is_using_sliding_context():
+        cond_pred, uncond_pred = comfy.samplers.calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
+    else:
+        cond_pred, uncond_pred = sliding_calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
 
-            conditionning = {}
-            model_conds = conds["model_conds"]
-            for c in model_conds:
-                conditionning[c] = model_conds[c].process_cond(batch_size=x_in.shape[0], device=x_in.device, area=area)
+    if "sampler_cfg_function" in model_options:
+        args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
+                "cond_denoised": cond_pred, "uncond_denoised": uncond_pred, "model": model, "model_options": model_options}
+        cfg_result = x - model_options["sampler_cfg_function"](args)
+    else:
+        cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
 
-            control = None
-            if 'control' in conds:
-                control = conds['control']
+    for fn in model_options.get("sampler_post_cfg_function", []):
+        args = {"denoised": cfg_result, "cond": cond, "uncond": uncond, "model": model, "uncond_denoised": uncond_pred, "cond_denoised": cond_pred,
+                "sigma": timestep, "model_options": model_options, "input": x}
+        cfg_result = fn(args)
 
-            patches = None
-            if 'gligen' in conds:
-                gligen = conds['gligen']
-                patches = {}
-                gligen_type = gligen[0]
-                gligen_model = gligen[1]
-                if gligen_type == "position":
-                    gligen_patch = gligen_model.model.set_position(input_x.shape, gligen[2], input_x.device)
-                else:
-                    gligen_patch = gligen_model.model.set_empty(input_x.shape, input_x.device)
+    return cfg_result
 
-                patches['middle_patch'] = [gligen_patch]
 
-            return (input_x, mult, conditionning, area, control, patches)
+# sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
+# https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
+def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
+    # get context scheduler
+    context_scheduler = get_context_scheduler(ADGS.params.context_schedule)
+    # figure out how input is split
+    axes_factor = x_in.size(0)//ADGS.params.full_length
 
-        def cond_equal_size(c1, c2):
-            if c1 is c2:
-                return True
-            if c1.keys() != c2.keys():
-                return False
-            for k in c1:
-                if not c1[k].can_concat(c2[k]):
-                    return False
-            return True
+    # prepare final cond, uncond, and out_count
+    cond_final = torch.zeros_like(x_in)
+    uncond_final = torch.zeros_like(x_in)
+    out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
 
-        def can_concat_cond(c1, c2):
-            if c1[0].shape != c2[0].shape:
-                return False
-
-            #control
-            if (c1[4] is None) != (c2[4] is None):
-                return False
-            if c1[4] is not None:
-                if c1[4] is not c2[4]:
-                    return False
-
-            #patches
-            if (c1[5] is None) != (c2[5] is None):
-                return False
-            if (c1[5] is not None):
-                if c1[5] is not c2[5]:
-                    return False
-
-            return cond_equal_size(c1[2], c2[2])
-
-        def cond_cat(c_list):
-            c_crossattn = []
-            c_concat = []
-            c_adm = []
-            crossattn_max_len = 0
-
-            temp = {}
-            for x in c_list:
-                for k in x:
-                    cur = temp.get(k, [])
-                    cur.append(x[k])
-                    temp[k] = cur
-
-            out = {}
-            for k in temp:
-                conds = temp[k]
-                out[k] = conds[0].concat(conds[1:])
-
-            return out
-
-        def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
-            out_cond = torch.zeros_like(x_in)
-            out_count = torch.ones_like(x_in) * 1e-37
-
-            out_uncond = torch.zeros_like(x_in)
-            out_uncond_count = torch.ones_like(x_in) * 1e-37
-
-            COND = 0
-            UNCOND = 1
-
-            to_run = []
-            for x in cond:
-                p = get_area_and_mult(x, x_in, timestep)
-                if p is None:
-                    continue
-
-                to_run += [(p, COND)]
-            if uncond is not None:
-                for x in uncond:
-                    p = get_area_and_mult(x, x_in, timestep)
-                    if p is None:
-                        continue
-
-                    to_run += [(p, UNCOND)]
-
-            while len(to_run) > 0:
-                first = to_run[0]
-                first_shape = first[0][0].shape
-                to_batch_temp = []
-                for x in range(len(to_run)):
-                    if can_concat_cond(to_run[x][0], first[0]):
-                        to_batch_temp += [x]
-
-                to_batch_temp.reverse()
-                to_batch = to_batch_temp[:1]
-
-                free_memory = model_management.get_free_memory(x_in.device)
-                for i in range(1, len(to_batch_temp) + 1):
-                    batch_amount = to_batch_temp[:len(to_batch_temp)//i]
-                    input_shape = [len(batch_amount) * first_shape[0]] + list(first_shape)[1:]
-                    if model.memory_required(input_shape) < free_memory:
-                        to_batch = batch_amount
-                        break
-
-                input_x = []
-                mult = []
-                c = []
-                cond_or_uncond = []
-                area = []
-                control = None
-                patches = None
-                for x in to_batch:
-                    o = to_run.pop(x)
-                    p = o[0]
-                    input_x += [p[0]]
-                    mult += [p[1]]
-                    c += [p[2]]
-                    area += [p[3]]
-                    cond_or_uncond += [o[1]]
-                    control = p[4]
-                    patches = p[5]
-
-                batch_chunks = len(cond_or_uncond)
-                input_x = torch.cat(input_x)
-                c = cond_cat(c)
-                timestep_ = torch.cat([timestep] * batch_chunks)
-
-                if control is not None:
-                    c['control'] = control.get_control(input_x, timestep_, c, len(cond_or_uncond))
-
-                transformer_options = {}
-                if 'transformer_options' in model_options:
-                    transformer_options = model_options['transformer_options'].copy()
-
-                if patches is not None:
-                    if "patches" in transformer_options:
-                        cur_patches = transformer_options["patches"].copy()
-                        for p in patches:
-                            if p in cur_patches:
-                                cur_patches[p] = cur_patches[p] + patches[p]
-                            else:
-                                cur_patches[p] = patches[p]
+    def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
+        if control.previous_controlnet is not None:
+            prepare_control_objects(control.previous_controlnet, full_idxs)
+        control.sub_idxs = full_idxs
+        control.full_latent_length = ADGS.params.full_length
+        control.context_length = ADGS.params.context_length
+    
+    def get_resized_cond(cond_in, full_idxs) -> list:
+        # reuse or resize cond items to match context requirements
+        resized_cond = []
+        # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
+        for actual_cond in cond_in:
+            resized_actual_cond = actual_cond.copy()
+            # now we are in the inner dict - "pooled_output" is a tensor, "control" is a ControlBase object, "model_conds" is dictionary
+            for key in actual_cond:
+                try:
+                    cond_item = actual_cond[key]
+                    if isinstance(cond_item, Tensor):
+                        # check that tensor is the expected length - x.size(0)
+                        if cond_item.size(0) == x_in.size(0):
+                            # if so, it's subsetting time - tell controls the expected indeces so they can handle them
+                            actual_cond_item = cond_item[full_idxs]
+                            resized_actual_cond[key] = actual_cond_item
+                        else:
+                            resized_actual_cond[key] = cond_item
+                    # look for control
+                    elif key == "control":
+                        control_item = cond_item
+                        if hasattr(control_item, "sub_idxs"):
+                            prepare_control_objects(control_item, full_idxs)
+                        else:
+                            raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; \
+                                                use Control objects from Kosinkadink/ComfyUI-Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
+                        resized_actual_cond[key] = control_item
+                        del control_item
+                    elif isinstance(cond_item, dict):
+                        new_cond_item = cond_item.copy()
+                        # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
+                        for cond_key, cond_value in new_cond_item.items():
+                            if isinstance(cond_value, Tensor):
+                                if cond_value.size(0) == x_in.size(0):
+                                    new_cond_item[cond_key] = cond_value[full_idxs]
+                            # if has cond that is a Tensor, check if needs to be subset
+                            elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
+                                if cond_value.cond.size(0) == x_in.size(0):
+                                    new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
+                        resized_actual_cond[key] = new_cond_item
                     else:
-                        transformer_options["patches"] = patches
+                        resized_actual_cond[key] = cond_item
+                finally:
+                    del cond_item  # just in case to prevent VRAM issues
+            resized_cond.append(resized_actual_cond)
+        return resized_cond
 
-                transformer_options["cond_or_uncond"] = cond_or_uncond
-                transformer_options["sigmas"] = timestep
-                transformer_options["ad_params"] = ADGS.create_exposed_params()
-
-                c['transformer_options'] = transformer_options
-
-                if 'model_function_wrapper' in model_options:
-                    output = model_options['model_function_wrapper'](model.apply_model, {"input": input_x, "timestep": timestep_, "c": c, "cond_or_uncond": cond_or_uncond}).chunk(batch_chunks)
-                else:
-                    output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
-                del input_x
-
-                for o in range(batch_chunks):
-                    if cond_or_uncond[o] == COND:
-                        out_cond[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
-                        out_count[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += mult[o]
-                    else:
-                        out_uncond[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
-                        out_uncond_count[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += mult[o]
-                del mult
-
-            out_cond /= out_count
-            del out_count
-            out_uncond /= out_uncond_count
-            del out_uncond_count
-            return out_cond, out_uncond
-
-        # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
-        # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
-        def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
-            # get context scheduler
-            context_scheduler = get_context_scheduler(ADGS.params.context_schedule)
-            # figure out how input is split
-            axes_factor = x_in.size(0)//ADGS.params.full_length
-
-            # prepare final cond, uncond, and out_count
-            cond_final = torch.zeros_like(x_in)
-            uncond_final = torch.zeros_like(x_in)
-            out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
-
-            def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
-                if control.previous_controlnet is not None:
-                    prepare_control_objects(control.previous_controlnet, full_idxs)
-                control.sub_idxs = full_idxs
-                control.full_latent_length = ADGS.params.full_length
-                control.context_length = ADGS.params.context_length
-            
-            def get_resized_cond(cond_in, full_idxs) -> list:
-                # reuse or resize cond items to match context requirements
-                resized_cond = []
-                # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
-                for actual_cond in cond_in:
-                    resized_actual_cond = actual_cond.copy()
-                    # now we are in the inner dict - "pooled_output" is a tensor, "control" is a ControlBase object, "model_conds" is dictionary
-                    for key in actual_cond:
-                        try:
-                            cond_item = actual_cond[key]
-                            if isinstance(cond_item, Tensor):
-                                # check that tensor is the expected length - x.size(0)
-                                if cond_item.size(0) == x_in.size(0):
-                                    # if so, it's subsetting time - tell controls the expected indeces so they can handle them
-                                    actual_cond_item = cond_item[full_idxs]
-                                    resized_actual_cond[key] = actual_cond_item
-                                else:
-                                    resized_actual_cond[key] = cond_item
-                            # look for control
-                            elif key == "control":
-                                control_item = cond_item
-                                if hasattr(control_item, "sub_idxs"):
-                                    prepare_control_objects(control_item, full_idxs)
-                                else:
-                                    raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; \
-                                                        use Control objects from Kosinkadink/ComfyUI-Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
-                                resized_actual_cond[key] = control_item
-                                del control_item
-                            elif isinstance(cond_item, dict):
-                                new_cond_item = cond_item.copy()
-                                # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
-                                for cond_key, cond_value in new_cond_item.items():
-                                    if isinstance(cond_value, Tensor):
-                                        if cond_value.size(0) == x_in.size(0):
-                                            new_cond_item[cond_key] = cond_value[full_idxs]
-                                    # if has cond that is a Tensor, check if needs to be subset
-                                    elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
-                                        if cond_value.cond.size(0) == x_in.size(0):
-                                            new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
-                                resized_actual_cond[key] = new_cond_item
-                            else:
-                                resized_actual_cond[key] = cond_item
-                        finally:
-                            del cond_item  # just in case to prevent VRAM issues
-                    resized_cond.append(resized_actual_cond)
-                return resized_cond
-
-            # perform calc_cond_uncond_batch per context window
-            for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.params.full_length, ADGS.params.context_length, ADGS.params.context_stride, ADGS.params.context_overlap, ADGS.params.closed_loop):
-                ADGS.params.sub_idxs = ctx_idxs
-                if ADGS.motion_models is not None:
-                    ADGS.motion_models.set_sub_idxs(ctx_idxs)
-                # TODO: support dynamic context lengths - call set_video_length on motion_models
-                # account for all portions of input frames
-                full_idxs = []
-                for n in range(axes_factor):
-                    for ind in ctx_idxs:
-                        full_idxs.append((ADGS.params.full_length*n)+ind)
-                # get subsections of x, timestep, cond, uncond, cond_concat
-                sub_x = x_in[full_idxs]
-                sub_timestep = timestep[full_idxs]
-                sub_cond = get_resized_cond(cond, full_idxs) if cond is not None else None
-                sub_uncond = get_resized_cond(uncond, full_idxs) if uncond is not None else None
-
-                sub_cond_out, sub_uncond_out = calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
-
-                cond_final[full_idxs] += sub_cond_out
-                uncond_final[full_idxs] += sub_uncond_out
-                out_count_final[full_idxs] += 1 # increment which indeces were used
-
-            # normalize cond and uncond via division by context usage counts
-            cond_final /= out_count_final
-            uncond_final /= out_count_final
-            del out_count_final
-            return cond_final, uncond_final
-
-        ADGS.initialize(model)
+    # perform calc_cond_uncond_batch per context window
+    for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.total_steps, ADGS.params.full_length, ADGS.params.context_length, ADGS.params.context_stride, ADGS.params.context_overlap, ADGS.params.closed_loop):
+        ADGS.params.sub_idxs = ctx_idxs
         if ADGS.motion_models is not None:
-            ADGS.motion_models.prepare_current_keyframe(t=timestep)
+            ADGS.motion_models.set_sub_idxs(ctx_idxs)
+        # TODO: support dynamic context lengths - call set_video_length on motion_models
+        # account for all portions of input frames
+        full_idxs = []
+        for n in range(axes_factor):
+            for ind in ctx_idxs:
+                full_idxs.append((ADGS.params.full_length*n)+ind)
+        # get subsections of x, timestep, cond, uncond, cond_concat
+        sub_x = x_in[full_idxs]
+        sub_timestep = timestep[full_idxs]
+        sub_cond = get_resized_cond(cond, full_idxs) if cond is not None else None
+        sub_uncond = get_resized_cond(uncond, full_idxs) if uncond is not None else None
 
-        if math.isclose(cond_scale, 1.0):
-            uncond = None
+        sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
 
-        if not ADGS.is_using_sliding_context():
-            cond, uncond = calc_cond_uncond_batch(model, cond, uncond, x, timestep, model_options)
-        else:
-            cond, uncond = sliding_calc_cond_uncond_batch(model, cond, uncond, x, timestep, model_options)
-        if "sampler_cfg_function" in model_options:
-            args = {"cond": x - cond, "uncond": x - uncond, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep}
-            return x - model_options["sampler_cfg_function"](args)
-        else:
-            return uncond + (cond - uncond) * cond_scale
+        cond_final[full_idxs] += sub_cond_out
+        uncond_final[full_idxs] += sub_uncond_out
+        out_count_final[full_idxs] += 1 # increment which indeces were used
+
+    # normalize cond and uncond via division by context usage counts
+    cond_final /= out_count_final
+    uncond_final /= out_count_final
+    del out_count_final
+    return cond_final, uncond_final
