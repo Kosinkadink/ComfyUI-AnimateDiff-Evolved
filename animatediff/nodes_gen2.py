@@ -4,7 +4,7 @@ import torch
 import comfy.sample as comfy_sample
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextOptions, ContextSchedules, UniformContextOptions
+from .context import ContextOptions, ContextSchedules
 from .logger import logger
 from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .motion_utils import ADKeygrameGroup, ADKeyframe

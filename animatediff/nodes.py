@@ -4,7 +4,6 @@ import torch
 import comfy.sample as comfy_sample
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextFuseMethod, ContextOptions, ContextSchedules, UniformContextOptions
 from .logger import logger
 from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .motion_lora import MotionLoraInfo, MotionLoraList
@@ -16,6 +15,7 @@ from .nodes_gen1 import AnimateDiffLoaderWithContext
 from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode
 from .nodes_multival import MultivalDynamicNode, MultivalFloatNode, MultivalScaledMaskNode
 from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
+from .nodes_context import LoopedUniformContextOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
 from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
@@ -85,41 +85,6 @@ class AnimateDiffLoraLoader:
         return (prev_motion_lora,)
 
 
-class AnimateDiffUniformContextOptions:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "context_length": ("INT", {"default": 16, "min": 1, "max": 32}), # keep an eye on these max values
-                "context_stride": ("INT", {"default": 1, "min": 1, "max": 32}),  # would need to be updated
-                "context_overlap": ("INT", {"default": 4, "min": 0, "max": 32}), # if new motion modules come out
-                "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
-                "closed_loop": ("BOOLEAN", {"default": False},),
-                #"sync_context_to_pe": ("BOOLEAN", {"default": False},),
-            },
-            "optional": {
-                "fuse_method": (ContextFuseMethod.LIST,),
-            }
-        }
-    
-    RETURN_TYPES = ("CONTEXT_OPTIONS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓"
-    FUNCTION = "create_options"
-
-    def create_options(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool,
-                       fuse_method: str=ContextFuseMethod.FLAT):
-        context_options = UniformContextOptions(
-            context_length=context_length,
-            context_stride=context_stride,
-            context_overlap=context_overlap,
-            context_schedule=context_schedule,
-            closed_loop=closed_loop,
-            fuse_method=fuse_method,
-            )
-        #context_options.set_sync_context_to_pe(sync_context_to_pe)
-        return (context_options,)
-
-
 NODE_CLASS_MAPPINGS = {
     # Unencapsulated/Gen2
     "ADE_UseEvolvedSampling": UseEvolvedSamplingNode,
@@ -127,7 +92,6 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ApplyAnimateDiffModelSimple": ApplyAnimateDiffModelBasicNode,
     "ADE_LoadAnimateDiffModel": LoadAnimateDiffModelNode,
     "ADE_AnimateDiffLoRALoader": AnimateDiffLoraLoader,
-    "ADE_AnimateDiffUniformContextOptions": AnimateDiffUniformContextOptions,
     "ADE_AnimateDiffSamplingSettings": SampleSettingsNode,
     "ADE_AnimateDiffKeyframe": ADKeyframeNode,
     # Multival Nodes
@@ -137,6 +101,11 @@ NODE_CLASS_MAPPINGS = {
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
     "ADE_NoiseLayerReplace": NoiseLayerReplaceNode,
+    # Context Opts
+    "ADE_AnimateDiffUniformContextOptions": LoopedUniformContextOptionsNode,
+    "ADE_StandardUniformContextOptions": StandardUniformContextOptionsNode,
+    "ADE_StandardStaticContextOptions": StandardStaticContextOptionsNode,
+    "ADE_BatchedContextOptions": BatchedContextOptionsNode,
     # Iteration Opts
     "ADE_IterationOptsDefault": IterationOptionsNode,
     "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
@@ -162,7 +131,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_ApplyAnimateDiffModelSimple": "Apply AnimateDiff Model (Basic) 🎭🅐🅓②",
     "ADE_LoadAnimateDiffModel": "Load AnimateDiff Model 🎭🅐🅓②",
     "ADE_AnimateDiffLoRALoader": "Load AnimateDiff LoRA 🎭🅐🅓",
-    "ADE_AnimateDiffUniformContextOptions": "Uniform Context Options 🎭🅐🅓",
     "ADE_AnimateDiffSamplingSettings": "Sample Settings 🎭🅐🅓",
     "ADE_AnimateDiffKeyframe": "AnimateDiff Keyframe 🎭🅐🅓",
     # Multival Nodes
@@ -172,6 +140,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
     "ADE_NoiseLayerReplace": "Noise Layer [Replace] 🎭🅐🅓",
+    # Context Opts
+    "ADE_AnimateDiffUniformContextOptions": "Looped Uniform Context Options 🎭🅐🅓",
+    "ADE_StandardUniformContextOptions": "Standard Uniform Context Options 🎭🅐🅓",
+    "ADE_StandardStaticContextOptions": "Standard Static Context Options 🎭🅐🅓",
+    "ADE_BatchedContextOptions": "[Non-AD] Batched Context Options 🎭🅐🅓",
     # Iteration Opts
     "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
     "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",

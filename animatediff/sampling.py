@@ -14,7 +14,7 @@ import comfy.sample
 import comfy.utils
 from comfy.controlnet import ControlBase
 
-from .context import ContextFuseMethod, generate_distance_weight, get_context_scheduler
+from .context import ContextFuseMethod, generate_distance_weight, get_context_scheduler, get_context_windows
 from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
 from .motion_utils import GroupNormAD
 from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
@@ -406,8 +406,8 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
             resized_cond.append(resized_actual_cond)
         return resized_cond
 
-    # get context scheduler
-    context_scheduler = get_context_scheduler(ADGS.params.context_options.context_schedule)
+    # get context windows
+    context_windows = get_context_windows(ADGS.current_step, ADGS.params.full_length, ADGS.params.context_options)
     # figure out how input is split
     axes_factor = x_in.size(0)//ADGS.params.full_length
 
@@ -417,11 +417,11 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
     out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
 
     # perform calc_cond_uncond_batch per context window
-    for ctx_idxs in context_scheduler(ADGS.current_step, ADGS.params.full_length, ADGS.params.context_options):
+    for ctx_idxs in context_windows:
         ADGS.params.sub_idxs = ctx_idxs
         if ADGS.motion_models is not None:
             ADGS.motion_models.set_sub_idxs(ctx_idxs)
-        # TODO: support dynamic context lengths - call set_video_length on motion_models
+            ADGS.motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
         # account for all portions of input frames
         full_idxs = []
         for n in range(axes_factor):

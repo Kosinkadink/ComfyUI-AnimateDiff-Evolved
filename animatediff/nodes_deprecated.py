@@ -12,7 +12,7 @@ from PIL.PngImagePlugin import PngInfo
 import folder_paths
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextSchedules, UniformContextOptions
+from .context import ContextSchedules, ContextOptions
 from .logger import logger
 from .model_utils import Folders, BetaSchedules, get_available_motion_models
 from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module
@@ -78,7 +78,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
                 "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
                 "context_stride": ("INT", {"default": 1, "min": 1, "max": 1000}),
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
-                "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
+                "context_schedule": (ContextSchedules.UNIFORM_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
                 "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
             },
@@ -108,7 +108,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         )
         # set context settings
         params.set_context(
-            UniformContextOptions(
+            ContextOptions(
                 context_length=context_length,
                 context_stride=context_stride,
                 context_overlap=context_overlap,

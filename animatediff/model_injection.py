@@ -11,7 +11,7 @@ import comfy.utils
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
 
-from .context import ContextOptions, UniformContextOptions
+from .context import ContextOptions, ContextOptions
 from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
 from .motion_utils import ADKeyframe, ADKeygrameGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
