@@ -14,7 +14,7 @@ import comfy.sample
 import comfy.utils
 from comfy.controlnet import ControlBase
 
-from .context import ContextFuseMethod, generate_distance_weight, get_context_scheduler, get_context_windows
+from .context import ContextFuseMethod, generate_distance_weight, get_context_windows
 from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
 from .motion_utils import GroupNormAD
 from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
@@ -422,6 +422,9 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         if ADGS.motion_models is not None:
             ADGS.motion_models.set_sub_idxs(ctx_idxs)
             ADGS.motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
+        # update exposed params
+        model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
+        model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
         # account for all portions of input frames
         full_idxs = []
         for n in range(axes_factor):

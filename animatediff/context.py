@@ -250,31 +250,6 @@ def uniform(
             yield [e % num_frames for e in range(j, j + opts.context_length * context_step, context_step)]
 
 
-def static(step: int,
-           num_frames: int,
-           opts: ContextOptions,
-           print_final: bool = False,):
-    if num_frames <= opts.context_length:
-        yield list(range(num_frames))
-        return
-
-
-# This needs to stay here below the context functions
-UNIFORM_CONTEXT_MAPPING = {
-    ContextSchedules.UNIFORM_LOOPED: uniform,
-    ContextSchedules.STATIC_STANDARD: static,
-    #ContextSchedules.UNIFORM_CONSTANT: uniform_constant,
-    #ContextSchedules.UNIFORM_V2: uniform_v2,
-}
-
-
-# TODO: expand to support other context window types (future feature)
-def get_context_scheduler(name: str) -> Callable:
-    context_func = UNIFORM_CONTEXT_MAPPING.get(name, None)
-    if not context_func:
-        raise ValueError(f"Unknown context_overlap policy {name}")
-    return context_func
-
 #################################
 #  helper funcs for testing
 def get_total_steps(
