@@ -7,6 +7,7 @@ from comfy.model_patcher import ModelPatcher
 from .context import ContextOptions, ContextSchedules
 from .logger import logger
 from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
+from .motion_utils import ADKeyframeGroup
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelSettings, load_motion_module
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -30,6 +31,7 @@ class AnimateDiffLoaderWithContext:
                 "sample_settings": ("SAMPLE_SETTINGS",),
                 "motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
                 "apply_v2_models_properly": ("BOOLEAN", {"default": True}),
+                "ad_keyframes": ("AD_KEYFRAMES",),
             }
         }
     
@@ -42,7 +44,7 @@ class AnimateDiffLoaderWithContext:
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
         context_options: ContextOptions=None, motion_lora: MotionLoraList=None, motion_model_settings: MotionModelSettings=None,
-        sample_settings: SampleSettings=None, motion_scale: float=1.0, apply_v2_models_properly: bool=False,
+        sample_settings: SampleSettings=None, motion_scale: float=1.0, apply_v2_models_properly: bool=False, ad_keyframes: ADKeyframeGroup=None,
     ):
         # load motion module
         motion_model = load_motion_module(model_name, model, motion_lora=motion_lora, motion_model_settings=motion_model_settings)
@@ -65,11 +67,7 @@ class AnimateDiffLoaderWithContext:
         else:
             motion_model.scale_multival = params.motion_model_settings.attn_scale
 
-        # apply scale multiplier, if needed
-        #motion_model.model._set_scale_multiplier(params.motion_model_settings.attn_scale)
-
-        # apply scale mask, if needed
-        #motion_model.model._set_scale_mask(mask=params.motion_model_settings.mask_attn_scale)
+        motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
 
         model = ModelPatcherAndInjector(model)
         model.motion_models = MotionModelGroup(motion_model)

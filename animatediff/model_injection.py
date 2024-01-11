@@ -14,7 +14,7 @@ from comfy.model_base import BaseModel
 from .context import ContextOptions, ContextOptions
 from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
-from .motion_utils import ADKeyframe, ADKeygrameGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
+from .motion_utils import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_utils import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -94,7 +94,7 @@ class MotionModelPatcher(ModelPatcher):
         self.model: AnimateDiffModel = self.model
         self.timestep_percent_range = (0.0, 1.0)
         self.timestep_range: tuple[float, float] = None
-        self.keyframes: ADKeygrameGroup = ADKeygrameGroup()
+        self.keyframes: ADKeyframeGroup = ADKeyframeGroup()
 
         self.scale_multival = None
         self.effect_multival = None

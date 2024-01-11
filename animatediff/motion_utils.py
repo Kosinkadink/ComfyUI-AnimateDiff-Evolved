@@ -162,7 +162,7 @@ class ADKeyframe:
         return self.effect_multival is not None
 
 
-class ADKeygrameGroup:
+class ADKeyframeGroup:
     def __init__(self):
         self.keyframes: list[ADKeyframe] = []
         self.keyframes.append(ADKeyframe())
@@ -197,8 +197,8 @@ class ADKeygrameGroup:
     def is_empty(self) -> bool:
         return len(self.keyframes) == 0
 
-    def clone(self) -> 'ADKeygrameGroup':
-        cloned = ADKeygrameGroup()
+    def clone(self) -> 'ADKeyframeGroup':
+        cloned = ADKeyframeGroup()
         for tk in self.keyframes:
             cloned.add(tk)
         return cloned

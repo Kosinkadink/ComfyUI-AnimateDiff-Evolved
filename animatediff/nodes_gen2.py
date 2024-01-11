@@ -7,7 +7,7 @@ from comfy.model_patcher import ModelPatcher
 from .context import ContextOptions, ContextSchedules
 from .logger import logger
 from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
-from .motion_utils import ADKeygrameGroup, ADKeyframe
+from .motion_utils import ADKeyframeGroup, ADKeyframe
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings,
                               load_motion_module, load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)
@@ -91,7 +91,7 @@ class ApplyAnimateDiffModelNode:
     FUNCTION = "apply_motion_model"
 
     def apply_motion_model(self, motion_model: MotionModelPatcher, start_percent: float=0.0, end_percent: float=1.0,
-                           motion_lora: MotionLoraList=None, ad_keyframes: ADKeygrameGroup=None,
+                           motion_lora: MotionLoraList=None, ad_keyframes: ADKeyframeGroup=None,
                            scale_multival=None, effect_multival=None,
                            prev_m_models: MotionModelGroup=None,):
         # set up motion models list
@@ -105,7 +105,7 @@ class ApplyAnimateDiffModelNode:
                 load_motion_lora_as_patches(motion_model, lora)
         motion_model.scale_multival = scale_multival
         motion_model.effect_multival = effect_multival
-        motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeygrameGroup()
+        motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
         motion_model.timestep_percent_range = (start_percent, end_percent)
         # add to beginning, so that after injection, it will be the earliest of prev_m_models to be run
         prev_m_models.add_to_start(mm=motion_model)
@@ -189,7 +189,7 @@ class ADKeyframeNode:
                       scale_multival: [float, torch.Tensor]=None, effect_multival: [float, torch.Tensor]=None,
                       inherit_missing: bool=True, guarantee_usage: bool=True):
         if not prev_ad_keyframes:
-            prev_ad_keyframes = ADKeygrameGroup()
+            prev_ad_keyframes = ADKeyframeGroup()
         prev_ad_keyframes.clone()
         keyframe = ADKeyframe(start_percent=start_percent, scale_multival=scale_multival, effect_multival=effect_multival,
                               inherit_missing=inherit_missing, guarantee_usage=guarantee_usage)
