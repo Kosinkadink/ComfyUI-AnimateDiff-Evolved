@@ -4,7 +4,13 @@ from typing import Union
 import torch
 from torch import Tensor
 
-from .motion_utils import normalize_min_max
+from .motion_utils import linear_conversion, normalize_min_max
+
+
+class ScaleType:
+    ABSOLUTE = "absolute"
+    RELATIVE = "relative"
+    LIST = [ABSOLUTE, RELATIVE]
 
 
 class MultivalDynamicNode:
@@ -99,16 +105,25 @@ class MultivalScaledMaskNode:
                 "max_float_val": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
                 "mask": ("MASK",),
             },
+            "optional": {
+                "scaling": (ScaleType.LIST,),
+            }
         }
 
     RETURN_TYPES = ("MULTIVAL",)
     CATEGORY = "Animate Diff 🎭🅐🅓/multival"
     FUNCTION = "create_multival"
 
-    def create_multival(self, min_float_val: float, max_float_val: float, mask: Tensor):
+    def create_multival(self, min_float_val: float, max_float_val: float, mask: Tensor, scaling: str=ScaleType.ABSOLUTE):
         if isinstance(min_float_val, Iterable):
             raise ValueError(f"min_float_val must be type float (no lists allowed here), not {type(min_float_val).__name__}.")
         if isinstance(max_float_val, Iterable):
             raise ValueError(f"max_float_val must be type float (no lists allowed here), not {type(max_float_val).__name__}.")
-        mask = normalize_min_max(mask.clone(), min_float_val, max_float_val)
+        
+        if scaling == ScaleType.ABSOLUTE:
+            mask = linear_conversion(mask.clone(), new_min=min_float_val, new_max=max_float_val)
+        elif scaling == ScaleType.RELATIVE:
+            mask = normalize_min_max(mask.clone(), new_min=min_float_val, new_max=max_float_val)
+        else:
+            raise ValueError(f"scaling '{scaling}' not recognized.")
         return MultivalDynamicNode.create_multival(self, mask_optional=mask)
