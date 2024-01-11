@@ -259,6 +259,16 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             kwargs["callback"] = ad_callback
             ADGS.motion_models = model.motion_models
 
+            # apply adapt_denoise_steps
+            args = list(args)
+            if model.sample_settings.adapt_denoise_steps and not is_custom:
+                # only applicable when denoise and steps are provided (from simple KSampler nodes)
+                denoise = kwargs.get("denoise", None)
+                steps = args[0]
+                if denoise is not None and type(steps) == int:
+                    args[0] = max(int(denoise * steps), 1)
+
+
             iter_opts = IterationOptions()
             if model.sample_settings is not None:
                 iter_opts = model.sample_settings.iteration_opts
@@ -279,10 +289,9 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                     iter_kwargs[IterationOptions.SAMPLER] = comfy.samplers.KSampler(
                         model.model, steps=999, #steps=args[-7],
                         device=model.current_device, sampler=args[-5],
-                        scheduler=args[-4], denoise=kwargs["denoise"],
+                        scheduler=args[-4], denoise=kwargs.get("denoise", None),
                         model_options=model.model_options)
 
-            args = list(args)
             for curr_i in range(iter_opts.iterations):
                 # handle GLOBALSTATE vars and step tally
                 ADGS.update_with_inject_params(params)

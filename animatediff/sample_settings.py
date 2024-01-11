@@ -47,7 +47,8 @@ class NoiseNormalize:
 
 
 class SampleSettings:
-    def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None, iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False):
+    def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None,
+                 iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
@@ -56,6 +57,7 @@ class SampleSettings:
         self.seed_offset = seed_offset
         self.seed_override = seed_override
         self.negative_cond_flipflop = negative_cond_flipflop
+        self.adapt_denoise_steps = adapt_denoise_steps
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
@@ -83,7 +85,7 @@ class SampleSettings:
     def clone(self):
         return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
                            noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
-                           negative_cond_flipflop=self.negative_cond_flipflop)
+                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps)
 
 
 class NoiseLayer:

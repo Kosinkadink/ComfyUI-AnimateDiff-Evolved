@@ -19,6 +19,7 @@ class SampleSettingsNode:
                 "noise_layers": ("NOISE_LAYERS",),
                 "iteration_opts": ("ITERATION_OPTS",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
+                "adapt_denoise_steps": ("BOOLEAN", {"default": False},),
             }
         }
     
@@ -27,8 +28,10 @@ class SampleSettingsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "create_settings"
 
-    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None, iteration_opts: IterationOptions=None, seed_override: int=None,):
-        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers, iteration_opts=iteration_opts, seed_override=seed_override)
+    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None,
+                        iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False):
+        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers,
+                                           iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps)
         return (sampling_settings,)
 
 
