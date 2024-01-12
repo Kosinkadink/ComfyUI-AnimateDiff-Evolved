@@ -191,8 +191,11 @@ class FunctionInjectionHolder:
                 if params.apply_mm_groupnorm_hack:
                     GroupNormAD.forward = groupnorm_mm_factory(params)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
-                if model.load_device == "mps":
-                    model.model.memory_required = unlimited_memory_required
+                try:
+                    if model.load_device.type == "mps":
+                        model.model.memory_required = unlimited_memory_required
+                except Exception:
+                    pass
             del info
         comfy.samplers.sampling_function = evolved_sampling_function
         comfy.sample.prepare_mask = prepare_mask_ad
