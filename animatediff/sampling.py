@@ -14,10 +14,10 @@ import comfy.sample
 import comfy.utils
 from comfy.controlnet import ControlBase
 
-from .context import ContextFuseMethod, generate_distance_weight, get_context_windows
+from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
-from .motion_utils import GroupNormAD
-from .model_utils import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
+from .utils_motion import GroupNormAD
+from .utils_model import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
 from .logger import logger
@@ -115,13 +115,13 @@ def groupnorm_mm_factory(params: InjectionParams):
         # axes_factor normalizes batch based on total conds and unconds passed in batch;
         # the conds and unconds per batch can change based on VRAM optimizations that may kick in
         if not params.is_using_sliding_context():
-            axes_factor = input.size(0)//params.full_length
+            batched_conds = input.size(0)//params.full_length
         else:
-            axes_factor = input.size(0)//params.context_options.context_length
+            batched_conds = input.size(0)//params.context_options.context_length
 
-        input = rearrange(input, "(b f) c h w -> b c f h w", b=axes_factor)
+        input = rearrange(input, "(b f) c h w -> b c f h w", b=batched_conds)
         input = group_norm(input, self.num_groups, self.weight, self.bias, self.eps)
-        input = rearrange(input, "b c f h w -> (b f) c h w", b=axes_factor)
+        input = rearrange(input, "b c f h w -> (b f) c h w", b=batched_conds)
         return input
     return groupnorm_mm_forward
 
@@ -141,7 +141,15 @@ def get_additional_models_factory(orig_get_additional_models: Callable, motion_m
 
 def apply_params_to_motion_models(motion_models: MotionModelGroup, params: InjectionParams):
     params = params.clone()
-    if params.context_options.context_length and params.full_length > params.context_options.context_length:
+    if params.context_options.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
+        params.context_options._current_context.context_length = params.full_length
+    # check (and message) should be different based on use_on_equal_length setting
+    if params.context_options.context_length:
+        pass
+
+    allow_equal = params.context_options.use_on_equal_length
+    enough_latents = params.full_length >= params.context_options.context_length if allow_equal else params.full_length > params.context_options.context_length
+    if params.context_options.context_length and enough_latents:
         logger.info(f"Sliding context window activated - latents passed in ({params.full_length}) greater than context_length {params.context_options.context_length}.")
     else:
         logger.info(f"Regular AnimateDiff activated - latents passed in ({params.full_length}) less or equal to context_length {params.context_options.context_length}.")
@@ -156,7 +164,9 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
         # otherwise, treat context_length as intended AD frame window
         else:
             for motion_model in motion_models.models:
-                if params.context_options.context_length > motion_model.model.encoding_max_len:
+                view_options = params.context_options.view_options
+                context_length = view_options.context_length if view_options else params.context_options.context_length
+                if context_length > motion_model.model.encoding_max_len:
                     raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_options.context_length}.")
             motion_models.set_video_length(params.context_options.context_length, params.full_length)
         # inject model
@@ -422,9 +432,13 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         return resized_cond
 
     # get context windows
-    context_windows = get_context_windows(ADGS.current_step, ADGS.params.full_length, ADGS.params.context_options)
+    ADGS.params.context_options.step = ADGS.current_step
+    context_windows = get_context_windows(ADGS.params.full_length, ADGS.params.context_options)
     # figure out how input is split
-    axes_factor = x_in.size(0)//ADGS.params.full_length
+    batched_conds = x_in.size(0)//ADGS.params.full_length
+
+    if ADGS.motion_models is not None:
+        ADGS.motion_models.set_view_options(ADGS.params.context_options.view_options)
 
     # prepare final cond, uncond, and out_count
     cond_final = torch.zeros_like(x_in)
@@ -442,7 +456,7 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
         # account for all portions of input frames
         full_idxs = []
-        for n in range(axes_factor):
+        for n in range(batched_conds):
             for ind in ctx_idxs:
                 full_idxs.append((ADGS.params.full_length*n)+ind)
         # get subsections of x, timestep, cond, uncond, cond_concat
@@ -453,17 +467,12 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
 
         sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
 
-        if ADGS.params.context_options.fuse_method == ContextFuseMethod.FLAT:
-            # equal weights for idxs
-            cond_final[full_idxs] += sub_cond_out
-            uncond_final[full_idxs] += sub_uncond_out
-            out_count_final[full_idxs] += 1  # increment which indeces were used
-        elif ADGS.params.context_options.fuse_method == ContextFuseMethod.PYRAMID:
-            # greater weight towards center of idxs
-            weights = torch.Tensor(generate_distance_weight(len(ctx_idxs)) * axes_factor).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-            cond_final[full_idxs] += sub_cond_out * weights
-            uncond_final[full_idxs] += sub_uncond_out * weights
-            out_count_final[full_idxs] += weights
+        # add conds and counts based on weights of fuse method
+        weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method) * batched_conds
+        weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        cond_final[full_idxs] += sub_cond_out * weights_tensor
+        uncond_final[full_idxs] += sub_uncond_out * weights_tensor
+        out_count_final[full_idxs] += weights_tensor
 
 
     # normalize cond and uncond via division by context usage counts

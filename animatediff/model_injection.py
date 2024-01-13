@@ -11,12 +11,12 @@ import comfy.utils
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
 
-from .context import ContextOptions, ContextOptions
+from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
-from .motion_utils import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
+from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .model_utils import get_motion_lora_path, get_motion_model_path, get_sd_model_type
+from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 
 
@@ -185,7 +185,6 @@ class MotionModelPatcher(ModelPatcher):
                 self.model.set_effect(self.combined_effect)
                 self.was_within_range = True            
 
-
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
@@ -245,6 +244,10 @@ class MotionModelGroup:
         for motion_model in self.models:
             motion_model.model.set_sub_idxs(sub_idxs=sub_idxs)
     
+    def set_view_options(self, view_options: ContextOptions):
+        for motion_model in self.models:
+            motion_model.model.set_view_options(view_options)
+
     def set_video_length(self, video_length: int, full_length: int):
         for motion_model in self.models:
             motion_model.model.set_video_length(video_length=video_length, full_length=full_length)
@@ -500,15 +503,15 @@ class InjectionParams:
         self.apply_mm_groupnorm_hack = apply_mm_groupnorm_hack
         self.model_name = model_name
         self.apply_v2_properly = apply_v2_properly
-        self.context_options: ContextOptions = ContextOptions()
+        self.context_options: ContextOptionsGroup = ContextOptionsGroup.default()
         self.motion_model_settings = MotionModelSettings() # Gen1
         self.sub_idxs = None  # value should NOT be included in clone, so it will auto reset
     
     def set_noise_extra_args(self, noise_extra_args: dict):
         noise_extra_args["context_options"] = self.context_options.clone()
 
-    def set_context(self, context_options: ContextOptions):
-        self.context_options = context_options.clone() if context_options else ContextOptions()
+    def set_context(self, context_options: ContextOptionsGroup):
+        self.context_options = context_options.clone() if context_options else ContextOptionsGroup.default()
     
     def is_using_sliding_context(self) -> bool:
         return self.context_options.context_length is not None
@@ -520,7 +523,7 @@ class InjectionParams:
             self.motion_model_settings = motion_model_settings
 
     def reset_context(self):
-        self.context_options = ContextOptions()
+        self.context_options = ContextOptionsGroup.default()
     
     def clone(self) -> 'InjectionParams':
         new_params = InjectionParams(

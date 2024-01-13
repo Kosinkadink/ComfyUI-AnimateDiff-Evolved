@@ -13,8 +13,9 @@ from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
 from comfy.controlnet import broadcast_image_to
 from comfy.utils import repeat_to_batch_size
 
-from .motion_utils import GroupNormAD, CrossAttentionMM, MotionCompatibilityError, extend_to_batch_size, prepare_mask_batch
-from .model_utils import ModelTypeSD
+from .context import ContextOptions, get_context_weights, get_context_windows
+from .utils_motion import GroupNormAD, CrossAttentionMM, MotionCompatibilityError, extend_to_batch_size, prepare_mask_batch
+from .utils_model import ModelTypeSD
 from .logger import logger
 
 
@@ -281,6 +282,14 @@ class AnimateDiffModel(nn.Module):
         if self.mid_block is not None:
             self.mid_block.set_sub_idxs(sub_idxs)
 
+    def set_view_options(self, view_options: ContextOptions):
+        for block in self.down_blocks:
+            block.set_view_options(view_options)
+        for block in self.up_blocks:
+            block.set_view_options(view_options)
+        if self.mid_block is not None:
+            self.mid_block.set_view_options(view_options)
+
     def reset(self):
         self._reset_sub_idxs()
         self._reset_scale_multiplier()
@@ -355,6 +364,10 @@ class MotionModule(nn.Module):
         for motion_module in self.motion_modules:
             motion_module.set_sub_idxs(sub_idxs)
 
+    def set_view_options(self, view_options: ContextOptions):
+        for motion_module in self.motion_modules:
+            motion_module.set_view_options(view_options=view_options)
+
     def reset_temp_vars(self):
         for motion_module in self.motion_modules:
             motion_module.reset_temp_vars()
@@ -382,6 +395,7 @@ class VanillaTemporalModule(nn.Module):
         self.video_length = 16
         self.full_length = 16
         self.sub_idxs = None
+        self.view_options = None
 
         self.effect = None
         self.temp_effect_mask: Tensor = None
@@ -429,8 +443,12 @@ class VanillaTemporalModule(nn.Module):
         self.sub_idxs = sub_idxs
         self.temporal_transformer.set_sub_idxs(sub_idxs)
 
+    def set_view_options(self, view_options: ContextOptions):
+        self.view_options = view_options
+
     def reset_temp_vars(self):
         self.set_effect(None)
+        self.set_view_options(None)
         self.temporal_transformer.reset_temp_vars()
 
     def get_effect_mask(self, input_tensor: Tensor):
@@ -459,7 +477,7 @@ class VanillaTemporalModule(nn.Module):
 
     def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None):
         if self.effect is None:
-            return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)
+            return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options)
         # return weighted average of input_tensor and AD output
         if type(self.effect) != Tensor:
             effect = self.effect
@@ -468,7 +486,7 @@ class VanillaTemporalModule(nn.Module):
                 return input_tensor
         else:
             effect = self.get_effect_mask(input_tensor)
-        return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask)*effect
+        return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options)*effect
 
 
 class TemporalTransformer3DModel(nn.Module):
@@ -595,7 +613,7 @@ class TemporalTransformer3DModel(nn.Module):
             return self.temp_scale_mask[:, self.sub_idxs, :]
         return self.temp_scale_mask
 
-    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None):
+    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, view_options: ContextOptions=None):
         batch, channel, height, width = hidden_states.shape
         residual = hidden_states
         scale_mask = self.get_scale_mask(hidden_states)
@@ -614,7 +632,8 @@ class TemporalTransformer3DModel(nn.Module):
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
                 video_length=self.video_length,
-                scale_mask=scale_mask
+                scale_mask=scale_mask,
+                view_options=view_options
             )
 
         # output
@@ -691,26 +710,64 @@ class TemporalTransformerBlock(nn.Module):
 
     def forward(
         self,
-        hidden_states,
-        encoder_hidden_states=None,
-        attention_mask=None,
-        video_length=None,
-        scale_mask=None
+        hidden_states: Tensor,
+        encoder_hidden_states: Tensor=None,
+        attention_mask: Tensor=None,
+        video_length: int=None,
+        scale_mask: Tensor=None,
+        view_options: ContextOptions=None,
     ):
-        for attention_block, norm in zip(self.attention_blocks, self.norms):
-            norm_hidden_states = norm(hidden_states).to(hidden_states.dtype)
-            hidden_states = (
-                attention_block(
-                    norm_hidden_states,
-                    encoder_hidden_states=encoder_hidden_states
-                    if attention_block.is_cross_attention
-                    else None,
-                    attention_mask=attention_mask,
-                    video_length=video_length,
-                    scale_mask=scale_mask
+        if not view_options:
+            for attention_block, norm in zip(self.attention_blocks, self.norms):
+                norm_hidden_states = norm(hidden_states).to(hidden_states.dtype)
+                hidden_states = (
+                    attention_block(
+                        norm_hidden_states,
+                        encoder_hidden_states=encoder_hidden_states
+                        if attention_block.is_cross_attention
+                        else None,
+                        attention_mask=attention_mask,
+                        video_length=video_length,
+                        scale_mask=scale_mask
+                    ) + hidden_states
                 )
-                + hidden_states
-            )
+        else:
+            # views idea gotten from diffusers AnimateDiff FreeNoise implementation:
+            # https://github.com/arthur-qiu/FreeNoise-AnimateDiff/blob/main/animatediff/models/motion_module.py
+            # apply sliding context windows (views)
+            views = get_context_windows(num_frames=video_length, opts=view_options)
+            hidden_states = rearrange(hidden_states, "(b f) d c -> b f d c", f=video_length)
+            value_final = torch.zeros_like(hidden_states)
+            count_final = torch.zeros_like(hidden_states)
+            batched_conds = hidden_states.size(1) // video_length
+            for sub_idxs in views:
+                weights = get_context_weights(len(sub_idxs), view_options.fuse_method) * batched_conds
+                weights_tensor = torch.Tensor(weights).to(device=hidden_states.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+
+                sub_hidden_states = rearrange(hidden_states[:, sub_idxs], "b f d c -> (b f) d c")
+                for attention_block, norm in zip(self.attention_blocks, self.norms):
+                    norm_hidden_states = norm(sub_hidden_states).to(sub_hidden_states.dtype)
+                    sub_hidden_states = (
+                        attention_block(
+                            norm_hidden_states,
+                            encoder_hidden_states=encoder_hidden_states # do these need to be changed for sub_idxs too?
+                            if attention_block.is_cross_attention
+                            else None,
+                            attention_mask=attention_mask,
+                            video_length=len(sub_idxs),
+                            scale_mask=scale_mask[:, sub_idxs, :] if scale_mask is not None else scale_mask
+                        ) + sub_hidden_states
+                    )
+                sub_hidden_states = rearrange(sub_hidden_states, "(b f) d c -> b f d c", f=len(sub_idxs))
+
+                value_final[:, sub_idxs] += sub_hidden_states * weights_tensor
+                count_final[:, sub_idxs] += weights_tensor
+            
+            # get weighted average of sub_hidden_states
+            hidden_states = value_final / count_final
+            hidden_states = rearrange(hidden_states, "b f d c -> (b f) d c")
+            del value_final
+            del count_final
 
         hidden_states = self.ff(self.ff_norm(hidden_states)) + hidden_states
 

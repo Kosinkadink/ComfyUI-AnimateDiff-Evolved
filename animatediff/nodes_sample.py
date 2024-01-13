@@ -2,7 +2,7 @@ from torch import Tensor
 
 from .freeinit import FreeInitFilter
 from .sample_settings import FreeInitOptions, IterationOptions, NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, SeedNoiseGeneration, SampleSettings
-from .model_utils import BIGMIN, BIGMAX
+from .utils_model import BIGMIN, BIGMAX
 
 
 class SampleSettingsNode:

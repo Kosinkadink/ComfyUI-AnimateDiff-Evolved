@@ -4,10 +4,10 @@ import torch
 import comfy.sample as comfy_sample
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextOptions, ContextSchedules
+from .context import ContextOptions, ContextOptionsGroup, ContextSchedules
 from .logger import logger
-from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
-from .motion_utils import ADKeyframeGroup
+from .utils_model import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
+from .utils_motion import ADKeyframeGroup
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelSettings, load_motion_module
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -43,7 +43,7 @@ class AnimateDiffLoaderWithContext:
     def load_mm_and_inject_params(self,
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
-        context_options: ContextOptions=None, motion_lora: MotionLoraList=None, motion_model_settings: MotionModelSettings=None,
+        context_options: ContextOptionsGroup=None, motion_lora: MotionLoraList=None, motion_model_settings: MotionModelSettings=None,
         sample_settings: SampleSettings=None, motion_scale: float=1.0, apply_v2_models_properly: bool=False, ad_keyframes: ADKeyframeGroup=None,
     ):
         # load motion module

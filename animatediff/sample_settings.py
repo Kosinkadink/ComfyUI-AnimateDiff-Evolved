@@ -7,7 +7,7 @@ import comfy.samplers
 from comfy.model_patcher import ModelPatcher
 
 from . import freeinit
-from .context import ContextOptions
+from .context import ContextOptions, ContextOptionsGroup
 from .logger import logger
 
 
@@ -273,8 +273,8 @@ class SeedNoiseGeneration:
     @staticmethod
     def _convert_to_repeated_context(noise: Tensor, extra_args: dict, **kwargs):
         # if no context_length, return unmodified noise
-        opts: ContextOptions = extra_args["context_options"]
-        context_length: int = opts.context_length
+        opts: ContextOptionsGroup = extra_args["context_options"]
+        context_length: int = opts.context_length if not opts.view_options else opts.view_options.context_length
         if context_length is None:
             return noise
         length = noise.shape[0]
@@ -285,9 +285,9 @@ class SeedNoiseGeneration:
     @staticmethod
     def _convert_to_freenoise(noise: Tensor, seed: int, extra_args: dict, **kwargs):
         # if no context_length, return unmodified noise
-        opts: ContextOptions = extra_args["context_options"]
-        context_length: int = opts.context_length
-        context_overlap: int = opts.context_overlap
+        opts: ContextOptionsGroup = extra_args["context_options"]
+        context_length: int = opts.context_length if not opts.view_options else opts.view_options.context_length
+        context_overlap: int = opts.context_overlap if not opts.view_options else opts.view_options.context_overlap
         video_length: int = noise.shape[0]
         if context_length is None:
             return noise

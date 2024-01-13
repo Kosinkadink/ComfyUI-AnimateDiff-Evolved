@@ -6,7 +6,7 @@ from comfy.model_patcher import ModelPatcher
 from comfy.sd import load_checkpoint_guess_config
 
 from .logger import logger
-from .model_utils import IsChangedHelper, BetaSchedules
+from .utils_model import IsChangedHelper, BetaSchedules
 from .model_injection import get_vanilla_model_patcher
 
 

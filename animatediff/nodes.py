@@ -5,7 +5,7 @@ import comfy.sample as comfy_sample
 from comfy.model_patcher import ModelPatcher
 
 from .logger import logger
-from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
+from .utils_model import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelSettings, load_motion_module
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -15,7 +15,8 @@ from .nodes_gen1 import AnimateDiffLoaderWithContext
 from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode
 from .nodes_multival import MultivalDynamicNode, MultivalFloatNode, MultivalScaledMaskNode
 from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
-from .nodes_context import LoopedUniformContextOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode
+from .nodes_context import (LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
+                            StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
 from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
@@ -97,18 +98,23 @@ NODE_CLASS_MAPPINGS = {
     # Multival Nodes
     "ADE_MultivalDynamic": MultivalDynamicNode,
     "ADE_MultivalScaledMask": MultivalScaledMaskNode,
+    # Context Opts
+    "ADE_StandardStaticContextOptions": StandardStaticContextOptionsNode,
+    "ADE_StandardUniformContextOptions": StandardUniformContextOptionsNode,
+    "ADE_AnimateDiffUniformContextOptions": LoopedUniformContextOptionsNode,
+    "ADE_ViewsOnlyContextOptions": ViewAsContextOptionsNode,
+    "ADE_BatchedContextOptions": BatchedContextOptionsNode,
+    # View Opts
+    "ADE_StandardStaticViewOptions": StandardStaticViewOptionsNode,
+    "ADE_StandardUniformViewOptions": StandardUniformViewOptionsNode,
+    "ADE_LoopedUniformViewOptions": LoopedUniformViewOptionsNode,
+    # Iteration Opts
+    "ADE_IterationOptsDefault": IterationOptionsNode,
+    "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
     "ADE_NoiseLayerReplace": NoiseLayerReplaceNode,
-    # Context Opts
-    "ADE_AnimateDiffUniformContextOptions": LoopedUniformContextOptionsNode,
-    "ADE_StandardUniformContextOptions": StandardUniformContextOptionsNode,
-    "ADE_StandardStaticContextOptions": StandardStaticContextOptionsNode,
-    "ADE_BatchedContextOptions": BatchedContextOptionsNode,
-    # Iteration Opts
-    "ADE_IterationOptsDefault": IterationOptionsNode,
-    "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -136,18 +142,23 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Multival Nodes
     "ADE_MultivalDynamic": "Multival Dynamic 🎭🅐🅓",
     "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",
+    # Context Opts
+    "ADE_StandardStaticContextOptions": "Context Options◆Standard Static 🎭🅐🅓",
+    "ADE_StandardUniformContextOptions": "Context Options◆Standard Uniform 🎭🅐🅓",
+    "ADE_AnimateDiffUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓",
+    "ADE_ViewsOnlyContextOptions": "Context Options◆Views Only [VRAM⇈] 🎭🅐🅓",
+    "ADE_BatchedContextOptions": "Context Options◆Batched [Non-AD] 🎭🅐🅓",
+    # View Opts
+    "ADE_StandardStaticViewOptions": "View Options◆Standard Static 🎭🅐🅓",
+    "ADE_StandardUniformViewOptions": "View Options◆Standard Uniform 🎭🅐🅓",
+    "ADE_LoopedUniformViewOptions": "View Options◆Looped Uniform 🎭🅐🅓",
+    # Iteration Opts
+    "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
+    "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
     "ADE_NoiseLayerReplace": "Noise Layer [Replace] 🎭🅐🅓",
-    # Context Opts
-    "ADE_AnimateDiffUniformContextOptions": "Looped Uniform Context Options 🎭🅐🅓",
-    "ADE_StandardUniformContextOptions": "Standard Uniform Context Options 🎭🅐🅓",
-    "ADE_StandardStaticContextOptions": "Standard Static Context Options 🎭🅐🅓",
-    "ADE_BatchedContextOptions": "[Non-AD] Batched Context Options 🎭🅐🅓",
-    # Iteration Opts
-    "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
-    "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

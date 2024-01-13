@@ -4,7 +4,7 @@ from typing import Union
 import torch
 from torch import Tensor
 
-from .motion_utils import linear_conversion, normalize_min_max
+from .utils_motion import linear_conversion, normalize_min_max
 
 
 class ScaleType:

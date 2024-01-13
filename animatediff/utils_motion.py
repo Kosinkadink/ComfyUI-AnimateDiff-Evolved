@@ -27,7 +27,6 @@ else:
         optimized_attention_mm = attention_sub_quad
 
 
-# maintain backwards compatibility with the comfy.ops hasattr check (TODO: remove once a non-backwards compatible change happens)
 class CrossAttentionMM(nn.Module):
     def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0., dtype=None, device=None,
                  operations=comfy.ops.disable_weight_init):
@@ -108,6 +107,27 @@ def extend_to_batch_size(tensor: Tensor, batch_size: int):
         remainder = batch_size-tensor.shape[0]
         return torch.cat([tensor] + [tensor[-1:]]*remainder, dim=0)
     return tensor
+
+
+def get_sorted_list_via_attr(objects: list, attr: str) -> list:
+    if not objects:
+        return objects
+    elif len(objects) <= 1:
+        return [x for x in objects]
+    # now that we know we have to sort, do it following these rules:
+    # a) if objects have same value of attribute, maintain their relative order
+    # b) perform sorting of the groups of objects with same attributes
+    unique_attrs = {}
+    for object in objects:
+        val_attr = getattr(objects, attr)
+        unique_attrs.get(val_attr, list()).append(object)
+    # now that we have the unique attr values grouped together in relative order, sort them by key
+    sorted_attrs = dict(sorted(unique_attrs.items()))
+    # now flatten out the dict into a list to return
+    sorted_list = []
+    for object_list in sorted_attrs.values():
+        sorted_list.extend(object_list)
+    return sorted_list
 
 
 class MotionCompatibilityError(ValueError):

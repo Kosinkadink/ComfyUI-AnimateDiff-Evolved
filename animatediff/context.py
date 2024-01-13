@@ -1,6 +1,8 @@
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import numpy as np
+
+from .utils_motion import get_sorted_list_via_attr
 
 class ContextFuseMethod:
     FLAT = "flat"
@@ -15,20 +17,126 @@ class ContextType:
 
 class ContextOptions:
     def __init__(self, context_length: int=None, context_stride: int=None, context_overlap: int=None,
-                 context_schedule: str=None, closed_loop: bool=False, fuse_method: str=ContextFuseMethod.FLAT):
+                 context_schedule: str=None, closed_loop: bool=False, fuse_method: str=ContextFuseMethod.FLAT,
+                 use_on_equal_length: bool=False, view_options: 'ContextOptions'=None,
+                 start_percent=0.0, guarantee_steps=1):
+        # permanent settings
         self.context_length = context_length
         self.context_stride = context_stride
         self.context_overlap = context_overlap
         self.context_schedule = context_schedule
         self.closed_loop = closed_loop
         self.fuse_method = fuse_method
-        self.sync_context_to_pe = False
+        self.sync_context_to_pe = False  # this feature is likely bad and stay unused, so I might remove this
+        self.use_on_equal_length = use_on_equal_length
+        self.view_options = view_options.clone() if view_options else view_options
+        # scheduling
+        self.start_percent = float(start_percent)
+        self.guarantee_steps = guarantee_steps
+        # temporary vars
+        self._step: int = 0
     
+    @property
+    def step(self):
+        return self._step
+    @step.setter
+    def step(self, value: int):
+        self._step = value
+        if self.view_options:
+            self.view_options.step = value
+
     def clone(self):
         n = ContextOptions(context_length=self.context_length, context_stride=self.context_stride,
                                   context_overlap=self.context_overlap, context_schedule=self.context_schedule,
-                                  closed_loop=self.closed_loop, fuse_method=self.fuse_method)
+                                  closed_loop=self.closed_loop, fuse_method=self.fuse_method,
+                                  use_on_equal_length=self.use_on_equal_length, view_options=self.view_options,
+                                  start_percent=self.start_percent, guarantee_steps=self.guarantee_steps)
         return n
+
+
+class ContextOptionsGroup:
+    def __init__(self):
+        self.contexts: list[ContextOptions] = []
+        self._current_context: ContextOptions = None
+        self._current_guaranteed_steps: int = 0
+        self.step = 0
+
+    def reset(self):
+        self._current_context: ContextOptions = None
+        self._current_guaranteed_steps: int = 0
+        self.step = 0
+        self._set_first_as_current()
+
+    @classmethod
+    def default(cls):
+        def_context = ContextOptions()
+        new_group = ContextOptionsGroup()
+        new_group.add(def_context)
+        return new_group
+
+    def add(self, context: ContextOptions):
+        # add to end of list, then sort
+        self.contexts.append(context)
+        self.contexts = get_sorted_list_via_attr(self.contexts, "start_percent")
+        self._set_first_as_current()
+
+    def add_to_start(self, context: ContextOptions):
+        # add to start of list, then sort
+        self.contexts.insert(0, context)
+        self.contexts = get_sorted_list_via_attr(self.contexts, "start_percent")
+        self._set_first_as_current()
+
+    def is_empty(self) -> bool:
+        return len(self.contexts) == 0
+    
+    def clone(self):
+        cloned = ContextOptionsGroup()
+        for context in self.contexts:
+            cloned.contexts.append(context)
+        cloned._set_first_as_current()
+        return cloned
+
+    def update_current_context(self, t: float):
+        self._current_context = self.contexts[0]
+        # based on t + current_steps, determine which context to use
+        pass
+
+    def _set_first_as_current(self):
+        if len(self.contexts) > 0:
+            self._current_context = self.contexts[0]
+
+    # properties shadow those of ContextOptions
+    @property
+    def context_length(self):
+        return self._current_context.context_length
+    
+    @property
+    def context_overlap(self):
+        return self._current_context.context_overlap
+    
+    @property
+    def context_stride(self):
+        return self._current_context.context_stride
+    
+    @property
+    def context_schedule(self):
+        return self._current_context.context_schedule
+    
+    @property
+    def closed_loop(self):
+        return self._current_context.closed_loop
+    
+    @property
+    def fuse_method(self):
+        return self._current_context.fuse_method
+    
+    @property
+    def use_on_equal_length(self):
+        return self._current_context.use_on_equal_length
+    
+    @property
+    def view_options(self):
+        return self._current_context.view_options
 
 
 class ContextSchedules:
@@ -39,23 +147,25 @@ class ContextSchedules:
 
     BATCHED = "batched"
 
-    UNIFORM_SCHEDULE_LIST = [UNIFORM_LOOPED] # only include somewhat functional contexts here
+    VIEW_AS_CONTEXT = "view_as_context"
+
+    UNIFORM_SCHEDULE_LIST = [UNIFORM_LOOPED]
     STATIC_SCHEDULE_LIST = [STATIC_STANDARD]
 
 
 # from https://github.com/neggles/animatediff-cli/blob/main/src/animatediff/pipelines/context.py
-def create_windows_uniform_looped(step: int, num_frames: int, opts: ContextOptions):
+def create_windows_uniform_looped(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]):
     windows = []
-    if num_frames <= opts.context_length:
+    if num_frames < opts.context_length:
         windows.append(list(range(num_frames)))
         return windows
     
     context_stride = min(opts.context_stride, int(np.ceil(np.log2(num_frames / opts.context_length))) + 1)
     # obtain uniform windows as normal, looping and all
     for context_step in 1 << np.arange(context_stride):
-        pad = int(round(num_frames * ordered_halving(step)))
+        pad = int(round(num_frames * ordered_halving(opts.step)))
         for j in range(
-            int(ordered_halving(step) * context_step) + pad,
+            int(ordered_halving(opts.step) * context_step) + pad,
             num_frames + pad + (0 if opts.closed_loop else -opts.context_overlap),
             (opts.context_length * context_step - opts.context_overlap),
         ):
@@ -64,7 +174,7 @@ def create_windows_uniform_looped(step: int, num_frames: int, opts: ContextOptio
     return windows
 
 
-def create_windows_uniform_standard(step: int, num_frames: int, opts: ContextOptions):
+def create_windows_uniform_standard(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]):
     # unlike looped, uniform_straight does NOT allow windows that loop back to the beginning;
     # instead, they get shifted to the corresponding end of the frames.
     # in the case that a window (shifted or not) is identical to the previous one, it gets skipped.
@@ -76,9 +186,9 @@ def create_windows_uniform_standard(step: int, num_frames: int, opts: ContextOpt
     context_stride = min(opts.context_stride, int(np.ceil(np.log2(num_frames / opts.context_length))) + 1)
     # first, obtain uniform windows as normal, looping and all
     for context_step in 1 << np.arange(context_stride):
-        pad = int(round(num_frames * ordered_halving(step)))
+        pad = int(round(num_frames * ordered_halving(opts.step)))
         for j in range(
-            int(ordered_halving(step) * context_step) + pad,
+            int(ordered_halving(opts.step) * context_step) + pad,
             num_frames + pad + (-opts.context_overlap),
             (opts.context_length * context_step - opts.context_overlap),
         ):
@@ -104,7 +214,7 @@ def create_windows_uniform_standard(step: int, num_frames: int, opts: ContextOpt
                 break
         win_i += 1
 
-    # reverse delete_idxs so that they will be deleted in an order that does break idx correlation
+    # reverse delete_idxs so that they will be deleted in an order that doesn't break idx correlation
     delete_idxs.reverse()
     for i in delete_idxs:
         windows.pop(i)
@@ -112,7 +222,7 @@ def create_windows_uniform_standard(step: int, num_frames: int, opts: ContextOpt
     return windows
 
 
-def create_windows_static_standard(step: int, num_frames: int, opts: ContextOptions):
+def create_windows_static_standard(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]):
     windows = []
     if num_frames <= opts.context_length:
         windows.append(list(range(num_frames)))
@@ -131,7 +241,7 @@ def create_windows_static_standard(step: int, num_frames: int, opts: ContextOpti
     return windows
 
 
-def create_windows_batched(step: int, num_frames: int, opts: ContextOptions):
+def create_windows_batched(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]):
     windows = []
     if num_frames <= opts.context_length:
         windows.append(list(range(num_frames)))
@@ -144,11 +254,15 @@ def create_windows_batched(step: int, num_frames: int, opts: ContextOptions):
     return windows
 
 
-def get_context_windows(step: int, num_frames: int, opts: ContextOptions):
+def create_windows_default(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]):
+    return [list(range(num_frames))]
+
+
+def get_context_windows(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]):
     context_func = CONTEXT_MAPPING.get(opts.context_schedule, None)
     if not context_func:
-        raise ValueError(f"Unknown context_schedule '{opts.context_schedule}'")
-    return context_func(step, num_frames, opts)
+        raise ValueError(f"Unknown context_schedule '{opts.context_schedule}'.")
+    return context_func(num_frames, opts)
 
 
 CONTEXT_MAPPING = {
@@ -156,17 +270,38 @@ CONTEXT_MAPPING = {
     ContextSchedules.UNIFORM_STANDARD: create_windows_uniform_standard,
     ContextSchedules.STATIC_STANDARD: create_windows_static_standard,
     ContextSchedules.BATCHED: create_windows_batched,
+    ContextSchedules.VIEW_AS_CONTEXT: create_windows_default,  # just return all to allow Views to do all the work
 }
 
 
-def generate_distance_weight(n):
-    if n % 2 == 0:
-        max_weight = n // 2
+def get_context_weights(num_frames: int, fuse_method: str):
+    weights_func = FUSE_MAPPING.get(fuse_method, None)
+    if not weights_func:
+        raise ValueError(f"Unknown fuse_method '{fuse_method}'.")
+    return weights_func(num_frames)
+
+
+def create_weights_flat(length: int, **kwargs) -> list[float]:
+    # weight is the same for all
+    return [1.0] * length
+
+
+def create_weights_pyramid(length: int, **kwargs) -> list[float]:
+    # weight is based on the distance away from the edge of the context window;
+    # based on weighted average concept in FreeNoise paper
+    if length % 2 == 0:
+        max_weight = length // 2
         weight_sequence = list(range(1, max_weight + 1, 1)) + list(range(max_weight, 0, -1))
     else:
-        max_weight = (n + 1) // 2
+        max_weight = (length + 1) // 2
         weight_sequence = list(range(1, max_weight, 1)) + [max_weight] + list(range(max_weight - 1, 0, -1))
     return weight_sequence
+
+
+FUSE_MAPPING = {
+    ContextFuseMethod.FLAT: create_weights_flat,
+    ContextFuseMethod.PYRAMID: create_weights_pyramid,
+}
 
 
 # Returns fraction that has denominator that is a power of 2
@@ -219,164 +354,3 @@ def shift_window_to_end(window: list[int], num_frames: int):
     for i in range(len(window)):
         # 2) add end_delta to each val to slide windows to end
         window[i] = window[i] + end_delta
-
-
-
-
-
-
-################################################################################################
-
-# Generator that returns lists of latent indeces to diffuse on
-def uniform(
-    step: int,
-    num_frames: int,
-    opts: ContextOptions,
-    print_final: bool = False,
-):
-    if num_frames <= opts.context_length:
-        yield list(range(num_frames))
-        return
-
-    context_stride = min(opts.context_stride, int(np.ceil(np.log2(num_frames / opts.context_length))) + 1)
-
-    for context_step in 1 << np.arange(context_stride):
-        pad = int(round(num_frames * ordered_halving(step, print_final)))
-        for j in range(
-            int(ordered_halving(step) * context_step) + pad,
-            num_frames + pad + (0 if opts.closed_loop else -opts.context_overlap),
-            (opts.context_length * context_step - opts.context_overlap),
-        ):
-            yield [e % num_frames for e in range(j, j + opts.context_length * context_step, context_step)]
-
-
-#################################
-#  helper funcs for testing
-def get_total_steps(
-    scheduler,
-    timesteps: list[int],
-    num_steps: Optional[int] = None,
-    num_frames: int = ...,
-    context_size: Optional[int] = None,
-    context_stride: int = 3,
-    context_overlap: int = 4,
-    closed_loop: bool = True,
-):
-    return sum(
-        len(
-            list(
-                scheduler(
-                    i,
-                    num_steps,
-                    num_frames,
-                    context_size,
-                    context_stride,
-                    context_overlap,
-                )
-            )
-        )
-        for i in range(len(timesteps))
-    )
-
-
-def get_total_steps_fixed(
-    scheduler,
-    timesteps: list[int],
-    num_steps: Optional[int] = None,
-    num_frames: int = ...,
-    context_size: Optional[int] = None,
-    context_stride: int = 3,
-    context_overlap: int = 4,
-    closed_loop: bool = True,
-):
-    total_loops = 0
-    for i, t in enumerate(timesteps):
-        for context in scheduler(i, num_steps, num_frames, context_size, context_stride, context_overlap, closed_loop=closed_loop):
-            total_loops += 1
-    return total_loops
-
-
-def uniform_v2(
-    step: int = ...,
-    num_frames: int = ...,
-    context_size: Optional[int] = None,
-    context_stride: int = 3,
-    context_overlap: int = 4,
-    closed_loop: bool = True,
-    print_final: bool = False,
-):
-    if num_frames <= context_size:
-        yield list(range(num_frames))
-        return
-
-    context_stride = min(context_stride, int(np.ceil(np.log2(num_frames / context_size))) + 1)
-
-    pad = int(round(num_frames * ordered_halving(step, print_final)))
-    for context_step in 1 << np.arange(context_stride):
-        j_initial = int(ordered_halving(step) * context_step) + pad
-        for j in range(
-            j_initial,
-            num_frames + pad - context_overlap,
-            (context_size * context_step - context_overlap),
-        ):
-            if context_size * context_step > num_frames:
-                # On the final context_step,
-                # ensure no frame appears in the window twice
-                yield [e % num_frames for e in range(j, j + num_frames, context_step)]
-                continue
-            j = j % num_frames
-            if j > (j + context_size * context_step) % num_frames and not closed_loop:
-                yield  [e for e in range(j, num_frames, context_step)]
-                j_stop = (j + context_size * context_step) % num_frames
-                # When  ((num_frames % (context_size - context_overlap)+context_overlap) % context_size != 0,
-                # This can cause 'superflous' runs where all frames in
-                # a context window have already been processed during
-                # the first context window of this stride and step.
-                # While the following commented if should prevent this,
-                # I believe leaving it in is more correct as it maintains
-                # the total conditional passes per frame over a large total steps
-                # if j_stop > context_overlap:
-                yield [e for e in range(0, j_stop, context_step)]
-                continue
-            yield [e % num_frames for e in range(j, j + context_size * context_step, context_step)]
-
-
-def uniform_constant(
-    step: int = ...,
-    num_frames: int = ...,
-    context_size: Optional[int] = None,
-    context_stride: int = 3,
-    context_overlap: int = 4,
-    closed_loop: bool = True,
-    print_final: bool = False,
-):
-    if num_frames <= context_size:
-        yield list(range(num_frames))
-        return
-
-    context_stride = min(context_stride, int(np.ceil(np.log2(num_frames / context_size))) + 1)
-
-    # want to avoid loops that connect end to beginning
-
-    for context_step in 1 << np.arange(context_stride):
-        pad = int(round(num_frames * ordered_halving(step, print_final)))
-        for j in range(
-            int(ordered_halving(step) * context_step) + pad,
-            num_frames + pad + (0 if closed_loop else -context_overlap),
-            (context_size * context_step - context_overlap),
-        ):
-            skip_this_window = False
-            prev_val = -1
-            to_yield = []
-            for e in range(j, j + context_size * context_step, context_step):
-                e = e % num_frames
-                # if not a closed loop and loops back on itself, should be skipped
-                if not closed_loop and e < prev_val:
-                    skip_this_window = True
-                    break
-                to_yield.append(e)
-                prev_val = e
-            if skip_this_window:
-                continue
-            # yield if not skipped
-            yield to_yield

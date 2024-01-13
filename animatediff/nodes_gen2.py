@@ -4,10 +4,10 @@ import torch
 import comfy.sample as comfy_sample
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextOptions, ContextSchedules
+from .context import ContextOptions, ContextOptionsGroup, ContextSchedules
 from .logger import logger
-from .model_utils import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
-from .motion_utils import ADKeyframeGroup, ADKeyframe
+from .utils_model import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
+from .utils_motion import ADKeyframeGroup, ADKeyframe
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings,
                               load_motion_module, load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)
@@ -35,7 +35,7 @@ class UseEvolvedSamplingNode:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "use_evolved_sampling"
 
-    def use_evolved_sampling(self, model: ModelPatcher, beta_schedule: str, m_models: MotionModelGroup=None, context_options: ContextOptions=None,
+    def use_evolved_sampling(self, model: ModelPatcher, beta_schedule: str, m_models: MotionModelGroup=None, context_options: ContextOptionsGroup=None,
                              sample_settings: SampleSettings=None, beta_schedule_override=None):
         if m_models is not None:
             m_models = m_models.clone()

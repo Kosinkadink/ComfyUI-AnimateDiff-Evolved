@@ -14,7 +14,7 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import ContextSchedules, ContextOptions
 from .logger import logger
-from .model_utils import Folders, BetaSchedules, get_available_motion_models
+from .utils_model import Folders, BetaSchedules, get_available_motion_models
 from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module
 
 
