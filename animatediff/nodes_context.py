@@ -20,7 +20,7 @@ class LoopedUniformContextOptionsNode:
                 #"sync_context_to_pe": ("BOOLEAN", {"default": False},),
             },
             "optional": {
-                "fuse_method": (ContextFuseMethod.LIST,),
+                "fuse_method": (ContextFuseMethod.LIST, {"default": ContextFuseMethod.FLAT}),
                 "use_on_equal_length": ("BOOLEAN", {"default": False},),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
@@ -83,7 +83,7 @@ class StandardUniformContextOptionsNode:
     FUNCTION = "create_options"
 
     def create_options(self, context_length: int, context_stride: int, context_overlap: int,
-                       fuse_method: str=ContextFuseMethod.FLAT, use_on_equal_length=False, start_percent: float=0.0, guarantee_steps: int=1,
+                       fuse_method: str=ContextFuseMethod.PYRAMID, use_on_equal_length=False, start_percent: float=0.0, guarantee_steps: int=1,
                        view_opts: ContextOptions=None, prev_context: ContextOptionsGroup=None):
         if prev_context is None:
             prev_context = ContextOptionsGroup()
@@ -114,7 +114,7 @@ class StandardStaticContextOptionsNode:
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": OVERLAP_MAX}),
             },
             "optional": {
-                "fuse_method": (ContextFuseMethod.LIST, {"default": ContextFuseMethod.PYRAMID}),
+                "fuse_method": (ContextFuseMethod.LIST,),
                 "use_on_equal_length": ("BOOLEAN", {"default": False},),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
@@ -129,7 +129,7 @@ class StandardStaticContextOptionsNode:
     FUNCTION = "create_options"
 
     def create_options(self, context_length: int, context_overlap: int,
-                       fuse_method: str=ContextFuseMethod.FLAT, use_on_equal_length=False, start_percent: float=0.0, guarantee_steps: int=1,
+                       fuse_method: str=ContextFuseMethod.PYRAMID, use_on_equal_length=False, start_percent: float=0.0, guarantee_steps: int=1,
                        view_opts: ContextOptions=None, prev_context: ContextOptionsGroup=None):
         if prev_context is None:
             prev_context = ContextOptionsGroup()
@@ -194,7 +194,6 @@ class ViewAsContextOptionsNode:
                 "view_opts_req": ("VIEW_OPTS",),
             },
             "optional": {
-                "use_on_equal_length": ("BOOLEAN", {"default": False},),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
                 "prev_context": ("CONTEXT_OPTIONS",),
@@ -233,7 +232,7 @@ class StandardStaticViewOptionsNode:
                 "view_overlap": ("INT", {"default": 4, "min": 0, "max": OVERLAP_MAX}),
             },
             "optional": {
-                "fuse_method": (ContextFuseMethod.LIST, {"default": ContextFuseMethod.PYRAMID}),
+                "fuse_method": (ContextFuseMethod.LIST,),
             }
         }
     
@@ -263,7 +262,7 @@ class StandardUniformViewOptionsNode:
                 "view_overlap": ("INT", {"default": 4, "min": 0, "max": OVERLAP_MAX}),
             },
             "optional": {
-                "fuse_method": (ContextFuseMethod.LIST, {"default": ContextFuseMethod.PYRAMID}),
+                "fuse_method": (ContextFuseMethod.LIST,),
             }
         }
     
@@ -272,7 +271,7 @@ class StandardUniformViewOptionsNode:
     FUNCTION = "create_options"
 
     def create_options(self, view_length: int, view_overlap: int, view_stride: int,
-                       fuse_method: str=ContextFuseMethod.FLAT,):
+                       fuse_method: str=ContextFuseMethod.PYRAMID,):
         view_options = ContextOptions(
             context_length=view_length,
             context_stride=view_stride,
@@ -294,7 +293,8 @@ class LoopedUniformViewOptionsNode:
                 "closed_loop": ("BOOLEAN", {"default": False},),
             },
             "optional": {
-                "fuse_method": (ContextFuseMethod.LIST, {"default": ContextFuseMethod.PYRAMID}),
+                "fuse_method": (ContextFuseMethod.LIST,),
+                "use_on_equal_length": ("BOOLEAN", {"default": False},),
             }
         }
     
@@ -303,7 +303,7 @@ class LoopedUniformViewOptionsNode:
     FUNCTION = "create_options"
 
     def create_options(self, view_length: int, view_overlap: int, view_stride: int, closed_loop: bool,
-                       fuse_method: str=ContextFuseMethod.FLAT,):
+                       fuse_method: str=ContextFuseMethod.PYRAMID, use_on_equal_length=False):
         view_options = ContextOptions(
             context_length=view_length,
             context_stride=view_stride,
@@ -311,6 +311,7 @@ class LoopedUniformViewOptionsNode:
             context_schedule=ContextSchedules.UNIFORM_LOOPED,
             closed_loop=closed_loop,
             fuse_method=fuse_method,
+            use_on_equal_length=use_on_equal_length,
             )
         return (view_options,)
 

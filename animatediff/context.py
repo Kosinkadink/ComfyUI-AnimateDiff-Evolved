@@ -8,7 +8,7 @@ class ContextFuseMethod:
     FLAT = "flat"
     PYRAMID = "pyramid"
 
-    LIST = [FLAT, PYRAMID]
+    LIST = [PYRAMID, FLAT]
 
 
 class ContextType:
