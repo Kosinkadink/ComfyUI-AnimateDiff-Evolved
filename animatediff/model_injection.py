@@ -148,7 +148,7 @@ class MotionModelPatcher(ModelPatcher):
             for i in range(self.current_index+1, len(self.keyframes)):
                 eval_kf = self.keyframes[i]
                 # check if start_t is greater or equal to curr_t
-                # NOTE: t is in terms of sigmas, not percent, so smaller number = later step in sampling
+                # NOTE: t is in terms of sigmas, not percent, so bigger number = earlier step in sampling
                 if eval_kf.start_t >= curr_t:
                     self.current_index = i
                     self.current_keyframe = eval_kf

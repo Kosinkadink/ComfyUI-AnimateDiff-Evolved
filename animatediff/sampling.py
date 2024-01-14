@@ -38,6 +38,8 @@ class AnimateDiffHelper_GlobalState:
             self.initialized = True
             if self.motion_models is not None:
                 self.motion_models.initialize_timesteps(model)
+            if self.params.context_options is not None:
+                self.params.context_options.initialize_timesteps(model)
 
     def reset(self):
         self.initialized = False
@@ -342,6 +344,8 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     ADGS.initialize(model)
     if ADGS.motion_models is not None:
         ADGS.motion_models.prepare_current_keyframe(t=timestep)
+    if ADGS.params.context_options is not None:
+        ADGS.params.context_options.prepare_current_context(t=timestep)
 
     if math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
         uncond_ = None

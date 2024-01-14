@@ -118,9 +118,12 @@ def get_sorted_list_via_attr(objects: list, attr: str) -> list:
     # a) if objects have same value of attribute, maintain their relative order
     # b) perform sorting of the groups of objects with same attributes
     unique_attrs = {}
-    for object in objects:
-        val_attr = getattr(objects, attr)
-        unique_attrs.get(val_attr, list()).append(object)
+    for o in objects:
+        val_attr = getattr(o, attr)
+        attr_list = unique_attrs.get(val_attr, list())
+        attr_list.append(o)
+        if val_attr not in unique_attrs:
+            unique_attrs[val_attr] = attr_list
     # now that we have the unique attr values grouped together in relative order, sort them by key
     sorted_attrs = dict(sorted(unique_attrs.items()))
     # now flatten out the dict into a list to return
