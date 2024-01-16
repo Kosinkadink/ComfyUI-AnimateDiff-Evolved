@@ -35,7 +35,7 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         return {
             "required": {
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
-                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.LINEAR}, )
+                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.USE_EXISTING}, )
             },
             "optional": {
                 "use_custom_scale_factor": ("BOOLEAN", {"default": False}),

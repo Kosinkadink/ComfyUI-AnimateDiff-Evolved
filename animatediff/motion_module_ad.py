@@ -15,7 +15,7 @@ from comfy.utils import repeat_to_batch_size
 
 from .context import ContextOptions, get_context_weights, get_context_windows
 from .utils_motion import GroupNormAD, CrossAttentionMM, MotionCompatibilityError, extend_to_batch_size, prepare_mask_batch
-from .utils_model import ModelTypeSD
+from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
 
 
@@ -43,6 +43,9 @@ class AnimateDiffInfo:
         self.mm_format = mm_format
         self.mm_version = mm_version
         self.mm_name = mm_name
+    
+    def get_string(self):
+        return f"{self.mm_name}:{self.mm_version}:{self.mm_format}:{self.sd_type}"
 
 
 def is_hotshotxl(mm_state_dict: dict[str, Tensor]) -> bool:
@@ -170,6 +173,22 @@ class AnimateDiffModel(nn.Module):
 
     def get_device_debug(self):
         return self.down_blocks[0].motion_modules[0].temporal_transformer.proj_in.weight.device
+
+    def get_best_beta_schedule(self, log=False) -> str:
+        to_return = None
+        if self.mm_info.sd_type == ModelTypeSD.SD1_5:
+            to_return = BetaSchedules.SQRT_LINEAR
+        elif self.mm_info.sd_type == ModelTypeSD.SDXL:
+            if self.mm_info.mm_format == AnimateDiffFormat.HOTSHOTXL:
+                to_return = BetaSchedules.LINEAR
+            else:
+                to_return = BetaSchedules.LINEAR_ADXL
+        if to_return is not None:
+            if log: logger.info(f"Autoselect: '{to_return}' beta_schedule for {self.mm_info.get_string()}")
+        else:
+            to_return = BetaSchedules.USE_EXISTING
+            if log: logger.info(f"Autoselect: could not find beta_schedule for {self.mm_info.get_string()}, defaulting to '{to_return}'")
+        return to_return
 
     def cleanup(self):
         pass

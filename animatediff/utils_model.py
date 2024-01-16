@@ -30,8 +30,7 @@ class ModelSamplingConfig:
 
 
 class BetaSchedules:
-    AUTOSELECT_PREFER = "autoselect (prefer patch)"
-    AUTOSELECT_OVERRIDE = "autoselect (override patch)"
+    AUTOSELECT = "autoselect"
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
     LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
@@ -40,7 +39,7 @@ class BetaSchedules:
     COSINE = "cosine"
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
-    ALIAS_LIST = [AUTOSELECT_PREFER, AUTOSELECT_OVERRIDE, SQRT_LINEAR, LINEAR_ADXL, LINEAR,
+    ALIAS_LIST = [AUTOSELECT, SQRT_LINEAR, LINEAR_ADXL, LINEAR,
                   USE_EXISTING, SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
     ALIAS_MAP = {

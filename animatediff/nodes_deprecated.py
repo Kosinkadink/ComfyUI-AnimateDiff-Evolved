@@ -58,6 +58,9 @@ class AnimateDiffLoader_Deprecated:
         model.motion_injection_params = params
 
         # save model sampling from BetaSchedule as object patch
+        # if autoselect, get suggested beta_schedule from motion model
+        if beta_schedule == BetaSchedules.AUTOSELECT and not model.motion_models.is_empty():
+            beta_schedule = model.motion_models[0].model.get_best_beta_schedule(log=True)
         new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
         if new_model_sampling is not None:
             model.add_object_patch("model_sampling", new_model_sampling)
@@ -122,6 +125,9 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         model.motion_injection_params = params
 
         # save model sampling from BetaSchedule as object patch
+        # if autoselect, get suggested beta_schedule from motion model
+        if beta_schedule == BetaSchedules.AUTOSELECT and not model.motion_models.is_empty():
+            beta_schedule = model.motion_models[0].model.get_best_beta_schedule(log=True)
         new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
         if new_model_sampling is not None:
             model.add_object_patch("model_sampling", new_model_sampling)
