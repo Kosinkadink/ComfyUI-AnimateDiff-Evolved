@@ -145,12 +145,15 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
     params = params.clone()
     if params.context_options.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
         params.context_options._current_context.context_length = params.full_length
-    # check (and message) should be different based on use_on_equal_length setting
+    # TODO: check (and message) should be different based on use_on_equal_length setting
     if params.context_options.context_length:
         pass
 
     allow_equal = params.context_options.use_on_equal_length
-    enough_latents = params.full_length >= params.context_options.context_length if allow_equal else params.full_length > params.context_options.context_length
+    if params.context_options.context_length:
+        enough_latents = params.full_length >= params.context_options.context_length if allow_equal else params.full_length > params.context_options.context_length
+    else:
+        enough_latents = False
     if params.context_options.context_length and enough_latents:
         logger.info(f"Sliding context window activated - latents passed in ({params.full_length}) greater than context_length {params.context_options.context_length}.")
     else:
