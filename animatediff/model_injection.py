@@ -396,6 +396,15 @@ def load_motion_module_gen2(model_name: str, motion_model_settings: 'MotionModel
     return motion_model
 
 
+def create_fresh_motion_module(motion_model: MotionModelPatcher) -> MotionModelPatcher:
+    ad_wrapper = AnimateDiffModel(mm_state_dict=motion_model.model.state_dict(), mm_info=motion_model.model.mm_info)
+    ad_wrapper.to(comfy.model_management.unet_dtype())
+    ad_wrapper.to(comfy.model_management.unet_offload_device())
+    ad_wrapper.load_state_dict(motion_model.model.state_dict())
+    return MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
+                                      offload_device=comfy.model_management.unet_offload_device())
+
+
 def validate_model_compatibility_gen2(model: ModelPatcher, motion_model: MotionModelPatcher):
     # check that motion model is compatible with sd model
     model_sd_type = get_sd_model_type(model)

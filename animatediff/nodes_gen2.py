@@ -9,7 +9,7 @@ from .logger import logger
 from .utils_model import BIGMAX, BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .utils_motion import ADKeyframeGroup, ADKeyframe
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings,
+from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings, create_fresh_motion_module,
                               load_motion_module, load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
@@ -103,6 +103,11 @@ class ApplyAnimateDiffModelNode:
             prev_m_models = MotionModelGroup()
         prev_m_models = prev_m_models.clone()
         motion_model = motion_model.clone()
+        # check if internal motion model already present in previous model - create new if so
+        for prev_model in prev_m_models.models:
+            if motion_model.model is prev_model.model:
+                # need to create new internal model based on same state_dict
+                motion_model = create_fresh_motion_module(motion_model)
         # apply motion model to loaded_mm
         if motion_lora is not None:
             for lora in motion_lora.loras:
