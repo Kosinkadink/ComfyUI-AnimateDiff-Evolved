@@ -15,7 +15,7 @@ from .nodes_gen1 import AnimateDiffLoaderWithContext
 from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode
 from .nodes_multival import MultivalDynamicNode, MultivalFloatNode, MultivalScaledMaskNode
 from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
-from .nodes_context import (LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
+from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
@@ -101,9 +101,10 @@ NODE_CLASS_MAPPINGS = {
     # Context Opts
     "ADE_StandardStaticContextOptions": StandardStaticContextOptionsNode,
     "ADE_StandardUniformContextOptions": StandardUniformContextOptionsNode,
-    "ADE_AnimateDiffUniformContextOptions": LoopedUniformContextOptionsNode,
+    "ADE_LoopedUniformContextOptions": LoopedUniformContextOptionsNode,
     "ADE_ViewsOnlyContextOptions": ViewAsContextOptionsNode,
     "ADE_BatchedContextOptions": BatchedContextOptionsNode,
+    "ADE_AnimateDiffUniformContextOptions": LegacyLoopedUniformContextOptionsNode, # Legacy
     # View Opts
     "ADE_StandardStaticViewOptions": StandardStaticViewOptionsNode,
     "ADE_StandardUniformViewOptions": StandardUniformViewOptionsNode,
@@ -145,9 +146,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Context Opts
     "ADE_StandardStaticContextOptions": "Context Options◆Standard Static 🎭🅐🅓",
     "ADE_StandardUniformContextOptions": "Context Options◆Standard Uniform 🎭🅐🅓",
-    "ADE_AnimateDiffUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓",
+    "ADE_LoopedUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓",
     "ADE_ViewsOnlyContextOptions": "Context Options◆Views Only [VRAM⇈] 🎭🅐🅓",
     "ADE_BatchedContextOptions": "Context Options◆Batched [Non-AD] 🎭🅐🅓",
+    "ADE_AnimateDiffUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓", # Legacy
     # View Opts
     "ADE_StandardStaticViewOptions": "View Options◆Standard Static 🎭🅐🅓",
     "ADE_StandardUniformViewOptions": "View Options◆Standard Uniform 🎭🅐🅓",

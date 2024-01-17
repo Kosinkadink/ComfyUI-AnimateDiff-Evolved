@@ -173,17 +173,14 @@ class ContextOptionsGroup:
 
 
 class ContextSchedules:
-    UNIFORM_LOOPED = "uniform"
-    UNIFORM_STANDARD = "uniform_standard"
-
-    STATIC_STANDARD = "static_standard"
-
+    UNIFORM_LOOPED = "looped_uniform"
+    UNIFORM_STANDARD = "standard_uniform"
+    STATIC_STANDARD = "standard_static"
     BATCHED = "batched"
-
     VIEW_AS_CONTEXT = "view_as_context"
 
-    UNIFORM_SCHEDULE_LIST = [UNIFORM_LOOPED]
-    STATIC_SCHEDULE_LIST = [STATIC_STANDARD]
+    LEGACY_UNIFORM_LOOPED = "uniform"
+    LEGACY_UNIFORM_SCHEDULE_LIST = [LEGACY_UNIFORM_LOOPED]
 
 
 # from https://github.com/neggles/animatediff-cli/blob/main/src/animatediff/pipelines/context.py

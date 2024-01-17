@@ -15,7 +15,58 @@ class LoopedUniformContextOptionsNode:
                 "context_length": ("INT", {"default": 16, "min": 1, "max": LENGTH_MAX}),
                 "context_stride": ("INT", {"default": 1, "min": 1, "max": STRIDE_MAX}),
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": OVERLAP_MAX}),
-                "context_schedule": (ContextSchedules.UNIFORM_SCHEDULE_LIST,),
+                "closed_loop": ("BOOLEAN", {"default": False},),
+                #"sync_context_to_pe": ("BOOLEAN", {"default": False},),
+            },
+            "optional": {
+                "fuse_method": (ContextFuseMethod.LIST,),
+                "use_on_equal_length": ("BOOLEAN", {"default": False},),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+                "prev_context": ("CONTEXT_OPTIONS",),
+                "view_opts": ("VIEW_OPTS",),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXT_OPTIONS",)
+    RETURN_NAMES = ("CONTEXT_OPTS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts"
+    FUNCTION = "create_options"
+
+    def create_options(self, context_length: int, context_stride: int, context_overlap: int, closed_loop: bool,
+                       fuse_method: str=ContextFuseMethod.FLAT, use_on_equal_length=False, start_percent: float=0.0, guarantee_steps: int=1,
+                       view_opts: ContextOptions=None, prev_context: ContextOptionsGroup=None):
+        if prev_context is None:
+            prev_context = ContextOptionsGroup()
+        prev_context = prev_context.clone()
+
+        context_options = ContextOptions(
+            context_length=context_length,
+            context_stride=context_stride,
+            context_overlap=context_overlap,
+            context_schedule=ContextSchedules.UNIFORM_LOOPED,
+            closed_loop=closed_loop,
+            fuse_method=fuse_method,
+            use_on_equal_length=use_on_equal_length,
+            start_percent=start_percent,
+            guarantee_steps=guarantee_steps,
+            view_options=view_opts,
+            )
+        #context_options.set_sync_context_to_pe(sync_context_to_pe)
+        prev_context.add(context_options)
+        return (prev_context,)
+
+
+# This Legacy version exists to maintain compatiblity with old workflows
+class LegacyLoopedUniformContextOptionsNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "context_length": ("INT", {"default": 16, "min": 1, "max": LENGTH_MAX}),
+                "context_stride": ("INT", {"default": 1, "min": 1, "max": STRIDE_MAX}),
+                "context_overlap": ("INT", {"default": 4, "min": 0, "max": OVERLAP_MAX}),
+                "context_schedule": (ContextSchedules.LEGACY_UNIFORM_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
                 #"sync_context_to_pe": ("BOOLEAN", {"default": False},),
             },
@@ -31,31 +82,11 @@ class LoopedUniformContextOptionsNode:
     
     RETURN_TYPES = ("CONTEXT_OPTIONS",)
     RETURN_NAMES = ("CONTEXT_OPTS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/context opts"
+    CATEGORY = ""  # No Category, so will not appear in menu
     FUNCTION = "create_options"
 
-    def create_options(self, context_length: int, context_stride: int, context_overlap: int, context_schedule: int, closed_loop: bool,
-                       fuse_method: str=ContextFuseMethod.FLAT, use_on_equal_length=False, start_percent: float=0.0, guarantee_steps: int=1,
-                       view_opts: ContextOptions=None, prev_context: ContextOptionsGroup=None):
-        if prev_context is None:
-            prev_context = ContextOptionsGroup()
-        prev_context = prev_context.clone()
-
-        context_options = ContextOptions(
-            context_length=context_length,
-            context_stride=context_stride,
-            context_overlap=context_overlap,
-            context_schedule=context_schedule,
-            closed_loop=closed_loop,
-            fuse_method=fuse_method,
-            use_on_equal_length=use_on_equal_length,
-            start_percent=start_percent,
-            guarantee_steps=guarantee_steps,
-            view_options=view_opts,
-            )
-        #context_options.set_sync_context_to_pe(sync_context_to_pe)
-        prev_context.add(context_options)
-        return (prev_context,)
+    def create_options(self, fuse_method: str=ContextFuseMethod.FLAT, **kwargs):
+        return LoopedUniformContextOptionsNode.create_options(fuse_method=fuse_method, **kwargs)
 
 
 class StandardUniformContextOptionsNode:
@@ -314,5 +345,3 @@ class LoopedUniformViewOptionsNode:
             use_on_equal_length=use_on_equal_length,
             )
         return (view_options,)
-
-
