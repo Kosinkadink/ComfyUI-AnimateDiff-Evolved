@@ -402,7 +402,7 @@ class FreeInitOptions(IterationOptions):
             if sampler is not None:
                 sigma = sampler.sigmas[999-self.step].to(latents.device) / (model.model.latent_format.scale_factor)
             else:
-                sigma = self.get_sigma(model, self.step).to(latents.device) / (model.model.latent_format.scale_factor)
+                sigma = self.get_sigma(model, self.step-1000).to(latents.device) / (model.model.latent_format.scale_factor)
             alpha_cumprod = 1 / ((sigma * sigma) + 1)
             sqrt_alpha_prod = alpha_cumprod ** 0.5
             sqrt_one_minus_alpha_prod = (1 - alpha_cumprod) ** 0.5
@@ -420,7 +420,7 @@ class FreeInitOptions(IterationOptions):
             # NOTE: This was my first attempt at implementing FreeInit; it sorta works due to my alpha_cumprod shenanigans,
             #       but completely by accident.
             # 1. apply initial noise with appropriate step sigma
-            sigma = self.get_sigma(model, self.step).to(latents.device)
+            sigma = self.get_sigma(model, self.step-1000).to(latents.device)
             alpha_cumprod = 1 / ((sigma * sigma) + 1) #1 / ((sigma * sigma)) # 1 / ((sigma * sigma) + 1)
             noised_latents = (latents + (cached_noise * sigma)) * alpha_cumprod
             # 2. create random noise z_rand for high frequency
