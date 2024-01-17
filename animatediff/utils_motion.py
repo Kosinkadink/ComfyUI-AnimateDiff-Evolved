@@ -169,14 +169,16 @@ class ADKeyframe:
                  scale_multival: Union[float, Tensor]=None,
                  effect_multival: Union[float, Tensor]=None,
                  inherit_missing: bool=True,
-                 guarantee_usage: bool=True,
+                 guarantee_steps: int=1,
+                 default: bool=False,
                  ):
         self.start_percent = start_percent
         self.start_t = 999999999.9
         self.scale_multival = scale_multival
         self.effect_multival = effect_multival
         self.inherit_missing = inherit_missing
-        self.guarantee_usage = guarantee_usage
+        self.guarantee_steps = guarantee_steps
+        self.default = default
     
     def has_scale(self):
         return self.scale_multival is not None
@@ -188,19 +190,19 @@ class ADKeyframe:
 class ADKeyframeGroup:
     def __init__(self):
         self.keyframes: list[ADKeyframe] = []
-        self.keyframes.append(ADKeyframe())
+        self.keyframes.append(ADKeyframe(guarantee_steps=1, default=True))
     
     def add(self, keyframe: ADKeyframe):
-        added = False
-        # replace existing keyframe if same start_percent
+        # remove any default keyframes that match start_percent of new keyframe
+        default_to_delete = []
         for i in range(len(self.keyframes)):
-            if self.keyframes[i].start_percent == keyframe.start_percent:
-                self.keyframes[i] = keyframe
-                added = True
-                break
-        if not added:
-            self.keyframes.append(keyframe)
-        self.keyframes.sort(key=lambda k: k.start_percent)
+            if self.keyframes[i].default and self.keyframes[i].start_percent == keyframe.start_percent:
+                default_to_delete.append(i)
+        for i in reversed(default_to_delete):
+            self.keyframes.pop(i)
+        # add to end of list, then sort
+        self.keyframes.append(keyframe)
+        self.keyframes = get_sorted_list_via_attr(self.keyframes, "start_percent")
     
     def get_index(self, index: int) -> Union[ADKeyframe, None]:
         try:
@@ -223,5 +225,6 @@ class ADKeyframeGroup:
     def clone(self) -> 'ADKeyframeGroup':
         cloned = ADKeyframeGroup()
         for tk in self.keyframes:
-            cloned.add(tk)
+            if not tk.default:
+                cloned.add(tk)
         return cloned

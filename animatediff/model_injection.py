@@ -99,6 +99,7 @@ class MotionModelPatcher(ModelPatcher):
         self.scale_multival = None
         self.effect_multival = None
         # temporary variables
+        self.current_used_steps = 0
         self.current_keyframe: ADKeyframe = None
         self.current_index = -1
         self.current_scale: Union[float, Tensor] = None
@@ -143,30 +144,33 @@ class MotionModelPatcher(ModelPatcher):
     def prepare_current_keyframe(self, t: Tensor):
         curr_t: float = t[0]
         prev_index = self.current_index
-        # if has next index, loop through and see if need to switch
-        if self.keyframes.has_index(self.current_index+1):
-            for i in range(self.current_index+1, len(self.keyframes)):
-                eval_kf = self.keyframes[i]
-                # check if start_t is greater or equal to curr_t
-                # NOTE: t is in terms of sigmas, not percent, so bigger number = earlier step in sampling
-                if eval_kf.start_t >= curr_t:
-                    self.current_index = i
-                    self.current_keyframe = eval_kf
-                    # keep track of scale and effect multivals, accounting for inherit_missing
-                    if self.current_keyframe.has_scale():
-                        self.current_scale = self.current_keyframe.scale_multival
-                    elif not self.current_keyframe.inherit_missing:
-                        self.current_scale = None
-                    if self.current_keyframe.has_effect():
-                        self.current_effect = self.current_keyframe.effect_multival
-                    elif not self.current_keyframe.inherit_missing:
-                        self.current_effect = None
-                    # if guarantee_usage, stop searching for other keyframes
-                    if self.current_keyframe.guarantee_usage:
+        # if met guaranteed steps, look for next keyframe in case need to switch
+        if self.current_keyframe is None or self.current_used_steps >= self.current_keyframe.guarantee_steps:
+            # if has next index, loop through and see if need to switch
+            if self.keyframes.has_index(self.current_index+1):
+                for i in range(self.current_index+1, len(self.keyframes)):
+                    eval_kf = self.keyframes[i]
+                    # check if start_t is greater or equal to curr_t
+                    # NOTE: t is in terms of sigmas, not percent, so bigger number = earlier step in sampling
+                    if eval_kf.start_t >= curr_t:
+                        self.current_index = i
+                        self.current_keyframe = eval_kf
+                        self.current_used_steps = 0
+                        # keep track of scale and effect multivals, accounting for inherit_missing
+                        if self.current_keyframe.has_scale():
+                            self.current_scale = self.current_keyframe.scale_multival
+                        elif not self.current_keyframe.inherit_missing:
+                            self.current_scale = None
+                        if self.current_keyframe.has_effect():
+                            self.current_effect = self.current_keyframe.effect_multival
+                        elif not self.current_keyframe.inherit_missing:
+                            self.current_effect = None
+                        # if guarantee_steps greater than zero, stop searching for other keyframes
+                        if self.current_keyframe.guarantee_steps > 0:
+                            break
+                    # if eval_kf is outside the percent range, stop looking further
+                    else:
                         break
-                # if eval_kf is outside the percent range, stop looking further
-                else:
-                    break
         # if index changed, apply new combined values
         if prev_index != self.current_index:
             # combine model's scale and effect with keyframe's scale and effect
@@ -183,11 +187,14 @@ class MotionModelPatcher(ModelPatcher):
             # if was not in range last step, apply effect to toggle AD status
             if not self.was_within_range:
                 self.model.set_effect(self.combined_effect)
-                self.was_within_range = True            
+                self.was_within_range = True
+        # update steps current keyframe is used
+        self.current_used_steps += 1
 
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
+        self.current_used_steps = 0
         self.current_keyframe = None
         self.current_index = -1
         self.current_scale = None

@@ -6,7 +6,7 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import ContextOptions, ContextOptionsGroup, ContextSchedules
 from .logger import logger
-from .utils_model import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
+from .utils_model import BIGMAX, BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .utils_motion import ADKeyframeGroup, ADKeyframe
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings,
@@ -179,7 +179,7 @@ class ADKeyframeNode:
                 "scale_multival": ("MULTIVAL",),
                 "effect_multival": ("MULTIVAL",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
-                "guarantee_usage": ("BOOLEAN", {"default": True}, ),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
             }
         }
     
@@ -191,11 +191,11 @@ class ADKeyframeNode:
     def load_keyframe(self,
                       start_percent: float, prev_ad_keyframes=None,
                       scale_multival: [float, torch.Tensor]=None, effect_multival: [float, torch.Tensor]=None,
-                      inherit_missing: bool=True, guarantee_usage: bool=True):
+                      inherit_missing: bool=True, guarantee_steps: int=1):
         if not prev_ad_keyframes:
             prev_ad_keyframes = ADKeyframeGroup()
         prev_ad_keyframes.clone()
         keyframe = ADKeyframe(start_percent=start_percent, scale_multival=scale_multival, effect_multival=effect_multival,
-                              inherit_missing=inherit_missing, guarantee_usage=guarantee_usage)
+                              inherit_missing=inherit_missing, guarantee_steps=guarantee_steps)
         prev_ad_keyframes.add(keyframe)
         return (prev_ad_keyframes,)

@@ -278,12 +278,12 @@ class AnimateDiffModel(nn.Module):
     def set_scale(self, multival: Union[float, Tensor]):
         if multival is None:
             multival = 1.0
-        if type(multival) == float:
-            self._set_scale_multiplier(multival)
-            self._set_scale_mask(None)
-        elif type(multival) == Tensor:
+        if type(multival) == Tensor:
             self._set_scale_multiplier(1.0)
             self._set_scale_mask(multival)
+        else:
+            self._set_scale_multiplier(multival)
+            self._set_scale_mask(None)
     
     def set_effect(self, multival: Union[float, Tensor]):
         for block in self.down_blocks:
