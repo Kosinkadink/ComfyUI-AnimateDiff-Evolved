@@ -86,7 +86,7 @@ class LegacyLoopedUniformContextOptionsNode:
     FUNCTION = "create_options"
 
     def create_options(self, fuse_method: str=ContextFuseMethod.FLAT, context_schedule: str=None, **kwargs):
-        return LoopedUniformContextOptionsNode.create_options(fuse_method=fuse_method, **kwargs)
+        return LoopedUniformContextOptionsNode.create_options(self, fuse_method=fuse_method, **kwargs)
 
 
 class StandardUniformContextOptionsNode:
