@@ -13,10 +13,10 @@ import comfy.samplers
 import comfy.sample
 import comfy.utils
 from comfy.controlnet import ControlBase
+import comfy.ops
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
-from .utils_motion import GroupNormAD
 from .utils_model import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
@@ -112,7 +112,7 @@ def unlimited_memory_required(*args, **kwargs):
     return 0
 
 
-def groupnorm_mm_factory(params: InjectionParams):
+def groupnorm_mm_factory(params: InjectionParams, manual_cast=False):
     def groupnorm_mm_forward(self, input: Tensor) -> Tensor:
         # axes_factor normalizes batch based on total conds and unconds passed in batch;
         # the conds and unconds per batch can change based on VRAM optimizations that may kick in
@@ -122,7 +122,11 @@ def groupnorm_mm_factory(params: InjectionParams):
             batched_conds = input.size(0)//params.context_options.context_length
 
         input = rearrange(input, "(b f) c h w -> b c f h w", b=batched_conds)
-        input = group_norm(input, self.num_groups, self.weight, self.bias, self.eps)
+        if manual_cast:
+            weight, bias = comfy.ops.cast_bias_weight(self, input)
+        else:
+            weight, bias = self.weight, self.bias
+        input = group_norm(input, self.num_groups, weight, bias, self.eps)
         input = rearrange(input, "b c f h w -> (b f) c h w", b=batched_conds)
         return input
     return groupnorm_mm_forward
@@ -189,7 +193,7 @@ class FunctionInjectionHolder:
         self.orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
         self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
-        self.orig_groupnormad_forward = GroupNormAD.forward
+        self.orig_groupnorm_manual_cast_forward = comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
         self.orig_prepare_mask = comfy.sample.prepare_mask
         self.orig_get_additional_models = comfy.sample.get_additional_models
@@ -203,8 +207,7 @@ class FunctionInjectionHolder:
             if not (info.mm_version == AnimateDiffVersion.V3 or (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and
                     info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
-                if params.apply_mm_groupnorm_hack:
-                    GroupNormAD.forward = groupnorm_mm_factory(params)
+                comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
                 try:
                     if model.load_device.type == "mps":
@@ -222,7 +225,7 @@ class FunctionInjectionHolder:
             model.model.memory_required = self.orig_memory_required
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
-            GroupNormAD.forward = self.orig_groupnormad_forward
+            comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_manual_cast_forward
             comfy.samplers.sampling_function = self.orig_sampling_function
             comfy.sample.prepare_mask = self.orig_prepare_mask
             comfy.sample.get_additional_models = self.orig_get_additional_models
