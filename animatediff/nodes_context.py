@@ -85,7 +85,7 @@ class LegacyLoopedUniformContextOptionsNode:
     CATEGORY = ""  # No Category, so will not appear in menu
     FUNCTION = "create_options"
 
-    def create_options(self, fuse_method: str=ContextFuseMethod.FLAT, **kwargs):
+    def create_options(self, fuse_method: str=ContextFuseMethod.FLAT, context_schedule: str=None, **kwargs):
         return LoopedUniformContextOptionsNode.create_options(fuse_method=fuse_method, **kwargs)
 
 
