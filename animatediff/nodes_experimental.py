@@ -18,7 +18,7 @@ class AnimateDiffModelSettingsSimple:
         }
     
     RETURN_TYPES = ("MOTION_MODEL_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/gen1 nodes ①/motion settings/experimental"
+    CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, motion_pe_stretch: int,
@@ -55,7 +55,7 @@ class AnimateDiffModelSettingsAdvanced:
         }
     
     RETURN_TYPES = ("MOTION_MODEL_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/gen1 nodes ①/motion settings/experimental"
+    CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float, other_strength: float,
@@ -107,7 +107,7 @@ class AnimateDiffModelSettingsAdvancedAttnStrengths:
         }
     
     RETURN_TYPES = ("MOTION_MODEL_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/gen1 nodes ①/motion settings/experimental"
+    CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float,

@@ -15,7 +15,7 @@ from comfy.model_patcher import ModelPatcher
 from .context import ContextSchedules, ContextOptions
 from .logger import logger
 from .utils_model import Folders, BetaSchedules, get_available_motion_models
-from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module
+from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module_gen1
 
 
 class AnimateDiffLoader_Deprecated:
@@ -42,7 +42,7 @@ class AnimateDiffLoader_Deprecated:
         model_name: str, unlimited_area_hack: bool, beta_schedule: str,
     ):
         # load motion module
-        motion_model = load_motion_module(model_name, model)
+        motion_model = load_motion_module_gen1(model_name, model)
         # get total frames
         init_frames_len = len(latents["samples"])  # deprecated - no longer used for anything lol
         # set injection params
@@ -99,7 +99,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
             beta_schedule: str,
         ):
         # load motion module
-        motion_model = load_motion_module(model_name, model)
+        motion_model = load_motion_module_gen1(model_name, model)
         # get total frames
         init_frames_len = len(latents["samples"])  # deprecated - no longer used for anything lol
         # set injection params

@@ -10,7 +10,7 @@ from .utils_model import BIGMAX, BetaSchedules, get_available_motion_loras, get_
 from .utils_motion import ADKeyframeGroup, ADKeyframe
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings, create_fresh_motion_module,
-                              load_motion_module, load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)
+                              load_motion_module_gen1, load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
@@ -32,7 +32,7 @@ class UseEvolvedSamplingNode:
         }
     
     RETURN_TYPES = ("MODEL",)
-    CATEGORY = "Animate Diff 🎭🅐🅓"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②"
     FUNCTION = "use_evolved_sampling"
 
     def use_evolved_sampling(self, model: ModelPatcher, beta_schedule: str, m_models: MotionModelGroup=None, context_options: ContextOptionsGroup=None,
@@ -91,7 +91,7 @@ class ApplyAnimateDiffModelNode:
         }
     
     RETURN_TYPES = ("M_MODELS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②"
     FUNCTION = "apply_motion_model"
 
     def apply_motion_model(self, motion_model: MotionModelPatcher, start_percent: float=0.0, end_percent: float=1.0,
@@ -137,7 +137,7 @@ class ApplyAnimateDiffModelBasicNode:
         }
     
     RETURN_TYPES = ("M_MODELS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②"
     FUNCTION = "apply_motion_model"
 
     def apply_motion_model(self,
@@ -163,7 +163,7 @@ class LoadAnimateDiffModelNode:
 
     RETURN_TYPES = ("MOTION_MODEL_ADE",)
     RETURN_NAMES = ("MOTION_MODEL",)
-    CATEGORY = "Animate Diff 🎭🅐🅓"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②"
     FUNCTION = "load_motion_model"
 
     def load_motion_model(self, model_name: str, ad_settings: MotionModelSettings=None):

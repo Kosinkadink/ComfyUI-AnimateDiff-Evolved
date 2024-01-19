@@ -346,7 +346,7 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
     motion_model.add_patches(patches=patches, strength_patch=lora.strength)
 
 
-def load_motion_module(model_name: str, model: ModelPatcher, motion_lora: MotionLoraList = None, motion_model_settings: 'MotionModelSettings' = None) -> MotionModelPatcher:
+def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: MotionLoraList = None, motion_model_settings: 'MotionModelSettings' = None) -> MotionModelPatcher:
     model_path = get_motion_model_path(model_name)
     logger.info(f"Loading motion module {model_name}")
     mm_state_dict = comfy.utils.load_torch_file(model_path, safe_load=True)
