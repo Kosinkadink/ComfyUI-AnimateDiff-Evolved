@@ -7,18 +7,19 @@ from comfy.model_patcher import ModelPatcher
 from .logger import logger
 from .utils_model import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelSettings, load_motion_module_gen1
+from .model_injection import InjectionParams, ModelPatcherAndInjector, AnimateDiffSettings, load_motion_module_gen1
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
-from .nodes_gen1 import AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext, AnimateDiffModelSettings
+from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext, AnimateDiffModelSettings,
+                         AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
 from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode
 from .nodes_multival import MultivalDynamicNode, MultivalFloatNode, MultivalScaledMaskNode
 from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode)
+from .nodes_ad_settings import AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
-from .nodes_experimental import AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths
 from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
 
 # override comfy_sample.sample with animatediff-support version
@@ -85,6 +86,11 @@ NODE_CLASS_MAPPINGS = {
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
     "ADE_NoiseLayerReplace": NoiseLayerReplaceNode,
+    # AnimateDiff Settings
+    "ADE_AnimateDiffSettings": AnimateDiffSettingsNode,
+    "ADE_AdjustPESweetspotStretch": SweetspotStretchPENode,
+    "ADE_AdjustPEFullStretch": FullStretchPENode,
+    "ADE_AdjustPEManual": ManualAdjustPENode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -132,6 +138,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
     "ADE_NoiseLayerReplace": "Noise Layer [Replace] 🎭🅐🅓",
+    # AnimateDiff Settings
+    "ADE_AnimateDiffSettings": "AnimateDiff Settings 🎭🅐🅓",
+    "ADE_AdjustPESweetspotStretch": "Adjust PE [Sweetspot Stretch] 🎭🅐🅓",
+    "ADE_AdjustPEFullStretch": "Adjust PE [Full Stretch] 🎭🅐🅓",
+    "ADE_AdjustPEManual": "Adjust PE [Manual] 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

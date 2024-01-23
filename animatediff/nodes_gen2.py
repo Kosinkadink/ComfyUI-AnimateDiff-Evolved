@@ -4,12 +4,13 @@ import torch
 import comfy.sample as comfy_sample
 from comfy.model_patcher import ModelPatcher
 
+from .ad_settings import AnimateDiffSettings
 from .context import ContextOptions, ContextOptionsGroup, ContextSchedules
 from .logger import logger
 from .utils_model import BIGMAX, BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .utils_motion import ADKeyframeGroup, ADKeyframe
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, MotionModelSettings, create_fresh_motion_module,
+from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module,
                               load_motion_module_gen1, load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
@@ -157,7 +158,7 @@ class LoadAnimateDiffModelNode:
                 "model_name": (get_available_motion_models(),),
             },
             "optional": {
-                "ad_settings": ("MOTION_MODEL_SETTINGS",),
+                "ad_settings": ("AD_SETTINGS",),
             }
         }
 
@@ -166,7 +167,7 @@ class LoadAnimateDiffModelNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②"
     FUNCTION = "load_motion_model"
 
-    def load_motion_model(self, model_name: str, ad_settings: MotionModelSettings=None):
+    def load_motion_model(self, model_name: str, ad_settings: AnimateDiffSettings=None):
         # load motion module and motion settings, if included
         motion_model = load_motion_module_gen2(model_name=model_name, motion_model_settings=ad_settings)
         return (motion_model,)

@@ -190,10 +190,10 @@ class AnimateDiffModel(nn.Module):
             else:
                 to_return = BetaSchedules.LINEAR_ADXL
         if to_return is not None:
-            if log: logger.info(f"Autoselect: '{to_return}' beta_schedule for {self.mm_info.get_string()}")
+            if log: logger.info(f"[Autoselect]: '{to_return}' beta_schedule for {self.mm_info.get_string()}")
         else:
             to_return = BetaSchedules.USE_EXISTING
-            if log: logger.info(f"Autoselect: could not find beta_schedule for {self.mm_info.get_string()}, defaulting to '{to_return}'")
+            if log: logger.info(f"[Autoselect]: could not find beta_schedule for {self.mm_info.get_string()}, defaulting to '{to_return}'")
         return to_return
 
     def cleanup(self):

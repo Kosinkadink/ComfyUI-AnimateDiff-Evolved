@@ -11,6 +11,7 @@ import comfy.utils
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
 
+from .ad_settings import AnimateDiffSettings
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
@@ -346,7 +347,7 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
     motion_model.add_patches(patches=patches, strength_patch=lora.strength)
 
 
-def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: MotionLoraList = None, motion_model_settings: 'MotionModelSettings' = None) -> MotionModelPatcher:
+def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: MotionLoraList = None, motion_model_settings: AnimateDiffSettings = None) -> MotionModelPatcher:
     model_path = get_motion_model_path(model_name)
     logger.info(f"Loading motion module {model_name}")
     mm_state_dict = comfy.utils.load_torch_file(model_path, safe_load=True)
@@ -375,7 +376,7 @@ def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: M
     return motion_model
 
 
-def load_motion_module_gen2(model_name: str, motion_model_settings: 'MotionModelSettings' = None) -> MotionModelPatcher:
+def load_motion_module_gen2(model_name: str, motion_model_settings: AnimateDiffSettings = None) -> MotionModelPatcher:
     model_path = get_motion_model_path(model_name)
     logger.info(f"Loading motion module {model_name} via Gen2")
     mm_state_dict = comfy.utils.load_torch_file(model_path, safe_load=True)
@@ -461,33 +462,56 @@ def freeze_mask_of_attn(model_dict: dict[str, Tensor], key: str):
     model_dict[key][:attn_portion,:attn_portion] *= 1.5
 
 
-def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: 'MotionModelSettings') -> dict[str, Tensor]:
+def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: AnimateDiffSettings) -> dict[str, Tensor]:
     if mm_settings is None:
         return model_dict
     if not mm_settings.has_anything_to_apply():
         return model_dict
+    # first, handle PE Adjustments
+    for adjust in mm_settings.adjust_pe.adjusts:
+        if adjust.has_anything_to_apply():
+            already_printed = False
+            for key in model_dict:
+                if "attention_blocks" in key and "pos_encoder" in key:
+                    # apply simple motion pe stretch, if needed
+                    if adjust.has_motion_pe_stretch():
+                        original_length = model_dict[key].shape[1]
+                        new_pe_length = original_length + adjust.motion_pe_stretch
+                        interpolate_pe_to_length(model_dict, key, new_length=new_pe_length)
+                        if adjust.print_adjustment and not already_printed:
+                            logger.info(f"[Adjust PE]: PE Stretch from {original_length} to {new_pe_length}.")
+                    # apply pe_idx_offset, if needed
+                    if adjust.has_initial_pe_idx_offset():
+                        original_length = model_dict[key].shape[1]
+                        model_dict[key] = model_dict[key][:, adjust.initial_pe_idx_offset:]
+                        if adjust.print_adjustment and not already_printed:
+                            logger.info(f"[Adjust PE]: Offsetting PEs by {adjust.initial_pe_idx_offset}; PE length to shortens from {original_length} to {model_dict[key].shape[1]}.")
+                    # apply has_cap_initial_pe_length, if needed
+                    if adjust.has_cap_initial_pe_length():
+                        original_length = model_dict[key].shape[1]
+                        model_dict[key] = model_dict[key][:, :adjust.cap_initial_pe_length]
+                        if adjust.print_adjustment and not already_printed:
+                            logger.info(f"[Adjust PE]: Capping PEs (initial) from {original_length} to {model_dict[key].shape[1]}.")
+                    # apply interpolate_pe_to_length, if needed
+                    if adjust.has_interpolate_pe_to_length():
+                        original_length = model_dict[key].shape[1]
+                        interpolate_pe_to_length(model_dict, key, new_length=adjust.interpolate_pe_to_length)
+                        if adjust.print_adjustment and not already_printed:
+                            logger.info(f"[Adjust PE]: Interpolating PE length from {original_length} to {model_dict[key].shape[1]}.")
+                    # apply final_pe_idx_offset, if needed
+                    if adjust.has_final_pe_idx_offset():
+                        original_length = model_dict[key].shape[1]
+                        model_dict[key] = model_dict[key][:, adjust.final_pe_idx_offset:]
+                        if adjust.print_adjustment and not already_printed:
+                            logger.info(f"[Adjust PE]: Capping PEs (final) from {original_length} to {model_dict[key].shape[1]}.")
+                    already_printed = True
+    # finally, apply any weight changes
     for key in model_dict:
         if "attention_blocks" in key:
-            if "pos_encoder" in key:
-                # apply simple motion pe stretch, if needed
-                if mm_settings.has_motion_pe_stretch():
-                    new_pe_length = model_dict[key].shape[1] + mm_settings.motion_pe_stretch
-                    interpolate_pe_to_length(model_dict, key, new_length=new_pe_length)
+            if "pos_encoder" in key and mm_settings.adjust_pe.has_anything_to_apply():
                 # apply pe_strength, if needed
                 if mm_settings.has_pe_strength():
                     model_dict[key] *= mm_settings.pe_strength
-                # apply pe_idx_offset, if needed
-                if mm_settings.has_initial_pe_idx_offset():
-                    model_dict[key] = model_dict[key][:, mm_settings.initial_pe_idx_offset:]
-                # apply has_cap_initial_pe_length, if needed
-                if mm_settings.has_cap_initial_pe_length():
-                    model_dict[key] = model_dict[key][:, :mm_settings.cap_initial_pe_length]
-                # apply interpolate_pe_to_length, if needed
-                if mm_settings.has_interpolate_pe_to_length():
-                    interpolate_pe_to_length(model_dict, key, new_length=mm_settings.interpolate_pe_to_length)
-                # apply final_pe_idx_offset, if needed
-                if mm_settings.has_final_pe_idx_offset():
-                    model_dict[key] = model_dict[key][:, mm_settings.final_pe_idx_offset:]
             else:
                 # apply attn_strenth, if needed
                 if mm_settings.has_attn_strength():
@@ -520,7 +544,7 @@ class InjectionParams:
         self.model_name = model_name
         self.apply_v2_properly = apply_v2_properly
         self.context_options: ContextOptionsGroup = ContextOptionsGroup.default()
-        self.motion_model_settings = MotionModelSettings() # Gen1
+        self.motion_model_settings = AnimateDiffSettings() # Gen1
         self.sub_idxs = None  # value should NOT be included in clone, so it will auto reset
     
     def set_noise_extra_args(self, noise_extra_args: dict):
@@ -532,9 +556,9 @@ class InjectionParams:
     def is_using_sliding_context(self) -> bool:
         return self.context_options.context_length is not None
 
-    def set_motion_model_settings(self, motion_model_settings: 'MotionModelSettings'): # Gen1
+    def set_motion_model_settings(self, motion_model_settings: AnimateDiffSettings): # Gen1
         if motion_model_settings is None:
-            self.motion_model_settings = MotionModelSettings()
+            self.motion_model_settings = AnimateDiffSettings()
         else:
             self.motion_model_settings = motion_model_settings
 
@@ -550,110 +574,3 @@ class InjectionParams:
         new_params.set_context(self.context_options)
         new_params.set_motion_model_settings(self.motion_model_settings) # Gen1
         return new_params
-
-
-class MotionModelSettings:
-    def __init__(self,
-                 pe_strength: float=1.0,
-                 attn_strength: float=1.0,
-                 attn_q_strength: float=1.0,
-                 attn_k_strength: float=1.0,
-                 attn_v_strength: float=1.0,
-                 attn_out_weight_strength: float=1.0,
-                 attn_out_bias_strength: float=1.0,
-                 other_strength: float=1.0,
-                 cap_initial_pe_length: int=0, interpolate_pe_to_length: int=0,
-                 initial_pe_idx_offset: int=0, final_pe_idx_offset: int=0,
-                 motion_pe_stretch: int=0,
-                 attn_scale: float=1.0,
-                 mask_attn_scale: Tensor=None,
-                 mask_attn_scale_min: float=1.0,
-                 mask_attn_scale_max: float=1.0,
-                 ):
-        # general strengths
-        self.pe_strength = pe_strength
-        self.attn_strength = attn_strength
-        self.other_strength = other_strength
-        # specific attn strengths
-        self.attn_q_strength = attn_q_strength
-        self.attn_k_strength = attn_k_strength
-        self.attn_v_strength = attn_v_strength
-        self.attn_out_weight_strength = attn_out_weight_strength
-        self.attn_out_bias_strength = attn_out_bias_strength
-        # PE-interpolation settings
-        self.cap_initial_pe_length = cap_initial_pe_length
-        self.interpolate_pe_to_length = interpolate_pe_to_length
-        self.initial_pe_idx_offset = initial_pe_idx_offset
-        self.final_pe_idx_offset = final_pe_idx_offset
-        self.motion_pe_stretch = motion_pe_stretch
-        # attention scale settings
-        self.attn_scale = attn_scale
-        # attention scale mask settings
-        self.mask_attn_scale = mask_attn_scale.clone() if mask_attn_scale is not None else mask_attn_scale
-        self.mask_attn_scale_min = mask_attn_scale_min
-        self.mask_attn_scale_max = mask_attn_scale_max
-        self._prepare_mask_attn_scale()
-    
-    def _prepare_mask_attn_scale(self):
-        if self.mask_attn_scale is not None:
-            self.mask_attn_scale = normalize_min_max(self.mask_attn_scale, self.mask_attn_scale_min, self.mask_attn_scale_max)
-
-    def has_mask_attn_scale(self) -> bool:
-        return self.mask_attn_scale is not None
-
-    def has_pe_strength(self) -> bool:
-        return self.pe_strength != 1.0
-    
-    def has_attn_strength(self) -> bool:
-        return self.attn_strength != 1.0
-    
-    def has_other_strength(self) -> bool:
-        return self.other_strength != 1.0
-
-    def has_cap_initial_pe_length(self) -> bool:
-        return self.cap_initial_pe_length > 0
-    
-    def has_interpolate_pe_to_length(self) -> bool:
-        return self.interpolate_pe_to_length > 0
-    
-    def has_initial_pe_idx_offset(self) -> bool:
-        return self.initial_pe_idx_offset > 0
-    
-    def has_final_pe_idx_offset(self) -> bool:
-        return self.final_pe_idx_offset > 0
-
-    def has_motion_pe_stretch(self) -> bool:
-        return self.motion_pe_stretch > 0
-
-    def has_anything_to_apply(self) -> bool:
-        return self.has_pe_strength() \
-            or self.has_attn_strength() \
-            or self.has_other_strength() \
-            or self.has_cap_initial_pe_length() \
-            or self.has_interpolate_pe_to_length() \
-            or self.has_initial_pe_idx_offset() \
-            or self.has_final_pe_idx_offset() \
-            or self.has_motion_pe_stretch() \
-            or self.has_any_attn_sub_strength()
-
-    def has_any_attn_sub_strength(self) -> bool:
-        return self.has_attn_q_strength() \
-            or self.has_attn_k_strength() \
-            or self.has_attn_v_strength() \
-            or self.has_attn_out_weight_strength() \
-            or self.has_attn_out_bias_strength()
-
-    def has_attn_q_strength(self) -> bool:
-        return self.attn_q_strength != 1.0
-
-    def has_attn_k_strength(self) -> bool:
-        return self.attn_k_strength != 1.0
-
-    def has_attn_v_strength(self) -> bool:
-        return self.attn_v_strength != 1.0
-
-    def has_attn_out_weight_strength(self) -> bool:
-        return self.attn_out_weight_strength != 1.0
-
-    def has_attn_out_bias_strength(self) -> bool:
-        return self.attn_out_bias_strength != 1.0
