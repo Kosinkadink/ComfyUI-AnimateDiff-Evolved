@@ -198,7 +198,7 @@ class ADKeyframeNode:
                       inherit_missing: bool=True, guarantee_steps: int=1):
         if not prev_ad_keyframes:
             prev_ad_keyframes = ADKeyframeGroup()
-        prev_ad_keyframes.clone()
+        prev_ad_keyframes = prev_ad_keyframes.clone()
         keyframe = ADKeyframe(start_percent=start_percent, scale_multival=scale_multival, effect_multival=effect_multival,
                               inherit_missing=inherit_missing, guarantee_steps=guarantee_steps)
         prev_ad_keyframes.add(keyframe)
