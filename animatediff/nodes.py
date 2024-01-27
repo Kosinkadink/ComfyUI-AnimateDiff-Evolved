@@ -150,10 +150,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderGen1": "AnimateDiff Loader 🎭🅐🅓①",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader [Legacy] 🎭🅐🅓①",
-    "ADE_AnimateDiffModelSettings_Release": "Motion Model Settings 🎭🅐🅓①",
-    "ADE_AnimateDiffModelSettingsSimple": "EXP Motion Model Settings (Simple) 🎭🅐🅓①",
-    "ADE_AnimateDiffModelSettings": "EXP Motion Model Settings (Advanced) 🎭🅐🅓①",
-    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": "EXP Motion Model Settings (Adv. Attn) 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettings_Release": "[DEPR] Motion Model Settings 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettingsSimple": "[DEPR] Motion Model Settings (Simple) 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettings": "[DEPR] Motion Model Settings (Advanced) 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": "[DEPR] Motion Model Settings (Adv. Attn) 🎭🅐🅓①",
     # Gen2 Nodes
     "ADE_UseEvolvedSampling": "Use Evolved Sampling 🎭🅐🅓②",
     "ADE_ApplyAnimateDiffModelSimple": "Apply AnimateDiff Model 🎭🅐🅓②",
