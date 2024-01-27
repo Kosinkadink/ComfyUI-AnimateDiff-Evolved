@@ -2,6 +2,7 @@ from torch import Tensor
 
 from .freeinit import FreeInitFilter
 from .sample_settings import FreeInitOptions, IterationOptions, NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, SeedNoiseGeneration, SampleSettings
+from .utils_model import BIGMIN, BIGMAX
 
 
 class SampleSettingsNode:
@@ -9,15 +10,16 @@ class SampleSettingsNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "batch_offset": ("INT", {"default": 0, "min": 0}),
+                "batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
                 "noise_type": (NoiseLayerType.LIST,),
                 "seed_gen": (SeedNoiseGeneration.LIST,),
-                "seed_offset": ("INT", {"default": 0, "min": -999999999999999}),
+                "seed_offset": ("INT", {"default": 0, "min": BIGMIN, "max": BIGMAX}),
             },
             "optional": {
                 "noise_layers": ("NOISE_LAYERS",),
                 "iteration_opts": ("ITERATION_OPTS",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
+                "adapt_denoise_steps": ("BOOLEAN", {"default": False},),
             }
         }
     
@@ -26,8 +28,10 @@ class SampleSettingsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓"
     FUNCTION = "create_settings"
 
-    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None, iteration_opts: IterationOptions=None, seed_override: int=None,):
-        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers, iteration_opts=iteration_opts, seed_override=seed_override)
+    def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None,
+                        iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False):
+        sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers,
+                                           iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps)
         return (sampling_settings,)
 
 
@@ -36,10 +40,10 @@ class NoiseLayerReplaceNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "batch_offset": ("INT", {"default": 0, "min": 0}),
+                "batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
                 "noise_type": (NoiseLayerType.LIST,),
                 "seed_gen_override": (SeedNoiseGeneration.LIST_WITH_OVERRIDE,),
-                "seed_offset": ("INT", {"default": 0, "min": -999999999999999}),
+                "seed_offset": ("INT", {"default": 0, "min": BIGMIN, "max": BIGMAX}),
             },
             "optional": {
                 "prev_noise_layers": ("NOISE_LAYERS",),
@@ -70,10 +74,10 @@ class NoiseLayerAddNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "batch_offset": ("INT", {"default": 0, "min": 0}),
+                "batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
                 "noise_type": (NoiseLayerType.LIST,),
                 "seed_gen_override": (SeedNoiseGeneration.LIST_WITH_OVERRIDE,),
-                "seed_offset": ("INT", {"default": 0, "min": -999999999999999}),
+                "seed_offset": ("INT", {"default": 0, "min": BIGMIN, "max": BIGMAX}),
                 "noise_weight": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 10.0, "step": 0.001}),
             },
             "optional": {
@@ -107,10 +111,10 @@ class NoiseLayerAddWeightedNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "batch_offset": ("INT", {"default": 0, "min": 0}),
+                "batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
                 "noise_type": (NoiseLayerType.LIST,),
                 "seed_gen_override": (SeedNoiseGeneration.LIST_WITH_OVERRIDE,),
-                "seed_offset": ("INT", {"default": 0, "min": -999999999999999}),
+                "seed_offset": ("INT", {"default": 0, "min": BIGMIN, "max": BIGMAX}),
                 "noise_weight": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 10.0, "step": 0.001}),
                 "balance_multiplier": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
             },
@@ -146,6 +150,10 @@ class IterationOptionsNode:
         return {
             "required": {
                 "iterations": ("INT", {"default": 1, "min": 1}),
+            },
+            "optional": {
+                "iter_batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
+                "iter_seed_offset": ("INT", {"default": 0, "min": BIGMIN, "max": BIGMAX}),
             }
         }
     
@@ -153,8 +161,8 @@ class IterationOptionsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/iteration opts"
     FUNCTION = "create_iter_opts"
 
-    def create_iter_opts(self, iterations: int):
-        iter_opts = IterationOptions(iterations=iterations)
+    def create_iter_opts(self, iterations: int, iter_batch_offset: int=0, iter_seed_offset: int=0):
+        iter_opts = IterationOptions(iterations=iterations, iter_batch_offset=iter_batch_offset, iter_seed_offset=iter_seed_offset)
         return (iter_opts,)
 
 
@@ -171,6 +179,10 @@ class FreeInitOptionsNode:
                 "sigma_step": ("INT", {"default": 999, "min": 1, "max": 999}),
                 "apply_to_1st_iter": ("BOOLEAN", {"default": False}),
                 "init_type": (FreeInitOptions.LIST,)
+            },
+            "optional": {
+                "iter_batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
+                "iter_seed_offset": ("INT", {"default": 1, "min": BIGMIN, "max": BIGMAX}),
             }
         }
     
@@ -179,8 +191,10 @@ class FreeInitOptionsNode:
     FUNCTION = "create_iter_opts"
 
     def create_iter_opts(self, iterations: int, filter: str, d_s: float, d_t: float, n_butterworth: int,
-                         sigma_step: int, apply_to_1st_iter: bool, init_type: str):
+                         sigma_step: int, apply_to_1st_iter: bool, init_type: str,
+                         iter_batch_offset: int=0, iter_seed_offset: int=1):
         # init_type does nothing for now, not until I add more methods of applying low+high freq noise
         iter_opts = FreeInitOptions(iterations=iterations, step=sigma_step, apply_to_1st_iter=apply_to_1st_iter,
-                                    filter=filter, d_s=d_s, d_t=d_t, n=n_butterworth)
+                                    filter=filter, d_s=d_s, d_t=d_t, n=n_butterworth, init_type=init_type,
+                                    iter_batch_offset=iter_batch_offset, iter_seed_offset=iter_seed_offset)
         return (iter_opts,)

@@ -1,7 +1,7 @@
 import hashlib
-import os
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Union
+from collections.abc import Iterable
 from time import time
 
 import numpy as np
@@ -30,6 +30,7 @@ class ModelSamplingConfig:
 
 
 class BetaSchedules:
+    AUTOSELECT = "autoselect"
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
     LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
@@ -38,7 +39,8 @@ class BetaSchedules:
     COSINE = "cosine"
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
-    ALIAS_LIST = [SQRT_LINEAR, LINEAR_ADXL, LINEAR, USE_EXISTING, SQRT, COSINE, SQUAREDCOS_CAP_V2]
+    ALIAS_LIST = [AUTOSELECT, SQRT_LINEAR, LINEAR_ADXL, LINEAR,
+                  USE_EXISTING, SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
     ALIAS_MAP = {
         SQRT_LINEAR: "sqrt_linear",
@@ -88,35 +90,42 @@ class BetaScheduleCache:
 
 
 class Folders:
-    ANIMATEDIFF_MODELS = "AnimateDiffEvolved_Models"
-    MOTION_LORA = "AnimateDiffMotion_LoRA"
-    VIDEO_FORMATS = "AnimateDiffEvolved_video_formats"
+    ANIMATEDIFF_MODELS = "animatediff_models"
+    MOTION_LORA = "animatediff_motion_lora"
+    VIDEO_FORMATS = "animatediff_video_formats"
+
+
+def add_extension_to_folder_path(folder_name: str, extensions: Union[str, list[str]]):
+    if folder_name in folder_paths.folder_names_and_paths:
+        if isinstance(extensions, str):
+            folder_paths.folder_names_and_paths[folder_name][1].add(extensions)
+        elif isinstance(extensions, Iterable):
+            for ext in extensions:
+                folder_paths.folder_names_and_paths[folder_name][1].add(ext) 
+
+
+def try_mkdir(full_path: str):
+    try:
+        Path(full_path).mkdir()
+    except Exception:
+        pass
 
 
 # register motion models folder(s)
-folder_paths.folder_names_and_paths[Folders.ANIMATEDIFF_MODELS] = (
-    [
-        str(Path(__file__).parent.parent / "models")
-    ],
-    folder_paths.supported_pt_extensions
-)
+folder_paths.add_model_folder_path(Folders.ANIMATEDIFF_MODELS, str(Path(__file__).parent.parent / "models"))
+folder_paths.add_model_folder_path(Folders.ANIMATEDIFF_MODELS, str(Path(folder_paths.models_dir) / Folders.ANIMATEDIFF_MODELS))
+add_extension_to_folder_path(Folders.ANIMATEDIFF_MODELS, folder_paths.supported_pt_extensions)
+try_mkdir(str(Path(folder_paths.models_dir) / Folders.ANIMATEDIFF_MODELS))
 
 # register motion LoRA folder(s)
-folder_paths.folder_names_and_paths[Folders.MOTION_LORA] = (
-    [
-        str(Path(__file__).parent.parent / "motion_lora")
-    ],
-    folder_paths.supported_pt_extensions
-)
+folder_paths.add_model_folder_path(Folders.MOTION_LORA, str(Path(__file__).parent.parent / "motion_lora"))
+folder_paths.add_model_folder_path(Folders.MOTION_LORA, str(Path(folder_paths.models_dir) / Folders.MOTION_LORA))
+add_extension_to_folder_path(Folders.MOTION_LORA, folder_paths.supported_pt_extensions)
+try_mkdir(str(Path(folder_paths.models_dir) / Folders.MOTION_LORA))
 
-
-#Register video_formats folder
-folder_paths.folder_names_and_paths[Folders.VIDEO_FORMATS] = (
-    [
-        str(Path(__file__).parent.parent / "video_formats")
-    ],
-    [".json"]
-)
+# register video_formats folder
+folder_paths.add_model_folder_path(Folders.VIDEO_FORMATS, str(Path(__file__).parent.parent / "video_formats"))
+add_extension_to_folder_path(Folders.VIDEO_FORMATS, ".json")
 
 
 def get_available_motion_models():
@@ -158,6 +167,8 @@ def calculate_model_hash(model: ModelPatcher):
         m.update(buf.cpu().numpy().view(np.uint8))
     return m.hexdigest()
 
+BIGMIN = -(2**63-1)
+BIGMAX = (2**63-1)
 
 class ModelTypeSD:
     SD1_5 = "SD1.5"

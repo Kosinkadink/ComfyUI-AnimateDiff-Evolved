@@ -6,7 +6,7 @@ from comfy.model_patcher import ModelPatcher
 from comfy.sd import load_checkpoint_guess_config
 
 from .logger import logger
-from .model_utils import IsChangedHelper, BetaSchedules
+from .utils_model import IsChangedHelper, BetaSchedules
 from .model_injection import get_vanilla_model_patcher
 
 
@@ -35,7 +35,7 @@ class CheckpointLoaderSimpleWithNoiseSelect:
         return {
             "required": {
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
-                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.LINEAR}, )
+                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.USE_EXISTING}, )
             },
             "optional": {
                 "use_custom_scale_factor": ("BOOLEAN", {"default": False}),

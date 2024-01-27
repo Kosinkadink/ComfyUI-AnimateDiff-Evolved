@@ -1,6 +1,6 @@
 import folder_paths
 from .animatediff.logger import logger
-from .animatediff.model_utils import get_available_motion_models, Folders
+from .animatediff.utils_model import get_available_motion_models, Folders
 from .animatediff.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
 if len(get_available_motion_models()) == 0:

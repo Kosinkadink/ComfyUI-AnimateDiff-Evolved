@@ -12,10 +12,10 @@ from PIL.PngImagePlugin import PngInfo
 import folder_paths
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextSchedules
+from .context import ContextSchedules, ContextOptions
 from .logger import logger
-from .model_utils import Folders, BetaSchedules, get_available_motion_models
-from .model_injection import ModelPatcherAndInjector, InjectionParams, load_motion_module
+from .utils_model import Folders, BetaSchedules, get_available_motion_models
+from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module_gen1
 
 
 class AnimateDiffLoader_Deprecated:
@@ -32,7 +32,7 @@ class AnimateDiffLoader_Deprecated:
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
+    CATEGORY = ""
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(
@@ -42,24 +42,26 @@ class AnimateDiffLoader_Deprecated:
         model_name: str, unlimited_area_hack: bool, beta_schedule: str,
     ):
         # load motion module
-        motion_model = load_motion_module(model_name, model)
+        motion_model = load_motion_module_gen1(model_name, model)
         # get total frames
-        init_frames_len = len(latents["samples"])
+        init_frames_len = len(latents["samples"])  # deprecated - no longer used for anything lol
         # set injection params
         params = InjectionParams(
-                video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
                 apply_mm_groupnorm_hack=True,
-                beta_schedule=beta_schedule,
                 model_name=model_name,
+                apply_v2_properly=False,
         )
         # inject for use in sampling code
         model = ModelPatcherAndInjector(model)
-        model.motion_model = motion_model
+        model.motion_models = MotionModelGroup(motion_model)
         model.motion_injection_params = params
 
         # save model sampling from BetaSchedule as object patch
-        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+        # if autoselect, get suggested beta_schedule from motion model
+        if beta_schedule == BetaSchedules.AUTOSELECT and not model.motion_models.is_empty():
+            beta_schedule = model.motion_models[0].model.get_best_beta_schedule(log=True)
+        new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
         if new_model_sampling is not None:
             model.add_object_patch("model_sampling", new_model_sampling)
 
@@ -79,14 +81,14 @@ class AnimateDiffLoaderAdvanced_Deprecated:
                 "context_length": ("INT", {"default": 16, "min": 0, "max": 1000}),
                 "context_stride": ("INT", {"default": 1, "min": 1, "max": 1000}),
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": 1000}),
-                "context_schedule": (ContextSchedules.CONTEXT_SCHEDULE_LIST,),
+                "context_schedule": (ContextSchedules.LEGACY_UNIFORM_SCHEDULE_LIST,),
                 "closed_loop": ("BOOLEAN", {"default": False},),
                 "beta_schedule": (BetaSchedules.get_alias_list_with_first_element(BetaSchedules.SQRT_LINEAR),),
             },
         }
 
     RETURN_TYPES = ("MODEL", "LATENT")
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
+    CATEGORY = ""
     FUNCTION = "load_mm_and_inject_params"
 
     def load_mm_and_inject_params(self,
@@ -97,32 +99,36 @@ class AnimateDiffLoaderAdvanced_Deprecated:
             beta_schedule: str,
         ):
         # load motion module
-        motion_model = load_motion_module(model_name, model)
+        motion_model = load_motion_module_gen1(model_name, model)
         # get total frames
-        init_frames_len = len(latents["samples"])
+        init_frames_len = len(latents["samples"])  # deprecated - no longer used for anything lol
         # set injection params
         params = InjectionParams(
-                video_length=init_frames_len,
                 unlimited_area_hack=unlimited_area_hack,
                 apply_mm_groupnorm_hack=True,
-                beta_schedule=beta_schedule,
                 model_name=model_name,
+                apply_v2_properly=False,
         )
         # set context settings
         params.set_context(
+            ContextOptions(
                 context_length=context_length,
                 context_stride=context_stride,
                 context_overlap=context_overlap,
                 context_schedule=context_schedule,
-                closed_loop=closed_loop
+                closed_loop=closed_loop,
+            )
         )
         # inject for use in sampling code
         model = ModelPatcherAndInjector(model)
-        model.motion_model = motion_model
+        model.motion_models = MotionModelGroup(motion_model)
         model.motion_injection_params = params
 
         # save model sampling from BetaSchedule as object patch
-        new_model_sampling = BetaSchedules.to_model_sampling(params.beta_schedule, model)
+        # if autoselect, get suggested beta_schedule from motion model
+        if beta_schedule == BetaSchedules.AUTOSELECT and not model.motion_models.is_empty():
+            beta_schedule = model.motion_models[0].model.get_best_beta_schedule(log=True)
+        new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
         if new_model_sampling is not None:
             model.add_object_patch("model_sampling", new_model_sampling)
 
@@ -141,7 +147,8 @@ class AnimateDiffCombine_Deprecated:
         else:
             ffmpeg_formats = []
             if not s.ffmpeg_warning_already_shown:
-                logger.warning("This warning can be ignored, you should not be using the deprecated AnimateDiff Combine node anyway. If you are, use Video Combine from ComfyUI-VideoHelperSuite instead. ffmpeg could not be found. Outputs that require it have been disabled")
+                # Deprecated node are now hidden, so no need to show warning unless node is used.
+                # logger.warning("This warning can be ignored, you should not be using the deprecated AnimateDiff Combine node anyway. If you are, use Video Combine from ComfyUI-VideoHelperSuite instead. ffmpeg could not be found. Outputs that require it have been disabled")
                 s.ffmpeg_warning_already_shown = True
         return {
             "required": {
@@ -164,7 +171,7 @@ class AnimateDiffCombine_Deprecated:
 
     RETURN_TYPES = ("GIF",)
     OUTPUT_NODE = True
-    CATEGORY = "Animate Diff 🎭🅐🅓/deprecated (DO NOT USE)"
+    CATEGORY = ""
     FUNCTION = "generate_gif"
 
     def generate_gif(
