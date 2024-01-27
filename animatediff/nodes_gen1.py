@@ -181,7 +181,7 @@ class AnimateDiffModelSettings:
         }
     
     RETURN_TYPES = ("AD_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings"
+    CATEGORY = ""  #"Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, mask_motion_scale: torch.Tensor=None, min_motion_scale: float=1.0, max_motion_scale: float=1.0):
@@ -209,7 +209,7 @@ class AnimateDiffModelSettingsSimple:
         }
     
     RETURN_TYPES = ("AD_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
+    CATEGORY = ""  #"Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, motion_pe_stretch: int,
@@ -217,7 +217,6 @@ class AnimateDiffModelSettingsSimple:
         adjust_pe = AdjustPEGroup(AdjustPE(motion_pe_stretch=motion_pe_stretch))
         motion_model_settings = AnimateDiffSettings(
             adjust_pe=adjust_pe,
-            motion_pe_stretch=motion_pe_stretch,
             mask_attn_scale=mask_motion_scale,
             mask_attn_scale_min=min_motion_scale,
             mask_attn_scale_max=max_motion_scale,
@@ -248,7 +247,7 @@ class AnimateDiffModelSettingsAdvanced:
         }
     
     RETURN_TYPES = ("AD_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
+    CATEGORY = ""  #"Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float, other_strength: float,
@@ -299,7 +298,7 @@ class AnimateDiffModelSettingsAdvancedAttnStrengths:
         }
     
     RETURN_TYPES = ("AD_SETTINGS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
+    CATEGORY = ""  #"Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float,
