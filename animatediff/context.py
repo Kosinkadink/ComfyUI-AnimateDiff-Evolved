@@ -262,7 +262,7 @@ def create_windows_static_standard(num_frames: int, opts: Union[ContextOptionsGr
     for start_idx in range(0, num_frames, delta):
         # if past the end of frames, move start_idx back to allow same context_length
         ending = start_idx + opts.context_length
-        if ending > num_frames:
+        if ending >= num_frames:
             final_delta = ending - num_frames
             final_start_idx = start_idx - final_delta
             windows.append(list(range(final_start_idx, final_start_idx + opts.context_length)))
