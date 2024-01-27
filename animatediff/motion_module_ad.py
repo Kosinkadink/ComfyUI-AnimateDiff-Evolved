@@ -748,6 +748,12 @@ class TemporalTransformerBlock(nn.Module):
         scale_mask: Tensor=None,
         view_options: ContextOptions=None,
     ):
+        # make view_options None if context_length > video_length, or if equal and equal not allowed
+        if view_options:
+            if view_options.context_length > video_length:
+                view_options = None
+            elif view_options.context_length == video_length and not view_options.use_on_equal_length:
+                view_options = None
         if not view_options:
             for attention_block, norm in zip(self.attention_blocks, self.norms):
                 norm_hidden_states = norm(hidden_states).to(hidden_states.dtype)
