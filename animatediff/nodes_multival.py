@@ -101,7 +101,7 @@ class MultivalScaledMaskNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "min_float_val": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
+                "min_float_val": ("FLOAT", {"default": 0.0, "min": 0.0, "step": 0.001}),
                 "max_float_val": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
                 "mask": ("MASK",),
             },
