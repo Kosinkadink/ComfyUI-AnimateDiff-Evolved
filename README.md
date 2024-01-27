@@ -213,7 +213,7 @@ There are View Options equivalent of these schedules:
 ### View Options◆Standard Static
 | Behavior |
 |---|
-| ![anim__00012](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/7aee4ccb-b669-42fd-a1b5-2005003d5f8d) <br/> (latent count: 64, view_length: 16, view_overlap: 4, Context Options◆Standard Static, context_length: 16, context_overlap: 8, total steps: 20) |
+| ![anim__00012](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/7aee4ccb-b669-42fd-a1b5-2005003d5f8d) <br/> (latent count: 64, view_length: 16, view_overlap: 4, Context Options◆Standard Static, context_length: 32, context_overlap: 8, total steps: 20) |
 
 | Node | Inputs |
 |---|---|
@@ -222,7 +222,7 @@ There are View Options equivalent of these schedules:
 ### View Options◆Standard Uniform
 | Behavior |
 |---|
-| ![anim__00015](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/faa2cd26-9f94-4fce-90b2-8acec84b444e ) <br/> (latent count: 64, view_length: 16, view_overlap: 4, view_stride: 1, Context Options◆Standard Static, context_length: 16, context_overlap: 8, total steps: 20) |
+| ![anim__00015](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/faa2cd26-9f94-4fce-90b2-8acec84b444e ) <br/> (latent count: 64, view_length: 16, view_overlap: 4, view_stride: 1, Context Options◆Standard Static, context_length: 32, context_overlap: 8, total steps: 20) |
 
 | Node | Inputs |
 |---|---|
@@ -231,7 +231,7 @@ There are View Options equivalent of these schedules:
 ### View Options◆Looped Uniform
 | Behavior |
 |---|
-| ![anim__00016](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/8922b44b-cb19-4b2a-8486-2df8a46bf573) <br/> (latent count: 64, view_length: 16, view_overlap: 4, view_stride: 1, closed_loop: False, Context Options◆Standard Static, context_length: 16, context_overlap: 8, total steps: 20) |
+| ![anim__00016](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/8922b44b-cb19-4b2a-8486-2df8a46bf573) <br/> (latent count: 64, view_length: 16, view_overlap: 4, view_stride: 1, closed_loop: False, Context Options◆Standard Static, context_length: 32, context_overlap: 8, total steps: 20) |
 | NOTE: this one is probably not going to come out looking well unless you are using this for a very specific reason. |
 
 | Node | Inputs |
