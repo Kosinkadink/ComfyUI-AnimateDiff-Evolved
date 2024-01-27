@@ -238,6 +238,95 @@ There are View Options equivalent of these schedules:
 |---|---|
 | ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/c58fe4d4-81a8-436b-8028-9e81c2ace18a) | 🟦*view_length*: Amount of latents in context to pass into motion model at a time.<br/> 🟦*view_overlap*: Minimum common latents between adjacent windows.<br/> 🟦*view_stride*: Maximum 2^(stride-1) distance between adjacent latents.<br/> 🟦*closed_loop*: When True, adds additional windows to enhance looping.<br/> 🟦*use_on_equal_length*: When True, allows context to be used when latent count matches context_length - allows loops to be made when latent count == context_length.<br/> 🟦*fuse_method*: Method for averaging results of windows.<br/> |
 
+## Sample Settings
+
+The Sample Settings node allows customization of the sampling process beyond what is exposed on most KSampler nodes. With its default values, it will NOT have any effect, and can safely be attached without changing any behavior.
+
+TL;DR To use FreeNoise, select ```FreeNoise``` from the noise_type dropdown. FreeNoise does not decrease performance in any way. To use FreeInit, attach the FreeInit Iteration Options to the iteration_opts input. NOTE: FreeInit, despite it's name, works by resampling the latents ```iterations``` amount of times - this means if you use iteration=2, total sampling time will be exactly twice as slow since it will be performing the sampling twice.
+
+Noise Layers with the inputs of the same name (or very close to same name) have same intended behavior as the ones for Sample Settings - refer to the inputs below.
+
+| Node |
+|---|
+| ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/563a13cf-7aed-4acc-9ce3-1556660a34c2) |
+
+### Inputs
+- 🟨*noise_layers*: Customizable, stackable noise to add to/modify initial noise.
+- 🟨*iteration_opts*: Options for determining if (and how) sampling should be repeated consecutively; if you want to check out FreeInit, this is how to use it.
+- 🟨*seed_override*: Accepts a single int to use a seed instead of the seed passed into the KSampler, or a list of ints (like via FizzNodes' BatchedValueSchedule) to assign individual seeds to each latent in the batch.
+- 🟦*seed_offset*: When not set to 0, adds value to current seed, predictably changing it, whatever the original seed may have been.
+- 🟦*batch_offset*: When not set to 0, will 'offset' the noise as if the first latent was actually the batch_offset-nth latent, shifting all the noises over.
+- 🟦*noise_type*: Selects type of noise to be generated. Values include:
+   - **default**: generates different noise for all latents as usual.
+   - **constant**: generates exact same noise for all latents (based on seed).
+   - **empty**: generates no noise for all latents (as if noise was turned off).
+   - **repeated_context**: repeats noise every context_length (or view_length) amount of latents; stabilizes longer generations, but has very obvious repetition.
+   - **FreeNoise**: repeats noise such that it is repeated every context_length (or view_length), but the overlapped noise between contexts/views is shuffled to make repetition less prevelant while still achieving stabilization.
+- 🟦*seed_gen*: Allows choosing between ComfyUI and Auto1111 methods of noise generation. One is not better than the other (noise distributions are the same), they are just different methods.
+   - **comfy**: Noise is generated for the entire latent batch tensor at once based on the provided seed.
+   - **auto1111**: Noise is generated individually for each latent, with each latent receiving an increasing +1 seed offset (first latent uses seed, second latent uses seed+1, etc.).
+- 🟦*adapt_denoise_steps*: When True, KSamplers with a 'denoise' input will automatically scale down the total steps to run like the default options in Auto1111.
+   - **True**: Steps will decrease with lower denoise, i.e. 20 steps with 0.5 denoise will be 10 total steps executed, but sigmas will be selected that still achieve 0.5 denoise. Trades speed for quality (since less steps are sampled).
+   - **False**: Default behavior; 20 steps with 0.5 denoise will execute 20 steps.
+
+
+## Iteration Options
+
+These options allow KSamplers to re-sample the same latents without needing to chain multiple KSamplers together, and also allows specialized iteration behavior to implement features such as FreeInit.
+
+### Default Iteration Options
+
+Simply re-runs the KSampler, plugging in the output of the previous iteration into the next one. At the dafault iterations=1, it is no different than not having this node plugged in at all.
+
+| Node | Inputs |
+|---|---|
+| ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/23c5e698-6eff-43cc-92e9-488e9b5ca96a) | 🟦*iterations*: Total amount of times KSampler should run back-to-back. <br/> 🟦*iter_batch_offset*: batch_offset to apply on each subsequent iteration. <br/> 🟦*iter_seed_offset*: seed_offset to apply on each subsequent iteration. |
+
+### FreeInit Iteration Options
+
+Implements [FreeInit](https://github.com/TianxingWu/FreeInit), which is the idea that AnimateDiff was trained on latents of existing videos (images with temporal coherence between them) that were then noised rather than from random initial noise, and that when noising existing latents, low-frequency data still remains in the noised latents. It combines the low-frequency noise from existing videos (or, as is the default behavior, the previous iteration) with the high-frequency noise in randomly generated noise to run the subsequent iterations. ***Each iteration is a full sample - 2 iterations means it will take twice as long to run as compared to having 1 iteration/no iteration_opts connected.***
+
+When apply_to_1st_iter is False, the noising/low-freq/high-freq combination will not occur on the first iteration, with the assumption that there are no useful latents passed in to do the noise combining in the first place, thus requiring at least 2 iterations for FreeInit to take effect.
+
+If you have an existing set of latents to use to get low-freq noise from, you may set apply_to_1st_iter to True, and then even if you set iterations=1, FreeInit will still take effect.
+
+| Node |
+|---|
+| ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/21404e4f-ab67-44ed-8bf9-e510bc2571de) |
+
+#### Inputs
+- 🟦*iterations*: Total amount of times KSampler should run back-to-back. Refer to explanation above why it is 2 by default (and when it can be set to 1 instead).
+- 🟦*init_type*: Code implementation for applying FreeInit.
+   - ***FreeInit [sampler sigma]***: likely closest to intended implementation, and gets the sigma for noising from the sampler instead of the model (when possible).
+   - ***FreeInit [model sigma]***: gets sigma for noising from the model; when using Custom KSampler, this is the method that will be used for both FreeInit options.
+   - ***DinkInit_v1***: my initial, flawed implementation of FreeInit before I figured out how to exactly copy the noising behavior. By sheer luck and trial and error, I managed to have it actually sort of work with this method. Mainly for backwards compatibility now, but might produce useful results too.
+
+- 🟦*apply_to_1st_iter*: When set to True, will do FreeInit low-freq/high-freq combo work even on the 1st iteration it runs Refer to explanation in the above FreeInit Iteration Options section for when this can be set to True.
+- 🟦*init_type*: Code implementation for applying FreeInit.
+- 🟦*iter_batch_offset*: batch_offset to apply on each subsequent iteration.
+- 🟦*iter_seed_offset*: seed_offset to apply on each subsequent iteration. Defaults to 1 so that new random noise is used for each iteration.
+
+- 🟦*filter*: Determines low-freq filter to apply to noise. Very technical, look into code/online resources to figure out how the individual filters act.
+- 🟦*d_s*: Spatial parameter of filter (within latents, I think); very technical. Look into code/online resources if you wish to know what exactly it does.
+- 🟦*d_t*: Temporal parameter of filter (across latents, I think); very technical. Look into code/online resources if you wish to know what exactly it does.
+- 🟦*n_butterworth*: Only applies to ```butterworth``` filter; very technical. Look into code/online resources if you wish to know what exactly it does.
+- 🟦*sigma_step*: Noising step to use/emulate when noising latents to then get low-freq noise out of. 999 actually means last (-1), and any number under 999 will mean the distance away from last. Leave at 999 unless you know what you're trying to do with it.
+
+
+## Noise Layers
+
+These nodes allow initial noise to be added onto, weighted, or replaced. In near future, I will add the ability for masks to 'move' the noise relative to the masks' movement instead of just 'cutting and pasting' the noise.
+
+The inputs that are shared with Sample Settings have the same exact effect - only new option is in seed_gen_override, which by default will use same seed_gen as Sample Settings (use existing). You can make a noise layer use a different seed_gen strategy at will, or use a different seed/set of seeds, etc.
+
+The ```mask_optional``` parameter determines where on the initial noise the noise layer should be applied.
+
+| Node | Behavior + Inputs |
+|---|---|
+| ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/66487969-669d-47d3-9742-85ae26606903) | [Add]; Adds noise directly on top. <br/> 🟦*noise_weight*: Multiplier for noise layer before being added on top. |
+| ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/52acb25c-9116-4594-b3fb-01b7b15bb79d) | [Add Weighted]; Adds noise, but takes a weighted average between what is already there and itself. <br/> 🟦*noise_weight*: Weight of new noise in the weighted average with existing noise. <br/> 🟦*balance_multipler*: Scale for how much noise_weight should affect existing noise; 1.0 means normal weighted average, and below 1.0 will lessen the weighted reduction by that amount (i.e. if balance_multiplier is set to 0.5 and noise_weight is 0.25, existing noise will only be reduced by 0.125 instead of 0.25, but new noise will be added with the unmodified 0.25 weight). |
+| ![image](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/4feb586e-9920-4f35-8f92-e2e36fabb2df) | [Replace]; Directly replaces existing noise from layers underneath with itself. |
+
 
 
 
