@@ -21,6 +21,7 @@ from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniform
 from .nodes_ad_settings import AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
+from .nodes_lora import MaskedLoraLoader
 
 # override comfy_sample.sample with animatediff-support version
 comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
@@ -107,6 +108,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ApplyAnimateDiffModelSimple": ApplyAnimateDiffModelBasicNode,
     "ADE_ApplyAnimateDiffModel": ApplyAnimateDiffModelNode,
     "ADE_LoadAnimateDiffModel": LoadAnimateDiffModelNode,
+    # MaskedLoraLoader
+    "ADE_MaskedLoadLora": MaskedLoraLoader,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
