@@ -4,7 +4,7 @@ from typing import Union
 import torch
 from torch import Tensor
 
-from .utils_motion import linear_conversion, normalize_min_max
+from .utils_motion import linear_conversion, normalize_min_max, extend_to_batch_size
 
 
 class ScaleType:
@@ -41,13 +41,15 @@ class MultivalDynamicNode:
                 if len(float_val) < mask_optional.shape[0]:
                     # copies last entry enough times to match mask shape
                     float_val = float_val + float_val[-1]*(mask_optional.shape[0]-len(float_val))
+                if mask_optional.shape[0] < len(float_val):
+                    mask_optional = extend_to_batch_size(mask_optional, len(float_val))
                 float_val = float_val[:mask_optional.shape[0]]
             float_val: Tensor = torch.tensor(float_val).unsqueeze(-1).unsqueeze(-1)
         # now that inputs are normalized, figure out what value to actually return
         if mask_optional is not None:
             mask_optional = mask_optional.clone()
             if float_is_iterable:
-                mask_optional = mask_optional * float_val.to(mask_optional.dtype).to(mask_optional.device)
+                mask_optional = mask_optional[:] * float_val.to(mask_optional.dtype).to(mask_optional.device)
             else:
                 mask_optional = mask_optional * float_val
             return (mask_optional,)
