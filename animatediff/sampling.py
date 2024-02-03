@@ -167,7 +167,7 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
         # if no context_length, treat video length as intended AD frame window
         if not params.context_options.context_length:
             for motion_model in motion_models.models:
-                if params.full_length > motion_model.model.encoding_max_len:
+                if not motion_model.model.is_length_valid_for_encoding_max_len(params.full_length):
                     raise ValueError(f"Without a context window, AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames, but received {params.full_length} latents.")
             motion_models.set_video_length(params.full_length, params.full_length)
         # otherwise, treat context_length as intended AD frame window
@@ -175,7 +175,7 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
             for motion_model in motion_models.models:
                 view_options = params.context_options.view_options
                 context_length = view_options.context_length if view_options else params.context_options.context_length
-                if context_length > motion_model.model.encoding_max_len:
+                if not motion_model.model.is_length_valid_for_encoding_max_len(context_length):
                     raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_options.context_length}.")
             motion_models.set_video_length(params.context_options.context_length, params.full_length)
         # inject model
@@ -202,10 +202,10 @@ class FunctionInjectionHolder:
         if params.unlimited_area_hack:
             model.model.memory_required = unlimited_memory_required
         if model.motion_models is not None:
-            # only apply groupnorm hack if not [v3 or (AnimateDiff SD1.5 and v2 and should apply v2 properly)]
+            # only apply groupnorm hack if not [v3 or ([not Hotshot] and SD1.5 and v2 and apply_v2_properly)]
             info: AnimateDiffInfo = model.motion_models[0].model.mm_info
-            if not (info.mm_version == AnimateDiffVersion.V3 or (info.mm_format == AnimateDiffFormat.ANIMATEDIFF and info.sd_type == ModelTypeSD.SD1_5 and
-                    info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
+            if not (info.mm_version == AnimateDiffVersion.V3 or
+                    (info.mm_format not in [AnimateDiffFormat.HOTSHOTXL] and info.sd_type == ModelTypeSD.SD1_5 and info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
                 comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
