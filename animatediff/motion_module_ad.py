@@ -95,9 +95,9 @@ def get_position_encoding_max_len(mm_state_dict: dict[str, Tensor], mm_name: str
     for key in mm_state_dict.keys():
         if key.endswith("pos_encoder.pe"):
             return mm_state_dict[key].size(1) # get middle dim
-    # AnimateLCM models should have no pos_encoder entries
+    # AnimateLCM models should have no pos_encoder entries, and assumed to be 64
     if mm_format == AnimateDiffFormat.ANIMATELCM:
-        return None
+        return 64
     raise MotionCompatibilityError(f"No pos_encoder.pe found in mm_state_dict - {mm_name} is not a valid AnimateDiff motion module!")
 
 
@@ -211,7 +211,10 @@ class AnimateDiffModel(nn.Module):
     def get_best_beta_schedule(self, log=False) -> str:
         to_return = None
         if self.mm_info.sd_type == ModelTypeSD.SD1_5:
-            to_return = BetaSchedules.SQRT_LINEAR
+            if self.mm_info.mm_format == AnimateDiffFormat.ANIMATELCM:
+                to_return = BetaSchedules.LCM  # while LCM_100 is the intended schedule, I find LCM to have much less flicker
+            else:
+                to_return = BetaSchedules.SQRT_LINEAR
         elif self.mm_info.sd_type == ModelTypeSD.SDXL:
             if self.mm_info.mm_format == AnimateDiffFormat.HOTSHOTXL:
                 to_return = BetaSchedules.LINEAR

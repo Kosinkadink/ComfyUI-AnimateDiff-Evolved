@@ -13,7 +13,7 @@ from comfy.model_base import BaseModel
 
 from .ad_settings import AnimateDiffSettings
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import AnimateDiffModel, has_mid_block, normalize_ad_state_dict
+from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, has_mid_block, normalize_ad_state_dict
 from .logger import logger
 from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
@@ -365,7 +365,8 @@ def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: M
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(model.model_dtype())
     ad_wrapper.to(model.offload_device)
-    load_result = ad_wrapper.load_state_dict(mm_state_dict)
+    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
+    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=not is_animatelcm)
     # TODO: report load_result of motion_module loading?
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
     motion_model = MotionModelPatcher(model=ad_wrapper, load_device=model.load_device, offload_device=model.offload_device)
@@ -389,7 +390,11 @@ def load_motion_module_gen2(model_name: str, motion_model_settings: AnimateDiffS
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
-    load_result = ad_wrapper.load_state_dict(mm_state_dict)
+    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
+    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=not is_animatelcm)
+    # TODO: manually check load_results for AnimateLCM models
+    if is_animatelcm:
+        pass
     # TODO: report load_result of motion_module loading?
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
     motion_model = MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),

@@ -11,6 +11,9 @@ from comfy.model_base import SD21UNCLIP, SDXL, BaseModel, SDXLRefiner, SVD_img2v
 from comfy.model_management import xformers_enabled
 from comfy.model_patcher import ModelPatcher
 
+import comfy.model_sampling
+import comfy_extras.nodes_model_advanced
+
 
 class IsChangedHelper:
     def __init__(self):
@@ -24,9 +27,46 @@ class IsChangedHelper:
 
 
 class ModelSamplingConfig:
-    def __init__(self, beta_schedule: str):
+    def __init__(self, beta_schedule: str, linear_start: float=None, linear_end: float=None):
         self.sampling_settings = {"beta_schedule": beta_schedule}
+        if linear_start is not None:
+            self.sampling_settings["linear_start"] = linear_start
+        if linear_end is not None:
+            self.sampling_settings["linear_end"] = linear_end
         self.beta_schedule = beta_schedule  # keeping this for backwards compatibility
+
+
+class ModelSamplingType:
+    EPS = "eps"
+    V_PREDICTION = "v_prediction"
+    LCM = "lcm"
+
+
+def factory_model_sampling_discrete_distilled(original_timesteps=50):
+    class ModelSamplingDiscreteDistilledEvolved(comfy_extras.nodes_model_advanced.ModelSamplingDiscreteDistilled):
+        def __init__(self, *args, **kwargs):
+            self.original_timesteps = original_timesteps  # normal LCM has 50
+            super().__init__(*args, **kwargs)
+    return ModelSamplingDiscreteDistilledEvolved
+
+
+# based on code in comfy_extras/nodes_model_advanced.py
+def evolved_model_sampling(model_config: ModelSamplingConfig, model_type: int, alias: str):
+    # if LCM, need to handle manually
+    if BetaSchedules.is_lcm(alias):
+        sampling_type = comfy_extras.nodes_model_advanced.LCM
+        if alias == BetaSchedules.LCM_100:
+            sampling_base = factory_model_sampling_discrete_distilled(original_timesteps=100)
+        elif alias == BetaSchedules.LCM_25:
+            sampling_base = factory_model_sampling_discrete_distilled(original_timesteps=25)
+        else:
+            sampling_base = comfy_extras.nodes_model_advanced.ModelSamplingDiscreteDistilled
+        class ModelSamplingAdvancedEvolved(sampling_base, sampling_type):
+            pass
+        # NOTE: if I want to support zsnr, this is where I would add that code
+        return ModelSamplingAdvancedEvolved(model_config)
+    # otherwise, use vanilla model_sampling function
+    return model_sampling(model_config, model_type)
 
 
 class BetaSchedules:
@@ -34,22 +74,36 @@ class BetaSchedules:
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
     LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
+    LCM = "lcm"
+    LCM_100 = "lcm[100_ots]"
+    LCM_25 = "lcm[25_ots]"
+    LCM_SQRT_LINEAR = "lcm >> sqrt_linear"
     USE_EXISTING = "use existing"
     SQRT = "sqrt"
     COSINE = "cosine"
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
 
-    ALIAS_LIST = [AUTOSELECT, SQRT_LINEAR, LINEAR_ADXL, LINEAR,
-                  USE_EXISTING, SQRT, COSINE, SQUAREDCOS_CAP_V2]
+    LCM_LIST = [LCM, LCM_100, LCM_25, LCM_SQRT_LINEAR]
+
+    ALIAS_LIST = [AUTOSELECT, USE_EXISTING, SQRT_LINEAR, LINEAR_ADXL, LINEAR, LCM, LCM_100, LCM_SQRT_LINEAR, # LCM_25 is purposely omitted
+                  SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
     ALIAS_MAP = {
         SQRT_LINEAR: "sqrt_linear",
         LINEAR_ADXL: "linear", # also linear, but has different linear_end (0.020)
         LINEAR: "linear",
+        LCM_100: "linear",  # distilled, 100 original timesteps
+        LCM_25: "linear",  # distilled, 25 original timesteps
+        LCM: "linear",  # distilled
+        LCM_SQRT_LINEAR: "sqrt_linear", # distilled, sqrt_linear
         SQRT: "sqrt",
         COSINE: "cosine",
         SQUAREDCOS_CAP_V2: "squaredcos_cap_v2",
     }
+
+    @classmethod
+    def is_lcm(cls, alias: str):
+        return alias in cls.LCM_LIST
 
     @classmethod
     def to_name(cls, alias: str):
@@ -57,16 +111,18 @@ class BetaSchedules:
     
     @classmethod
     def to_config(cls, alias: str) -> ModelSamplingConfig:
-        return ModelSamplingConfig(cls.to_name(alias))
+        linear_start = None
+        linear_end = None
+        if alias == cls.LINEAR_ADXL:
+            # uses linear_end=0.020
+            linear_end = 0.020
+        return ModelSamplingConfig(cls.to_name(alias), linear_start=linear_start, linear_end=linear_end)
     
     @classmethod
     def to_model_sampling(cls, alias: str, model: ModelPatcher):
         if alias == cls.USE_EXISTING:
             return None
-        ms_obj = model_sampling(cls.to_config(alias), model_type=model.model.model_type)
-        if alias == cls.LINEAR_ADXL:
-            # uses linear_end=0.020
-            ms_obj._register_schedule(given_betas=None, beta_schedule=cls.to_name(alias), timesteps=1000, linear_start=0.00085, linear_end=0.020, cosine_s=8e-3)
+        ms_obj = evolved_model_sampling(cls.to_config(alias), model_type=model.model.model_type, alias=alias)
         return ms_obj
 
     @staticmethod
