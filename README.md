@@ -46,7 +46,8 @@ NOTE: you can also use custom locations for models/motion loras by making use of
 - Infinite animation length support via sliding context windows across whole unet (Context Options) and/or within motion module (View Options)
 - Scheduling Context Options to change across different points in the sampling process
 - FreeInit and FreeNoise support (FreeInit is under iteration opts, FreeNoise is in SampleSettings' noise_type dropdown)
-- Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: only really work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth```
+- Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: the original loras really only work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth```.
+     - UPDATE: New motion LoRAs without the v2 limitation can now be trained via the [AnimateDiff-MotionDirector repo](https://github.com/ExponentialML/AnimateDiff-MotionDirector). Shoutout to ExponentialML for implementing MotionDirector for AnimateDiff purposes!
 - Prompt travel using BatchPromptSchedule node from [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes)
 - Scale and Effect multival inputs to control motion amount and motion model influence on generation.
      - Can be float, list of floats, or masks
@@ -57,15 +58,17 @@ NOTE: you can also use custom locations for models/motion loras by making use of
      - NOTE: You will need to use ```autoselect``` or ```linear (HotshotXL/default)``` beta_schedule, the sweetspot for context_length or total frames (when not using context) is 8 frames, and you will need to use an SDXL checkpoint.
 - AnimateDiff-SDXL support, with corresponding model. Currently, a beta version is out, which you can find info about at [AnimateDiff](https://github.com/guoyww/AnimateDiff/).
      - NOTE: You will need to use ```autoselect``` or ```linear (AnimateDiff-SDXL)``` beta_schedule. Other than that, same rules of thumb apply to AnimateDiff-SDXL as AnimateDiff.
+- [AnimateLCM](https://github.com/G-U-N/AnimateLCM) support
+     - NOTE: You will need to use ```autoselect``` or ```lcm``` or ```lcm[100_ots]``` beta_schedule. To use fully with LCM, be sure to use appropriate LCM lora, use the ```lcm``` sampler_name in KSampler nodes, and lower cfg to somewhere around 1.0 to 2.0. Don't forget to decrease steps (minimum = ~4 steps), since LCM converges faster (less steps). Increase step count to increase detail as desired.
 - AnimateDiff Keyframes to change Scale and Effect at different points in the sampling process.
 - fp8 support; requires newest ComfyUI and torch >= 2.1 (decreases VRAM usage, but changes outputs)
 - Mac M1/M2/M3 support
 - Usage of Context Options and Sample Settings outside of AnimateDiff via Gen2 Use Evolved Sampling node
 
 ## Upcoming Features
+- Maskable Motion LoRA
 - Maskable SD LoRA (and perhaps maskable SD Models as well)
 - [PIA](https://github.com/open-mmlab/PIA) support
-- Motion LoRA training (experimental)
 - Anything else AnimateDiff-related that comes out
 
 
