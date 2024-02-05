@@ -74,6 +74,7 @@ class BetaSchedules:
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
     LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
+    AVG_LINEAR_SQRT_LINEAR = "avg(sqrt_linear,linear)"
     LCM = "lcm"
     LCM_100 = "lcm[100_ots]"
     LCM_25 = "lcm[25_ots]"
@@ -85,7 +86,7 @@ class BetaSchedules:
 
     LCM_LIST = [LCM, LCM_100, LCM_25, LCM_SQRT_LINEAR]
 
-    ALIAS_LIST = [AUTOSELECT, USE_EXISTING, SQRT_LINEAR, LINEAR_ADXL, LINEAR, LCM, LCM_100, LCM_SQRT_LINEAR, # LCM_25 is purposely omitted
+    ALIAS_LIST = [AUTOSELECT, USE_EXISTING, SQRT_LINEAR, LINEAR_ADXL, LINEAR, AVG_LINEAR_SQRT_LINEAR, LCM, LCM_100, LCM_SQRT_LINEAR, # LCM_25 is purposely omitted
                   SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
     ALIAS_MAP = {
@@ -122,6 +123,13 @@ class BetaSchedules:
     def to_model_sampling(cls, alias: str, model: ModelPatcher):
         if alias == cls.USE_EXISTING:
             return None
+        if alias == cls.AVG_LINEAR_SQRT_LINEAR:
+            ms_linear = evolved_model_sampling(cls.to_config(cls.LINEAR), model_type=model.model.model_type, alias=alias)
+            ms_sqrt_linear = evolved_model_sampling(cls.to_config(cls.SQRT_LINEAR), model_type=model.model.model_type, alias=alias)
+            avg_sigmas = (ms_linear.sigmas + ms_sqrt_linear.sigmas) / 2
+            ms_linear.set_sigmas(avg_sigmas)
+            return ms_linear
+            # average out the sigmas
         ms_obj = evolved_model_sampling(cls.to_config(alias), model_type=model.model.model_type, alias=alias)
         return ms_obj
 
