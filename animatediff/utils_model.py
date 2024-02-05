@@ -75,6 +75,7 @@ class BetaSchedules:
     LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
     AVG_LINEAR_SQRT_LINEAR = "avg(sqrt_linear,linear)"
+    LCM_AVG_LINEAR_SQRT_LINEAR = "lcm avg(sqrt_linear,linear)"
     LCM = "lcm"
     LCM_100 = "lcm[100_ots]"
     LCM_25 = "lcm[25_ots]"
@@ -86,7 +87,7 @@ class BetaSchedules:
 
     LCM_LIST = [LCM, LCM_100, LCM_25, LCM_SQRT_LINEAR]
 
-    ALIAS_LIST = [AUTOSELECT, USE_EXISTING, SQRT_LINEAR, LINEAR_ADXL, LINEAR, AVG_LINEAR_SQRT_LINEAR, LCM, LCM_100, LCM_SQRT_LINEAR, # LCM_25 is purposely omitted
+    ALIAS_LIST = [AUTOSELECT, USE_EXISTING, SQRT_LINEAR, LINEAR_ADXL, LINEAR, AVG_LINEAR_SQRT_LINEAR, LCM_AVG_LINEAR_SQRT_LINEAR, LCM, LCM_100, LCM_SQRT_LINEAR, # LCM_25 is purposely omitted
                   SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
     ALIAS_MAP = {
@@ -123,9 +124,15 @@ class BetaSchedules:
     def to_model_sampling(cls, alias: str, model: ModelPatcher):
         if alias == cls.USE_EXISTING:
             return None
-        if alias == cls.AVG_LINEAR_SQRT_LINEAR:
-            ms_linear = evolved_model_sampling(cls.to_config(cls.LINEAR), model_type=model.model.model_type, alias=alias)
-            ms_sqrt_linear = evolved_model_sampling(cls.to_config(cls.SQRT_LINEAR), model_type=model.model.model_type, alias=alias)
+        elif alias == cls.AVG_LINEAR_SQRT_LINEAR:
+            ms_linear = evolved_model_sampling(cls.to_config(cls.LINEAR), model_type=model.model.model_type, alias=cls.LINEAR)
+            ms_sqrt_linear = evolved_model_sampling(cls.to_config(cls.SQRT_LINEAR), model_type=model.model.model_type, alias=cls.SQRT_LINEAR)
+            avg_sigmas = (ms_linear.sigmas + ms_sqrt_linear.sigmas) / 2
+            ms_linear.set_sigmas(avg_sigmas)
+            return ms_linear
+        elif alias == cls.LCM_AVG_LINEAR_SQRT_LINEAR:
+            ms_linear = evolved_model_sampling(cls.to_config(cls.LCM), model_type=model.model.model_type, alias=cls.LCM)
+            ms_sqrt_linear = evolved_model_sampling(cls.to_config(cls.LCM_SQRT_LINEAR), model_type=model.model.model_type, alias=cls.LCM_SQRT_LINEAR)
             avg_sigmas = (ms_linear.sigmas + ms_sqrt_linear.sigmas) / 2
             ms_linear.set_sigmas(avg_sigmas)
             return ms_linear
