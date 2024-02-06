@@ -145,7 +145,7 @@ class StandardStaticContextOptionsNode:
                 "context_overlap": ("INT", {"default": 4, "min": 0, "max": OVERLAP_MAX}),
             },
             "optional": {
-                "fuse_method": (ContextFuseMethod.LIST,),
+                "fuse_method": (ContextFuseMethod.LIST_STATIC,),
                 "use_on_equal_length": ("BOOLEAN", {"default": False},),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),

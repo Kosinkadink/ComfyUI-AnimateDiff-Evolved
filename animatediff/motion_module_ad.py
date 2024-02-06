@@ -15,7 +15,7 @@ from comfy.utils import repeat_to_batch_size
 import comfy.ops
 import comfy.model_management
 
-from .context import ContextOptions, get_context_weights, get_context_windows
+from .context import ContextFuseMethod, ContextOptions, get_context_weights, get_context_windows
 from .utils_motion import CrossAttentionMM, MotionCompatibilityError, extend_to_batch_size, prepare_mask_batch
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
@@ -813,11 +813,9 @@ class TemporalTransformerBlock(nn.Module):
             hidden_states = rearrange(hidden_states, "(b f) d c -> b f d c", f=video_length)
             value_final = torch.zeros_like(hidden_states)
             count_final = torch.zeros_like(hidden_states)
+            # bias_final = [0.0] * video_length
             batched_conds = hidden_states.size(1) // video_length
             for sub_idxs in views:
-                weights = get_context_weights(len(sub_idxs), view_options.fuse_method) * batched_conds
-                weights_tensor = torch.Tensor(weights).to(device=hidden_states.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-
                 sub_hidden_states = rearrange(hidden_states[:, sub_idxs], "b f d c -> (b f) d c")
                 for attention_block, norm in zip(self.attention_blocks, self.norms):
                     norm_hidden_states = norm(sub_hidden_states).to(sub_hidden_states.dtype)
@@ -834,14 +832,35 @@ class TemporalTransformerBlock(nn.Module):
                     )
                 sub_hidden_states = rearrange(sub_hidden_states, "(b f) d c -> b f d c", f=len(sub_idxs))
 
+                # if view_options.fuse_method == ContextFuseMethod.RELATIVE:
+                #     for pos, idx in enumerate(sub_idxs):
+                #         # bias is the influence of a specific index in relation to the whole context window
+                #         bias = 1 - abs(idx - (sub_idxs[0] + sub_idxs[-1]) / 2) / ((sub_idxs[-1] - sub_idxs[0] + 1e-2) / 2)
+                #         bias = max(1e-2, bias)
+                #         # take weighted averate relative to total bias of current idx
+                #         bias_total = bias_final[idx]
+                #         prev_weight = torch.tensor([bias_total / (bias_total + bias)],
+                #                                    dtype=value_final.dtype, device=value_final.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+                #         #prev_weight = torch.cat([prev_weight]*value_final.shape[1], dim=1)
+                #         new_weight = torch.tensor([bias / (bias_total + bias)],
+                #                                    dtype=value_final.dtype, device=value_final.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+                #         #new_weight = torch.cat([new_weight]*value_final.shape[1], dim=1)
+                #         test = value_final[:, idx:idx+1, :, :]
+                #         value_final[:, idx:idx+1, :, :] = value_final[:, idx:idx+1, :, :] * prev_weight + sub_hidden_states[:, pos:pos+1, : ,:] * new_weight
+                #         bias_final[idx] = bias_total + bias
+                # else:
+                weights = get_context_weights(len(sub_idxs), view_options.fuse_method) * batched_conds
+                weights_tensor = torch.Tensor(weights).to(device=hidden_states.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
                 value_final[:, sub_idxs] += sub_hidden_states * weights_tensor
                 count_final[:, sub_idxs] += weights_tensor
             
-            # get weighted average of sub_hidden_states
+            # get weighted average of sub_hidden_states, if fuse method requires it
+            # if view_options.fuse_method != ContextFuseMethod.RELATIVE:
             hidden_states = value_final / count_final
             hidden_states = rearrange(hidden_states, "b f d c -> (b f) d c")
             del value_final
             del count_final
+            # del bias_final
 
         hidden_states = self.ff(self.ff_norm(hidden_states)) + hidden_states
 

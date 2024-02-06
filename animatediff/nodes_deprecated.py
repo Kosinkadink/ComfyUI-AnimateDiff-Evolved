@@ -12,7 +12,7 @@ from PIL.PngImagePlugin import PngInfo
 import folder_paths
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextSchedules, ContextOptions
+from .context import ContextOptionsGroup, ContextOptions, ContextSchedules
 from .logger import logger
 from .utils_model import Folders, BetaSchedules, get_available_motion_models
 from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module_gen1
@@ -109,16 +109,18 @@ class AnimateDiffLoaderAdvanced_Deprecated:
                 model_name=model_name,
                 apply_v2_properly=False,
         )
-        # set context settings
-        params.set_context(
+        context_group = ContextOptionsGroup()
+        context_group.add(
             ContextOptions(
                 context_length=context_length,
                 context_stride=context_stride,
                 context_overlap=context_overlap,
                 context_schedule=context_schedule,
                 closed_loop=closed_loop,
+                )
             )
-        )
+        # set context settings
+        params.set_context(context_options=context_group)
         # inject for use in sampling code
         model = ModelPatcherAndInjector(model)
         model.motion_models = MotionModelGroup(motion_model)

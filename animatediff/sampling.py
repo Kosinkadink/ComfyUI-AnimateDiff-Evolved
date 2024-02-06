@@ -492,7 +492,7 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
                     bias_total = bias_final[(full_length*n)+idx]
                     prev_weight = (bias_total / (bias_total + bias))
                     new_weight = (bias / (bias_total + bias))
-                    cond_final[(full_length*n)+idx] = cond_final[(full_length*n)+idx] * prev_weight  + sub_cond_out[(full_length*n)+pos] * new_weight
+                    cond_final[(full_length*n)+idx] = cond_final[(full_length*n)+idx] * prev_weight + sub_cond_out[(full_length*n)+pos] * new_weight
                     uncond_final[(full_length*n)+idx] = uncond_final[(full_length*n)+idx] * prev_weight + sub_uncond_out[(full_length*n)+pos] * new_weight
                     bias_final[(full_length*n)+idx] = bias_total + bias
         else:
