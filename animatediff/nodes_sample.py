@@ -1,7 +1,10 @@
+from git import Union
 from torch import Tensor
 
 from .freeinit import FreeInitFilter
-from .sample_settings import FreeInitOptions, IterationOptions, NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, SeedNoiseGeneration, SampleSettings
+from .sample_settings import (FreeInitOptions, IterationOptions,
+                              NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
+                              SeedNoiseGeneration, SampleSettings, CustomCFG)
 from .utils_model import BIGMIN, BIGMAX
 
 
@@ -20,6 +23,7 @@ class SampleSettingsNode:
                 "iteration_opts": ("ITERATION_OPTS",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
                 "adapt_denoise_steps": ("BOOLEAN", {"default": False},),
+                "custom_cfg": ("CUSTOM_CFG",),
             }
         }
     
@@ -29,9 +33,9 @@ class SampleSettingsNode:
     FUNCTION = "create_settings"
 
     def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None,
-                        iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False):
+                        iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False, custom_cfg=None):
         sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers,
-                                           iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps)
+                                           iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps, custom_cfg=custom_cfg)
         return (sampling_settings,)
 
 
@@ -198,3 +202,21 @@ class FreeInitOptionsNode:
                                     filter=filter, d_s=d_s, d_t=d_t, n=n_butterworth, init_type=init_type,
                                     iter_batch_offset=iter_batch_offset, iter_seed_offset=iter_seed_offset)
         return (iter_opts,)
+
+
+class CustomCFGNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cfg_multival": ("MULTIVAL",)
+            }
+        }
+    
+    RETURN_TYPES = ("CUSTOM_CFG",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_custom_cfg"
+
+    def create_custom_cfg(self, cfg_multival: Union[float, Tensor]):
+        # TODO: add support for cfg keyframes
+        return (CustomCFG(cfg_multival=cfg_multival),)

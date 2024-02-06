@@ -6,7 +6,8 @@ from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithConte
                          AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
 from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
-from .nodes_sample import FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode
+from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
+                           CustomCFGNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode)
 from .nodes_ad_settings import AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode
@@ -52,6 +53,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AdjustPESweetspotStretch": SweetspotStretchPENode,
     "ADE_AdjustPEFullStretch": FullStretchPENode,
     "ADE_AdjustPEManual": ManualAdjustPENode,
+    # Sample Settings
+    "ADE_CustomCFG": CustomCFGNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -106,6 +109,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AdjustPESweetspotStretch": "Adjust PE [Sweetspot Stretch] 🎭🅐🅓",
     "ADE_AdjustPEFullStretch": "Adjust PE [Full Stretch] 🎭🅐🅓",
     "ADE_AdjustPEManual": "Adjust PE [Manual] 🎭🅐🅓",
+    # Sample Settings
+    "ADE_CustomCFG": "Custom CFG 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

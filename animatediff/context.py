@@ -10,8 +10,9 @@ from .utils_motion import get_sorted_list_via_attr
 class ContextFuseMethod:
     FLAT = "flat"
     PYRAMID = "pyramid"
+    RELATIVE = "relative"
 
-    LIST = [PYRAMID, FLAT]
+    LIST = [PYRAMID, RELATIVE, FLAT]
 
 
 class ContextType:

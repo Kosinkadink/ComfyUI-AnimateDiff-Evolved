@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from typing import Union
 import torch
 from torch import Tensor
 
@@ -8,6 +9,7 @@ from comfy.model_patcher import ModelPatcher
 
 from . import freeinit
 from .context import ContextOptions, ContextOptionsGroup
+from .utils_motion import extend_to_batch_size, prepare_mask_batch
 from .logger import logger
 
 
@@ -48,7 +50,7 @@ class NoiseNormalize:
 
 class SampleSettings:
     def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None,
-                 iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False):
+                 iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False, custom_cfg: 'CustomCFG'=None):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
@@ -58,6 +60,7 @@ class SampleSettings:
         self.seed_override = seed_override
         self.negative_cond_flipflop = negative_cond_flipflop
         self.adapt_denoise_steps = adapt_denoise_steps
+        self.custom_cfg = custom_cfg
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
@@ -85,7 +88,7 @@ class SampleSettings:
     def clone(self):
         return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
                            noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
-                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps)
+                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg)
 
 
 class NoiseLayer:
@@ -435,3 +438,27 @@ class FreeInitOptions(IterationOptions):
             return cached_latents, noised_latents
         else:
             raise ValueError(f"FreeInit init_type '{self.init_type}' is not recognized.")
+
+
+class CustomCFG:
+    def __init__(self, cfg_multival: Union[float, Tensor]):
+        self.cfg_multival = cfg_multival
+        self.masks = None
+        # TODO: add support for cfg keyframes
+    
+    def patch_model(self, model: ModelPatcher) -> ModelPatcher:
+        def evolved_custom_cfg(args):
+            cond: Tensor = args["cond"]
+            uncond: Tensor = args["uncond"]
+            # cond scale is based purely off of CustomCFG - cond_scale input in sampler is ignored!
+            cond_scale = self.cfg_multival
+            if isinstance(cond_scale, Tensor):
+                cond_scale = prepare_mask_batch(cond_scale.to(cond.dtype).to(cond.device), cond.shape)
+                cond_scale = extend_to_batch_size(cond_scale, cond.shape[0])
+            return uncond + (cond - uncond) * cond_scale
+
+        model = model.clone()
+        model.set_model_sampler_cfg_function(evolved_custom_cfg)
+        return model
+        
+        

@@ -245,6 +245,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
         cached_noise = None
         function_injections = FunctionInjectionHolder()
         try:
+            if model.sample_settings.custom_cfg is not None:
+                model = model.sample_settings.custom_cfg.patch_model(model)
             # clone params from model
             params = model.motion_injection_params.clone()
             # get amount of latents passed in, and store in params
@@ -454,6 +456,7 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
     cond_final = torch.zeros_like(x_in)
     uncond_final = torch.zeros_like(x_in)
     out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
+    bias_final = [0.0] * x_in.shape[0]
 
     # perform calc_cond_uncond_batch per context window
     for ctx_idxs in context_windows:
@@ -477,16 +480,36 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
 
         sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
 
-        # add conds and counts based on weights of fuse method
-        weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method) * batched_conds
-        weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-        cond_final[full_idxs] += sub_cond_out * weights_tensor
-        uncond_final[full_idxs] += sub_uncond_out * weights_tensor
-        out_count_final[full_idxs] += weights_tensor
+        if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+            full_length = ADGS.params.full_length
+            for pos, idx in enumerate(ctx_idxs):
+                # bias is the influence of a specific index in relation to the whole context window
+                bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
+                bias = max(1e-2, bias)
+                # take weighted average relative to total bias of current idx
+                # and account for batched_conds
+                for n in range(batched_conds):
+                    bias_total = bias_final[(full_length*n)+idx]
+                    prev_weight = (bias_total / (bias_total + bias))
+                    new_weight = (bias / (bias_total + bias))
+                    cond_final[(full_length*n)+idx] = cond_final[(full_length*n)+idx] * prev_weight  + sub_cond_out[(full_length*n)+pos] * new_weight
+                    uncond_final[(full_length*n)+idx] = uncond_final[(full_length*n)+idx] * prev_weight + sub_uncond_out[(full_length*n)+pos] * new_weight
+                    bias_final[(full_length*n)+idx] = bias_total + bias
+        else:
+            # add conds and counts based on weights of fuse method
+            weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method) * batched_conds
+            weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            cond_final[full_idxs] += sub_cond_out * weights_tensor
+            uncond_final[full_idxs] += sub_uncond_out * weights_tensor
+            out_count_final[full_idxs] += weights_tensor
 
-
-    # normalize cond and uncond via division by context usage counts
-    cond_final /= out_count_final
-    uncond_final /= out_count_final
-    del out_count_final
-    return cond_final, uncond_final
+    if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+        # already normalized, so return as is
+        del out_count_final
+        return cond_final, uncond_final
+    else:
+        # normalize cond and uncond via division by context usage counts
+        cond_final /= out_count_final
+        uncond_final /= out_count_final
+        del out_count_final
+        return cond_final, uncond_final

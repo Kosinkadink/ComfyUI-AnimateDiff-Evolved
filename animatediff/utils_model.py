@@ -14,6 +14,8 @@ from comfy.model_patcher import ModelPatcher
 import comfy.model_sampling
 import comfy_extras.nodes_model_advanced
 
+BIGMIN = -(2**63-1)
+BIGMAX = (2**63-1)
 
 class IsChangedHelper:
     def __init__(self):
@@ -238,8 +240,6 @@ def calculate_model_hash(model: ModelPatcher):
         m.update(buf.cpu().numpy().view(np.uint8))
     return m.hexdigest()
 
-BIGMIN = -(2**63-1)
-BIGMAX = (2**63-1)
 
 class ModelTypeSD:
     SD1_5 = "SD1.5"
