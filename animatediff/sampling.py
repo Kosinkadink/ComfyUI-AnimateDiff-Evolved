@@ -147,8 +147,9 @@ def get_additional_models_factory(orig_get_additional_models: Callable, motion_m
 
 def apply_params_to_motion_models(motion_models: MotionModelGroup, params: InjectionParams):
     params = params.clone()
-    if params.context_options.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
-        params.context_options._current_context.context_length = params.full_length
+    for context in params.context_options.contexts:
+        if context.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
+            context.context_length = params.full_length
     # TODO: check (and message) should be different based on use_on_equal_length setting
     if params.context_options.context_length:
         pass
