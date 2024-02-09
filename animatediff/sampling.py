@@ -16,7 +16,7 @@ from comfy.controlnet import ControlBase
 import comfy.ops
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
-from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
+from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, prepare_mask_ad
 from .utils_model import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
@@ -30,6 +30,7 @@ class AnimateDiffHelper_GlobalState:
     def __init__(self):
         self.motion_models: MotionModelGroup = None
         self.params: InjectionParams = None
+        self.sample_settings: SampleSettings = None
         self.reset()
     
     def initialize(self, model):
@@ -40,6 +41,8 @@ class AnimateDiffHelper_GlobalState:
                 self.motion_models.initialize_timesteps(model)
             if self.params.context_options is not None:
                 self.params.context_options.initialize_timesteps(model)
+            if self.sample_settings.custom_cfg is not None:
+                self.sample_settings.custom_cfg.initialize_timesteps(model)
 
     def reset(self):
         self.initialized = False
@@ -53,6 +56,9 @@ class AnimateDiffHelper_GlobalState:
         if self.params is not None:
             del self.params
             self.params = None
+        if self.sample_settings is not None:
+            del self.sample_settings
+            self.sample_settings = None
     
     def update_with_inject_params(self, params: InjectionParams):
         self.params = params
@@ -282,6 +288,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                 ADGS.current_step = ADGS.start_step + step + 1
             kwargs["callback"] = ad_callback
             ADGS.motion_models = model.motion_models
+            ADGS.sample_settings = model.sample_settings
 
             # apply adapt_denoise_steps
             args = list(args)
@@ -334,6 +341,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
 
                 if model.motion_models is not None:
                     model.motion_models.pre_run(model)
+                if model.sample_settings is not None:
+                    model.sample_settings.pre_run(model)
                 latents = wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
             return latents
         finally:
@@ -355,6 +364,8 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
         ADGS.motion_models.prepare_current_keyframe(t=timestep)
     if ADGS.params.context_options is not None:
         ADGS.params.context_options.prepare_current_context(t=timestep)
+    if ADGS.sample_settings.custom_cfg is not None:
+        ADGS.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
 
     if math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
         uncond_ = None

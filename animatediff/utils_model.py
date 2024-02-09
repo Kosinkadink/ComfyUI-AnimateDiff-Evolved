@@ -14,18 +14,9 @@ from comfy.model_patcher import ModelPatcher
 import comfy.model_sampling
 import comfy_extras.nodes_model_advanced
 
-BIGMIN = -(2**63-1)
-BIGMAX = (2**63-1)
 
-class IsChangedHelper:
-    def __init__(self):
-        self.val = 0
-    
-    def no_change(self):
-        return self.val
-    
-    def change(self):
-        self.val = (self.val + 1) % 100
+BIGMIN = -(2**53-1)
+BIGMAX = (2**53-1)
 
 
 class ModelSamplingConfig:

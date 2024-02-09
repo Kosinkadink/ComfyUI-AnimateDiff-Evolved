@@ -6,10 +6,11 @@ from torch import Tensor
 import comfy.sample
 import comfy.samplers
 from comfy.model_patcher import ModelPatcher
+from comfy.model_base import BaseModel
 
 from . import freeinit
 from .context import ContextOptions, ContextOptionsGroup
-from .utils_motion import extend_to_batch_size, prepare_mask_batch
+from .utils_motion import extend_to_batch_size, get_sorted_list_via_attr, prepare_mask_batch
 from .logger import logger
 
 
@@ -50,7 +51,7 @@ class NoiseNormalize:
 
 class SampleSettings:
     def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None,
-                 iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False, custom_cfg: 'CustomCFG'=None):
+                 iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False, custom_cfg: 'CustomCFGKeyframeGroup'=None):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
@@ -60,7 +61,7 @@ class SampleSettings:
         self.seed_override = seed_override
         self.negative_cond_flipflop = negative_cond_flipflop
         self.adapt_denoise_steps = adapt_denoise_steps
-        self.custom_cfg = custom_cfg
+        self.custom_cfg = custom_cfg.clone() if custom_cfg else custom_cfg
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
@@ -85,6 +86,14 @@ class SampleSettings:
         # noise prepared now
         return noise
     
+    def pre_run(self, model: ModelPatcher):
+        if self.custom_cfg is not None:
+            self.custom_cfg.reset()
+    
+    def cleanup(self):
+        if self.custom_cfg is not None:
+            self.custom_cfg.reset()
+
     def clone(self):
         return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
                            noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
@@ -446,6 +455,9 @@ class CustomCFG:
         self.masks = None
         # TODO: add support for cfg keyframes
     
+    def initialize_timesteps(self, model: BaseModel):
+        pass
+
     def patch_model(self, model: ModelPatcher) -> ModelPatcher:
         def evolved_custom_cfg(args):
             cond: Tensor = args["cond"]
@@ -460,5 +472,108 @@ class CustomCFG:
         model = model.clone()
         model.set_model_sampler_cfg_function(evolved_custom_cfg)
         return model
+
+
+class CustomCFGKeyframe:
+    def __init__(self, cfg_multival: Union[float, Tensor], start_percent=0.0, guarantee_steps=1):
+        self.cfg_multival = cfg_multival
+        # scheduling
+        self.start_percent = float(start_percent)
+        self.start_t = 999999999.9
+        self.guarantee_steps = guarantee_steps
+    
+    def clone(self):
+        c = CustomCFGKeyframe(cfg_multival=self.cfg_multival,
+                              start_percent=self.start_percent, guarantee_steps=self.guarantee_steps)
+        c.start_t = self.start_t
+        return c
+
+
+class CustomCFGKeyframeGroup:
+    def __init__(self):
+        self.keyframes: list[CustomCFGKeyframe] = []
+        self._current_keyframe: CustomCFGKeyframe = None
+        self._current_used_steps: int = 0
+        self._current_index: int = 0
+    
+    def reset(self):
+        self._current_keyframe = None
+        self._current_used_steps = 0
+        self._current_index = 0
+        self._set_first_as_current()
+
+    def add(self, keyframe: CustomCFGKeyframe):
+        # add to end of list, then sort
+        self.keyframes.append(keyframe)
+        self.keyframes = get_sorted_list_via_attr(self.keyframes, "start_percent")
+        self._set_first_as_current()
+
+    def _set_first_as_current(self):
+        if len(self.keyframes) > 0:
+            self._current_keyframe = self.keyframes[0]
+        else:
+            self._current_keyframe = None
+
+    def has_index(self, index: int) -> int:
+        return index >=0 and index < len(self.keyframes)
+
+    def is_empty(self) -> bool:
+        return len(self.keyframes) == 0
+    
+    def clone(self):
+        cloned = CustomCFGKeyframeGroup()
+        for keyframe in self.keyframes:
+            cloned.keyframes.append(keyframe)
+        cloned._set_first_as_current()
+        return cloned
+    
+    def initialize_timesteps(self, model: BaseModel):
+        for keyframe in self.keyframes:
+            keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
+    
+    def prepare_current_keyframe(self, t: Tensor):
+        curr_t: float = t[0]
+        prev_index = self._current_index
+        # if met guaranteed steps, look for next keyframe in case need to switch
+        if self._current_used_steps >= self._current_keyframe.guarantee_steps:
+            # if has next index, loop through and see if need t oswitch
+            if self.has_index(self._current_index+1):
+                for i in range(self._current_index+1, len(self.keyframes)):
+                    eval_c = self.keyframes[i]
+                    # check if start_t is greater or equal to curr_t
+                    # NOTE: t is in terms of sigmas, not percent, so bigger number = earlier step in sampling
+                    if eval_c.start_t >= curr_t:
+                        self._current_index = i
+                        self._current_keyframe = eval_c
+                        self._current_used_steps = 0
+                        # if guarantee_steps greater than zero, stop searching for other keyframes
+                        if self._current_keyframe.guarantee_steps > 0:
+                            break
+                    # if eval_c is outside the percent range, stop looking further
+                    else: break
+        # update steps current context is used
+        self._current_used_steps += 1
+
+    def patch_model(self, model: ModelPatcher) -> ModelPatcher:
+        def evolved_custom_cfg(args):
+            cond: Tensor = args["cond"]
+            uncond: Tensor = args["uncond"]
+            # cond scale is based purely off of CustomCFG - cond_scale input in sampler is ignored!
+            cond_scale = self.cfg_multival
+            if isinstance(cond_scale, Tensor):
+                cond_scale = prepare_mask_batch(cond_scale.to(cond.dtype).to(cond.device), cond.shape)
+                cond_scale = extend_to_batch_size(cond_scale, cond.shape[0])
+            return uncond + (cond - uncond) * cond_scale
+
+        model = model.clone()
+        model.set_model_sampler_cfg_function(evolved_custom_cfg)
+        return model
+
+    # properties shadow those of CustomCFGKeyframe
+    @property
+    def cfg_multival(self):
+        if self._current_keyframe != None:
+            return self._current_keyframe.cfg_multival
+        return None
         
         

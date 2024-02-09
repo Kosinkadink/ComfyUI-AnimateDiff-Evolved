@@ -6,13 +6,13 @@ from comfy.model_patcher import ModelPatcher
 from comfy.sd import load_checkpoint_guess_config
 
 from .logger import logger
-from .utils_model import IsChangedHelper, BetaSchedules
+from .utils_model import BetaSchedules
 from .model_injection import get_vanilla_model_patcher
 
 
 class AnimateDiffUnload:
     def __init__(self) -> None:
-        self.change = IsChangedHelper()
+        pass
 
     @classmethod
     def INPUT_TYPES(s):

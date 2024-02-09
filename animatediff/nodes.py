@@ -7,7 +7,7 @@ from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithConte
 from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
-                           CustomCFGNode)
+                           CustomCFGNode, CustomCFGKeyframeNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode)
 from .nodes_ad_settings import AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode
@@ -55,6 +55,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AdjustPEManual": ManualAdjustPENode,
     # Sample Settings
     "ADE_CustomCFG": CustomCFGNode,
+    "ADE_CustomCFGKeyframe": CustomCFGKeyframeNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -111,6 +112,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AdjustPEManual": "Adjust PE [Manual] 🎭🅐🅓",
     # Sample Settings
     "ADE_CustomCFG": "Custom CFG 🎭🅐🅓",
+    "ADE_CustomCFGKeyframe": "Custom CFG Keyframe 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

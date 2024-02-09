@@ -4,7 +4,7 @@ from torch import Tensor
 from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
                               NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
-                              SeedNoiseGeneration, SampleSettings, CustomCFG)
+                              SeedNoiseGeneration, SampleSettings, CustomCFGKeyframeGroup, CustomCFGKeyframe)
 from .utils_model import BIGMIN, BIGMAX
 
 
@@ -209,7 +209,7 @@ class CustomCFGNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "cfg_multival": ("MULTIVAL",)
+                "cfg_multival": ("MULTIVAL",),
             }
         }
     
@@ -218,5 +218,37 @@ class CustomCFGNode:
     FUNCTION = "create_custom_cfg"
 
     def create_custom_cfg(self, cfg_multival: Union[float, Tensor]):
-        # TODO: add support for cfg keyframes
-        return (CustomCFG(cfg_multival=cfg_multival),)
+        keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival)
+        cfg_custom = CustomCFGKeyframeGroup()
+        cfg_custom.add(keyframe)
+        return (cfg_custom,)
+
+
+class CustomCFGKeyframeNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cfg_multival": ("MULTIVAL",),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            },
+            "optional": {
+                "prev_custom_cfg": ("CUSTOM_CFG",),
+            }
+        }
+    
+    RETURN_TYPES = ("CUSTOM_CFG",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_custom_cfg"
+
+    def create_custom_cfg(self, cfg_multival: Union[float, Tensor], start_percent: float=0.0, guarantee_steps: int=1,
+                          prev_custom_cfg: CustomCFGKeyframeGroup=None):
+        if not prev_custom_cfg:
+            prev_custom_cfg = CustomCFGKeyframeGroup()
+        prev_custom_cfg = prev_custom_cfg.clone()
+        keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival, start_percent=start_percent, guarantee_steps=guarantee_steps)
+        prev_custom_cfg.add(keyframe)
+        return (prev_custom_cfg,)
+
+
