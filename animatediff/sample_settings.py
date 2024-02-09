@@ -449,31 +449,6 @@ class FreeInitOptions(IterationOptions):
             raise ValueError(f"FreeInit init_type '{self.init_type}' is not recognized.")
 
 
-class CustomCFG:
-    def __init__(self, cfg_multival: Union[float, Tensor]):
-        self.cfg_multival = cfg_multival
-        self.masks = None
-        # TODO: add support for cfg keyframes
-    
-    def initialize_timesteps(self, model: BaseModel):
-        pass
-
-    def patch_model(self, model: ModelPatcher) -> ModelPatcher:
-        def evolved_custom_cfg(args):
-            cond: Tensor = args["cond"]
-            uncond: Tensor = args["uncond"]
-            # cond scale is based purely off of CustomCFG - cond_scale input in sampler is ignored!
-            cond_scale = self.cfg_multival
-            if isinstance(cond_scale, Tensor):
-                cond_scale = prepare_mask_batch(cond_scale.to(cond.dtype).to(cond.device), cond.shape)
-                cond_scale = extend_to_batch_size(cond_scale, cond.shape[0])
-            return uncond + (cond - uncond) * cond_scale
-
-        model = model.clone()
-        model.set_model_sampler_cfg_function(evolved_custom_cfg)
-        return model
-
-
 class CustomCFGKeyframe:
     def __init__(self, cfg_multival: Union[float, Tensor], start_percent=0.0, guarantee_steps=1):
         self.cfg_multival = cfg_multival

@@ -367,7 +367,8 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     if ADGS.sample_settings.custom_cfg is not None:
         ADGS.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
 
-    if math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
+    # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
+    if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
         uncond_ = None
     else:
         uncond_ = uncond
