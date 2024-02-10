@@ -1,8 +1,11 @@
+from git import Union
 from torch import Tensor
 
 from .freeinit import FreeInitFilter
-from .sample_settings import FreeInitOptions, IterationOptions, NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType, SeedNoiseGeneration, SampleSettings
-from .utils_model import BIGMIN, BIGMAX
+from .sample_settings import (FreeInitOptions, IterationOptions,
+                              NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
+                              SeedNoiseGeneration, SampleSettings, CustomCFGKeyframeGroup, CustomCFGKeyframe)
+from .utils_model import BIGMIN, BIGMAX, SigmaSchedule
 
 
 class SampleSettingsNode:
@@ -20,6 +23,8 @@ class SampleSettingsNode:
                 "iteration_opts": ("ITERATION_OPTS",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
                 "adapt_denoise_steps": ("BOOLEAN", {"default": False},),
+                "custom_cfg": ("CUSTOM_CFG",),
+                "sigma_schedule": ("SIGMA_SCHEDULE",),
             }
         }
     
@@ -29,9 +34,11 @@ class SampleSettingsNode:
     FUNCTION = "create_settings"
 
     def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None,
-                        iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False):
+                        iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False,
+                        custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None):
         sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers,
-                                           iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps)
+                                           iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps,
+                                           custom_cfg=custom_cfg, sigma_schedule=sigma_schedule)
         return (sampling_settings,)
 
 
@@ -198,3 +205,53 @@ class FreeInitOptionsNode:
                                     filter=filter, d_s=d_s, d_t=d_t, n=n_butterworth, init_type=init_type,
                                     iter_batch_offset=iter_batch_offset, iter_seed_offset=iter_seed_offset)
         return (iter_opts,)
+
+
+class CustomCFGNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cfg_multival": ("MULTIVAL",),
+            }
+        }
+    
+    RETURN_TYPES = ("CUSTOM_CFG",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_custom_cfg"
+
+    def create_custom_cfg(self, cfg_multival: Union[float, Tensor]):
+        keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival)
+        cfg_custom = CustomCFGKeyframeGroup()
+        cfg_custom.add(keyframe)
+        return (cfg_custom,)
+
+
+class CustomCFGKeyframeNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cfg_multival": ("MULTIVAL",),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            },
+            "optional": {
+                "prev_custom_cfg": ("CUSTOM_CFG",),
+            }
+        }
+    
+    RETURN_TYPES = ("CUSTOM_CFG",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_custom_cfg"
+
+    def create_custom_cfg(self, cfg_multival: Union[float, Tensor], start_percent: float=0.0, guarantee_steps: int=1,
+                          prev_custom_cfg: CustomCFGKeyframeGroup=None):
+        if not prev_custom_cfg:
+            prev_custom_cfg = CustomCFGKeyframeGroup()
+        prev_custom_cfg = prev_custom_cfg.clone()
+        keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival, start_percent=start_percent, guarantee_steps=guarantee_steps)
+        prev_custom_cfg.add(keyframe)
+        return (prev_custom_cfg,)
+
+

@@ -16,7 +16,7 @@ from comfy.controlnet import ControlBase
 import comfy.ops
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
-from .sample_settings import IterationOptions, SeedNoiseGeneration, prepare_mask_ad
+from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, prepare_mask_ad
 from .utils_model import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
@@ -30,6 +30,7 @@ class AnimateDiffHelper_GlobalState:
     def __init__(self):
         self.motion_models: MotionModelGroup = None
         self.params: InjectionParams = None
+        self.sample_settings: SampleSettings = None
         self.reset()
     
     def initialize(self, model):
@@ -40,6 +41,8 @@ class AnimateDiffHelper_GlobalState:
                 self.motion_models.initialize_timesteps(model)
             if self.params.context_options is not None:
                 self.params.context_options.initialize_timesteps(model)
+            if self.sample_settings.custom_cfg is not None:
+                self.sample_settings.custom_cfg.initialize_timesteps(model)
 
     def reset(self):
         self.initialized = False
@@ -53,6 +56,9 @@ class AnimateDiffHelper_GlobalState:
         if self.params is not None:
             del self.params
             self.params = None
+        if self.sample_settings is not None:
+            del self.sample_settings
+            self.sample_settings = None
     
     def update_with_inject_params(self, params: InjectionParams):
         self.params = params
@@ -147,8 +153,9 @@ def get_additional_models_factory(orig_get_additional_models: Callable, motion_m
 
 def apply_params_to_motion_models(motion_models: MotionModelGroup, params: InjectionParams):
     params = params.clone()
-    if params.context_options.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
-        params.context_options._current_context.context_length = params.full_length
+    for context in params.context_options.contexts:
+        if context.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
+            context.context_length = params.full_length
     # TODO: check (and message) should be different based on use_on_equal_length setting
     if params.context_options.context_length:
         pass
@@ -245,6 +252,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
         cached_noise = None
         function_injections = FunctionInjectionHolder()
         try:
+            if model.sample_settings.custom_cfg is not None:
+                model = model.sample_settings.custom_cfg.patch_model(model)
             # clone params from model
             params = model.motion_injection_params.clone()
             # get amount of latents passed in, and store in params
@@ -279,6 +288,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                 ADGS.current_step = ADGS.start_step + step + 1
             kwargs["callback"] = ad_callback
             ADGS.motion_models = model.motion_models
+            ADGS.sample_settings = model.sample_settings
 
             # apply adapt_denoise_steps
             args = list(args)
@@ -331,6 +341,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
 
                 if model.motion_models is not None:
                     model.motion_models.pre_run(model)
+                if model.sample_settings is not None:
+                    model.sample_settings.pre_run(model)
                 latents = wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
             return latents
         finally:
@@ -352,8 +364,11 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
         ADGS.motion_models.prepare_current_keyframe(t=timestep)
     if ADGS.params.context_options is not None:
         ADGS.params.context_options.prepare_current_context(t=timestep)
+    if ADGS.sample_settings.custom_cfg is not None:
+        ADGS.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
 
-    if math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
+    # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
+    if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
         uncond_ = None
     else:
         uncond_ = uncond
@@ -454,6 +469,7 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
     cond_final = torch.zeros_like(x_in)
     uncond_final = torch.zeros_like(x_in)
     out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
+    bias_final = [0.0] * x_in.shape[0]
 
     # perform calc_cond_uncond_batch per context window
     for ctx_idxs in context_windows:
@@ -477,16 +493,36 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
 
         sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
 
-        # add conds and counts based on weights of fuse method
-        weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method) * batched_conds
-        weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-        cond_final[full_idxs] += sub_cond_out * weights_tensor
-        uncond_final[full_idxs] += sub_uncond_out * weights_tensor
-        out_count_final[full_idxs] += weights_tensor
+        if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+            full_length = ADGS.params.full_length
+            for pos, idx in enumerate(ctx_idxs):
+                # bias is the influence of a specific index in relation to the whole context window
+                bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
+                bias = max(1e-2, bias)
+                # take weighted average relative to total bias of current idx
+                # and account for batched_conds
+                for n in range(batched_conds):
+                    bias_total = bias_final[(full_length*n)+idx]
+                    prev_weight = (bias_total / (bias_total + bias))
+                    new_weight = (bias / (bias_total + bias))
+                    cond_final[(full_length*n)+idx] = cond_final[(full_length*n)+idx] * prev_weight + sub_cond_out[(full_length*n)+pos] * new_weight
+                    uncond_final[(full_length*n)+idx] = uncond_final[(full_length*n)+idx] * prev_weight + sub_uncond_out[(full_length*n)+pos] * new_weight
+                    bias_final[(full_length*n)+idx] = bias_total + bias
+        else:
+            # add conds and counts based on weights of fuse method
+            weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method) * batched_conds
+            weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            cond_final[full_idxs] += sub_cond_out * weights_tensor
+            uncond_final[full_idxs] += sub_uncond_out * weights_tensor
+            out_count_final[full_idxs] += weights_tensor
 
-
-    # normalize cond and uncond via division by context usage counts
-    cond_final /= out_count_final
-    uncond_final /= out_count_final
-    del out_count_final
-    return cond_final, uncond_final
+    if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+        # already normalized, so return as is
+        del out_count_final
+        return cond_final, uncond_final
+    else:
+        # normalize cond and uncond via division by context usage counts
+        cond_final /= out_count_final
+        uncond_final /= out_count_final
+        del out_count_final
+        return cond_final, uncond_final

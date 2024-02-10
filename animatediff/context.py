@@ -10,8 +10,10 @@ from .utils_motion import get_sorted_list_via_attr
 class ContextFuseMethod:
     FLAT = "flat"
     PYRAMID = "pyramid"
+    RELATIVE = "relative"
 
     LIST = [PYRAMID, FLAT]
+    LIST_STATIC = [PYRAMID, RELATIVE, FLAT]
 
 
 class ContextType:
@@ -331,6 +333,7 @@ def create_weights_pyramid(length: int, **kwargs) -> list[float]:
 FUSE_MAPPING = {
     ContextFuseMethod.FLAT: create_weights_flat,
     ContextFuseMethod.PYRAMID: create_weights_pyramid,
+    ContextFuseMethod.RELATIVE: create_weights_pyramid,
 }
 
 

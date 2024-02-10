@@ -3,11 +3,13 @@ from pathlib import Path
 from typing import Callable, Union
 from collections.abc import Iterable
 from time import time
+import copy
 
+import torch
 import numpy as np
 
 import folder_paths
-from comfy.model_base import SD21UNCLIP, SDXL, BaseModel, SDXLRefiner, SVD_img2vid, model_sampling
+from comfy.model_base import SD21UNCLIP, SDXL, BaseModel, SDXLRefiner, SVD_img2vid, model_sampling, ModelType
 from comfy.model_management import xformers_enabled
 from comfy.model_patcher import ModelPatcher
 
@@ -15,15 +17,8 @@ import comfy.model_sampling
 import comfy_extras.nodes_model_advanced
 
 
-class IsChangedHelper:
-    def __init__(self):
-        self.val = 0
-    
-    def no_change(self):
-        return self.val
-    
-    def change(self):
-        self.val = (self.val + 1) % 100
+BIGMIN = -(2**53-1)
+BIGMAX = (2**53-1)
 
 
 class ModelSamplingConfig:
@@ -41,6 +36,19 @@ class ModelSamplingType:
     V_PREDICTION = "v_prediction"
     LCM = "lcm"
 
+    _NON_LCM_LIST = [EPS, V_PREDICTION]
+    _FULL_LIST = [EPS, V_PREDICTION, LCM]
+
+    MAP = {
+        EPS: ModelType.EPS,
+        V_PREDICTION: ModelType.V_PREDICTION,
+        LCM: comfy_extras.nodes_model_advanced.LCM,
+    }
+
+    @classmethod
+    def from_alias(cls, alias: str):
+        return cls.MAP[alias]
+
 
 def factory_model_sampling_discrete_distilled(original_timesteps=50):
     class ModelSamplingDiscreteDistilledEvolved(comfy_extras.nodes_model_advanced.ModelSamplingDiscreteDistilled):
@@ -51,11 +59,13 @@ def factory_model_sampling_discrete_distilled(original_timesteps=50):
 
 
 # based on code in comfy_extras/nodes_model_advanced.py
-def evolved_model_sampling(model_config: ModelSamplingConfig, model_type: int, alias: str):
+def evolved_model_sampling(model_config: ModelSamplingConfig, model_type: ModelType, alias: str, original_timesteps: int=None):
     # if LCM, need to handle manually
-    if BetaSchedules.is_lcm(alias):
+    if BetaSchedules.is_lcm(alias) or original_timesteps is not None:
         sampling_type = comfy_extras.nodes_model_advanced.LCM
-        if alias == BetaSchedules.LCM_100:
+        if original_timesteps is not None:
+            sampling_base = factory_model_sampling_discrete_distilled(original_timesteps=original_timesteps)
+        elif alias == BetaSchedules.LCM_100:
             sampling_base = factory_model_sampling_discrete_distilled(original_timesteps=100)
         elif alias == BetaSchedules.LCM_25:
             sampling_base = factory_model_sampling_discrete_distilled(original_timesteps=25)
@@ -74,6 +84,8 @@ class BetaSchedules:
     SQRT_LINEAR = "sqrt_linear (AnimateDiff)"
     LINEAR_ADXL = "linear (AnimateDiff-SDXL)"
     LINEAR = "linear (HotshotXL/default)"
+    AVG_LINEAR_SQRT_LINEAR = "avg(sqrt_linear,linear)"
+    LCM_AVG_LINEAR_SQRT_LINEAR = "lcm avg(sqrt_linear,linear)"
     LCM = "lcm"
     LCM_100 = "lcm[100_ots]"
     LCM_25 = "lcm[25_ots]"
@@ -82,11 +94,19 @@ class BetaSchedules:
     SQRT = "sqrt"
     COSINE = "cosine"
     SQUAREDCOS_CAP_V2 = "squaredcos_cap_v2"
+    RAW_LINEAR = "linear"
+    RAW_SQRT_LINEAR = "sqrt_linear"
 
-    LCM_LIST = [LCM, LCM_100, LCM_25, LCM_SQRT_LINEAR]
+    RAW_BETA_SCHEDULE_LIST = [RAW_LINEAR, RAW_SQRT_LINEAR, SQRT, COSINE, SQUAREDCOS_CAP_V2]
 
-    ALIAS_LIST = [AUTOSELECT, USE_EXISTING, SQRT_LINEAR, LINEAR_ADXL, LINEAR, LCM, LCM_100, LCM_SQRT_LINEAR, # LCM_25 is purposely omitted
+    ALIAS_LCM_LIST = [LCM, LCM_100, LCM_25, LCM_SQRT_LINEAR]
+
+    ALIAS_ACTIVE_LIST = [SQRT_LINEAR, LINEAR_ADXL, LINEAR, AVG_LINEAR_SQRT_LINEAR, LCM_AVG_LINEAR_SQRT_LINEAR, LCM, LCM_100, LCM_SQRT_LINEAR, # LCM_25 is purposely omitted
                   SQRT, COSINE, SQUAREDCOS_CAP_V2]
+
+    ALIAS_LIST = [AUTOSELECT, USE_EXISTING] + ALIAS_ACTIVE_LIST
+
+    
 
     ALIAS_MAP = {
         SQRT_LINEAR: "sqrt_linear",
@@ -99,11 +119,13 @@ class BetaSchedules:
         SQRT: "sqrt",
         COSINE: "cosine",
         SQUAREDCOS_CAP_V2: "squaredcos_cap_v2",
+        RAW_LINEAR: "linear",
+        RAW_SQRT_LINEAR: "sqrt_linear"
     }
 
     @classmethod
     def is_lcm(cls, alias: str):
-        return alias in cls.LCM_LIST
+        return alias in cls.ALIAS_LCM_LIST
 
     @classmethod
     def to_name(cls, alias: str):
@@ -119,11 +141,30 @@ class BetaSchedules:
         return ModelSamplingConfig(cls.to_name(alias), linear_start=linear_start, linear_end=linear_end)
     
     @classmethod
-    def to_model_sampling(cls, alias: str, model: ModelPatcher):
+    def _to_model_sampling(cls, alias: str, model_type: ModelType, config_override: ModelSamplingConfig=None, original_timesteps: int=None):
         if alias == cls.USE_EXISTING:
             return None
-        ms_obj = evolved_model_sampling(cls.to_config(alias), model_type=model.model.model_type, alias=alias)
+        elif config_override != None:
+            return evolved_model_sampling(config_override, model_type=model_type, alias=alias, original_timesteps=original_timesteps)
+        elif alias == cls.AVG_LINEAR_SQRT_LINEAR:
+            ms_linear = evolved_model_sampling(cls.to_config(cls.LINEAR), model_type=model_type, alias=cls.LINEAR)
+            ms_sqrt_linear = evolved_model_sampling(cls.to_config(cls.SQRT_LINEAR), model_type=model_type, alias=cls.SQRT_LINEAR)
+            avg_sigmas = (ms_linear.sigmas + ms_sqrt_linear.sigmas) / 2
+            ms_linear.set_sigmas(avg_sigmas)
+            return ms_linear
+        elif alias == cls.LCM_AVG_LINEAR_SQRT_LINEAR:
+            ms_linear = evolved_model_sampling(cls.to_config(cls.LCM), model_type=model_type, alias=cls.LCM)
+            ms_sqrt_linear = evolved_model_sampling(cls.to_config(cls.LCM_SQRT_LINEAR), model_type=model_type, alias=cls.LCM_SQRT_LINEAR)
+            avg_sigmas = (ms_linear.sigmas + ms_sqrt_linear.sigmas) / 2
+            ms_linear.set_sigmas(avg_sigmas)
+            return ms_linear
+            # average out the sigmas
+        ms_obj = evolved_model_sampling(cls.to_config(alias), model_type=model_type, alias=alias, original_timesteps=original_timesteps)
         return ms_obj
+
+    @classmethod
+    def to_model_sampling(cls, alias: str, model: ModelPatcher):
+        return cls._to_model_sampling(alias=alias, model_type=model.model.model_type)
 
     @staticmethod
     def get_alias_list_with_first_element(first_element: str):
@@ -133,16 +174,65 @@ class BetaSchedules:
         return new_list
 
 
-class BetaScheduleCache:
-    def __init__(self, model: ModelPatcher): 
-        self.model_sampling = model.model.model_sampling
+class SigmaSchedule:
+    def __init__(self, model_sampling: comfy.model_sampling.ModelSamplingDiscrete, model_type: ModelType):
+        self.model_sampling = model_sampling
+        #self.config = config
+        self.model_type = model_type
+        self.original_timesteps = getattr(self.model_sampling, "original_timesteps", None)
+    
+    def is_lcm(self):
+        return self.original_timesteps is not None
 
-    def use_cached_beta_schedule_and_clean(self, model: ModelPatcher):
-        model.model.model_sampling = self.model_sampling
-        self.clean()
+    def total_sigmas(self):
+        return len(self.model_sampling.sigmas)
+    
+    def clone(self) -> 'SigmaSchedule':
+        new_model_sampling = copy.deepcopy(self.model_sampling)
+        #new_config = copy.deepcopy(self.config)
+        return SigmaSchedule(model_sampling=new_model_sampling, model_type=self.model_type)
 
-    def clean(self):
-        self.model_sampling = None
+    # def clone(self):
+    #     pass
+
+    @staticmethod
+    def apply_zsnr(new_model_sampling: comfy.model_sampling.ModelSamplingDiscrete):
+        new_model_sampling.set_sigmas(comfy_extras.nodes_model_advanced.rescale_zero_terminal_snr_sigmas(new_model_sampling.sigmas))
+
+    # def get_lcmified(self, original_timesteps=50, zsnr=False) -> 'SigmaSchedule':
+    #     new_model_sampling = evolved_model_sampling(model_config=self.config, model_type=self.model_type, alias=None, original_timesteps=original_timesteps)
+    #     if zsnr:
+    #         new_model_sampling.set_sigmas(comfy_extras.nodes_model_advanced.rescale_zero_terminal_snr_sigmas(new_model_sampling.sigmas))
+    #     return SigmaSchedule(model_sampling=new_model_sampling, config=self.config, model_type=self.model_type, is_lcm=True)
+        
+
+class InterpolationMethod:
+    LINEAR = "linear"
+    EASE_IN = "ease_in"
+    EASE_OUT = "ease_out"
+    EASE_IN_OUT = "ease_in_out"
+
+    _LIST = [LINEAR, EASE_IN, EASE_OUT, EASE_IN_OUT]
+
+    @classmethod
+    def get_weights(cls, num_from: float, num_to: float, length: int, method: str, reverse=False):
+        diff = num_to - num_from
+        if method == cls.LINEAR:
+            weights = torch.linspace(num_from, num_to, length)
+        elif method == cls.EASE_IN:
+            index = torch.linspace(0, 1, length)
+            weights = diff * np.power(index, 2) + num_from
+        elif method == cls.EASE_OUT:
+            index = torch.linspace(0, 1, length)
+            weights = diff * (1 - np.power(1 - index, 2)) + num_from
+        elif method == cls.EASE_IN_OUT:
+            index = torch.linspace(0, 1, length)
+            weights = diff * ((1 - np.cos(index * np.pi)) / 2) + num_from
+        else:
+            raise ValueError(f"Unrecognized interpolation method '{method}'.")
+        if reverse:
+            weights = weights.flip(dims=(0,))
+        return weights
 
 
 class Folders:
@@ -223,8 +313,6 @@ def calculate_model_hash(model: ModelPatcher):
         m.update(buf.cpu().numpy().view(np.uint8))
     return m.hexdigest()
 
-BIGMIN = -(2**63-1)
-BIGMAX = (2**63-1)
 
 class ModelTypeSD:
     SD1_5 = "SD1.5"
