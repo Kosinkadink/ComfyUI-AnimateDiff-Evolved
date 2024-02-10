@@ -8,6 +8,7 @@ from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, Apply
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
+from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode)
 from .nodes_ad_settings import AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode
@@ -56,6 +57,11 @@ NODE_CLASS_MAPPINGS = {
     # Sample Settings
     "ADE_CustomCFG": CustomCFGNode,
     "ADE_CustomCFGKeyframe": CustomCFGKeyframeNode,
+    "ADE_SigmaSchedule": SigmaScheduleNode,
+    "ADE_RawSigmaSchedule": RawSigmaScheduleNode,
+    "ADE_SigmaScheduleWeightedAverage": WeightedAverageSigmaScheduleNode,
+    "ADE_SigmaScheduleWeightedAverageInterp": InterpolatedWeightedAverageSigmaScheduleNode,
+    "ADE_SigmaScheduleSplitAndCombine": SplitAndCombineSigmaScheduleNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -113,6 +119,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Sample Settings
     "ADE_CustomCFG": "Custom CFG 🎭🅐🅓",
     "ADE_CustomCFGKeyframe": "Custom CFG Keyframe 🎭🅐🅓",
+    "ADE_SigmaSchedule": "Create Sigma Schedule 🎭🅐🅓",
+    "ADE_RawSigmaSchedule": "Create Raw Sigma Schedule 🎭🅐🅓",
+    "ADE_SigmaScheduleWeightedAverage": "Sigma Schedule Weighted Mean 🎭🅐🅓",
+    "ADE_SigmaScheduleWeightedAverageInterp": "Sigma Schedule Interpolated Mean 🎭🅐🅓",
+    "ADE_SigmaScheduleSplitAndCombine": "Sigma Schedule Split Combine 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

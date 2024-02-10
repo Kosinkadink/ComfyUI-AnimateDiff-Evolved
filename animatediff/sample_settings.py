@@ -10,6 +10,7 @@ from comfy.model_base import BaseModel
 
 from . import freeinit
 from .context import ContextOptions, ContextOptionsGroup
+from .utils_model import SigmaSchedule
 from .utils_motion import extend_to_batch_size, get_sorted_list_via_attr, prepare_mask_batch
 from .logger import logger
 
@@ -51,7 +52,8 @@ class NoiseNormalize:
 
 class SampleSettings:
     def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None,
-                 iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False, custom_cfg: 'CustomCFGKeyframeGroup'=None):
+                 iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False,
+                 custom_cfg: 'CustomCFGKeyframeGroup'=None, sigma_schedule: SigmaSchedule=None):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
@@ -62,6 +64,7 @@ class SampleSettings:
         self.negative_cond_flipflop = negative_cond_flipflop
         self.adapt_denoise_steps = adapt_denoise_steps
         self.custom_cfg = custom_cfg.clone() if custom_cfg else custom_cfg
+        self.sigma_schedule = sigma_schedule
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
@@ -97,7 +100,7 @@ class SampleSettings:
     def clone(self):
         return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
                            noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
-                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg)
+                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg, sigma_schedule=self.sigma_schedule)
 
 
 class NoiseLayer:
@@ -550,5 +553,3 @@ class CustomCFGKeyframeGroup:
         if self._current_keyframe != None:
             return self._current_keyframe.cfg_multival
         return None
-        
-        

@@ -5,7 +5,7 @@ from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
                               NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
                               SeedNoiseGeneration, SampleSettings, CustomCFGKeyframeGroup, CustomCFGKeyframe)
-from .utils_model import BIGMIN, BIGMAX
+from .utils_model import BIGMIN, BIGMAX, SigmaSchedule
 
 
 class SampleSettingsNode:
@@ -24,6 +24,7 @@ class SampleSettingsNode:
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
                 "adapt_denoise_steps": ("BOOLEAN", {"default": False},),
                 "custom_cfg": ("CUSTOM_CFG",),
+                "sigma_schedule": ("SIGMA_SCHEDULE",),
             }
         }
     
@@ -33,9 +34,11 @@ class SampleSettingsNode:
     FUNCTION = "create_settings"
 
     def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None,
-                        iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False, custom_cfg=None):
+                        iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False,
+                        custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None):
         sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers,
-                                           iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps, custom_cfg=custom_cfg)
+                                           iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps,
+                                           custom_cfg=custom_cfg, sigma_schedule=sigma_schedule)
         return (sampling_settings,)
 
 

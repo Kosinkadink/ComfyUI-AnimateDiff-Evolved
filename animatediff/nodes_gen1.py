@@ -81,13 +81,20 @@ class AnimateDiffLoaderGen1:
         model.sample_settings = sample_settings if sample_settings is not None else SampleSettings()
         model.motion_injection_params = params
         
-        # save model sampling from BetaSchedule as object patch
-        # if autoselect, get suggested beta_schedule from motion model
-        if beta_schedule == BetaSchedules.AUTOSELECT and not model.motion_models.is_empty():
-            beta_schedule = model.motion_models[0].model.get_best_beta_schedule(log=True)
-        new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
-        if new_model_sampling is not None:
-            model.add_object_patch("model_sampling", new_model_sampling)
+        if model.sample_settings.custom_cfg is not None:
+            logger.info("[Sample Settings] custom_cfg is set; will override any KSampler cfg values or patches.")
+
+        if model.sample_settings.sigma_schedule is not None:
+            logger.info("[Sample Settings] sigma_schedule is set; will override beta_schedule.")
+            model.add_object_patch("model_sampling", model.sample_settings.sigma_schedule.clone().model_sampling)
+        else:
+            # save model sampling from BetaSchedule as object patch
+            # if autoselect, get suggested beta_schedule from motion model
+            if beta_schedule == BetaSchedules.AUTOSELECT and not model.motion_models.is_empty():
+                beta_schedule = model.motion_models[0].model.get_best_beta_schedule(log=True)
+            new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
+            if new_model_sampling is not None:
+                model.add_object_patch("model_sampling", new_model_sampling)
 
         del motion_model
         return (model,)
