@@ -180,6 +180,7 @@ class ContextSchedules:
     STATIC_STANDARD = "standard_static"
     BATCHED = "batched"
     VIEW_AS_CONTEXT = "view_as_context"
+    SVD_EXTENSION = "svd_extension"
 
     LEGACY_UNIFORM_LOOPED = "uniform"
     LEGACY_UNIFORM_SCHEDULE_LIST = [LEGACY_UNIFORM_LOOPED]
@@ -302,6 +303,7 @@ CONTEXT_MAPPING = {
     ContextSchedules.UNIFORM_STANDARD: create_windows_uniform_standard,
     ContextSchedules.STATIC_STANDARD: create_windows_static_standard,
     ContextSchedules.BATCHED: create_windows_batched,
+    ContextSchedules.SVD_EXTENSION: create_windows_batched,
     ContextSchedules.VIEW_AS_CONTEXT: create_windows_default,  # just return all to allow Views to do all the work
 }
 
