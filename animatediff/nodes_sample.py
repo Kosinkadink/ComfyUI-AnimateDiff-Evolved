@@ -1,4 +1,4 @@
-from git import Union
+from typing import Union
 from torch import Tensor
 
 from .freeinit import FreeInitFilter
@@ -27,7 +27,7 @@ class SampleSettingsNode:
                 "sigma_schedule": ("SIGMA_SCHEDULE",),
             }
         }
-    
+
     RETURN_TYPES = ("SAMPLE_SETTINGS",)
     RETURN_NAMES = ("settings",)
     CATEGORY = "Animate Diff 🎭🅐🅓"
@@ -58,7 +58,7 @@ class NoiseLayerReplaceNode:
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             }
         }
-    
+
     RETURN_TYPES = ("NOISE_LAYERS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/noise layers"
     FUNCTION = "create_layers"
@@ -93,7 +93,7 @@ class NoiseLayerAddNode:
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             }
         }
-    
+
     RETURN_TYPES = ("NOISE_LAYERS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/noise layers"
     FUNCTION = "create_layers"
@@ -131,7 +131,7 @@ class NoiseLayerAddWeightedNode:
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             }
         }
-    
+
     RETURN_TYPES = ("NOISE_LAYERS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/noise layers"
     FUNCTION = "create_layers"
@@ -163,7 +163,7 @@ class IterationOptionsNode:
                 "iter_seed_offset": ("INT", {"default": 0, "min": BIGMIN, "max": BIGMAX}),
             }
         }
-    
+
     RETURN_TYPES = ("ITERATION_OPTS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/iteration opts"
     FUNCTION = "create_iter_opts"
@@ -192,7 +192,7 @@ class FreeInitOptionsNode:
                 "iter_seed_offset": ("INT", {"default": 1, "min": BIGMIN, "max": BIGMAX}),
             }
         }
-    
+
     RETURN_TYPES = ("ITERATION_OPTS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/iteration opts"
     FUNCTION = "create_iter_opts"
@@ -215,7 +215,7 @@ class CustomCFGNode:
                 "cfg_multival": ("MULTIVAL",),
             }
         }
-    
+
     RETURN_TYPES = ("CUSTOM_CFG",)
     CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
     FUNCTION = "create_custom_cfg"
@@ -240,7 +240,7 @@ class CustomCFGKeyframeNode:
                 "prev_custom_cfg": ("CUSTOM_CFG",),
             }
         }
-    
+
     RETURN_TYPES = ("CUSTOM_CFG",)
     CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
     FUNCTION = "create_custom_cfg"
@@ -253,5 +253,3 @@ class CustomCFGKeyframeNode:
         keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival, start_percent=start_percent, guarantee_steps=guarantee_steps)
         prev_custom_cfg.add(keyframe)
         return (prev_custom_cfg,)
-
-
