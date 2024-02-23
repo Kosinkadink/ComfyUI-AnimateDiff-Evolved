@@ -437,6 +437,8 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
                                                 use Control objects from Kosinkadink/ComfyUI-Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
                         resized_actual_cond[key] = control_item
                         del control_item
+                    elif key == 'instance_diffusion':
+                        resized_actual_cond[key].sub_idxs = full_idxs
                     elif isinstance(cond_item, dict):
                         new_cond_item = cond_item.copy()
                         # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
