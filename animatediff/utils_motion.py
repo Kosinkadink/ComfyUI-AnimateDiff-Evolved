@@ -149,7 +149,7 @@ def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[floa
         areaA = multivalA.shape[1]*multivalA.shape[2]
         areaB = multivalB.shape[1]*multivalB.shape[2]
         # match height/width to mask with larger area
-        leader,follower = multivalA,multivalB if areaA >= areaB else multivalB,multivalA
+        leader,follower = (multivalA,multivalB) if areaA >= areaB else (multivalB,multivalA)
         batch_size = multivalA.shape[0] if multivalA.shape[0] >= multivalB.shape[0] else multivalB.shape[0]
         # make follower same dimensions as leader
         follower = torch.unsqueeze(follower, 1)
