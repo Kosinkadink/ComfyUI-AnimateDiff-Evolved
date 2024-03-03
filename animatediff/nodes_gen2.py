@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Union
 import torch
 
 import comfy.sample as comfy_sample
@@ -201,7 +202,7 @@ class ADKeyframeNode:
 
     def load_keyframe(self,
                       start_percent: float, prev_ad_keyframes=None,
-                      scale_multival: [float, torch.Tensor]=None, effect_multival: [float, torch.Tensor]=None,
+                      scale_multival: Union[float, torch.Tensor]=None, effect_multival: Union[float, torch.Tensor]=None,
                       inherit_missing: bool=True, guarantee_steps: int=1):
         if not prev_ad_keyframes:
             prev_ad_keyframes = ADKeyframeGroup()

@@ -409,7 +409,7 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         control.full_latent_length = ADGS.params.full_length
         control.context_length = ADGS.params.context_options.context_length
     
-    def get_resized_cond(cond_in, full_idxs) -> list:
+    def get_resized_cond(cond_in, full_idxs: list[int], context_length: int) -> list:
         # reuse or resize cond items to match context requirements
         resized_cond = []
         # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
@@ -448,6 +448,9 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
                             elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
                                 if cond_value.cond.size(0) == x_in.size(0):
                                     new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
+                            elif cond_key == "num_video_frames": # for SVD
+                                new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond)
+                                new_cond_item[cond_key].cond = context_length
                         resized_actual_cond[key] = new_cond_item
                     else:
                         resized_actual_cond[key] = cond_item
@@ -488,8 +491,8 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         # get subsections of x, timestep, cond, uncond, cond_concat
         sub_x = x_in[full_idxs]
         sub_timestep = timestep[full_idxs]
-        sub_cond = get_resized_cond(cond, full_idxs) if cond is not None else None
-        sub_uncond = get_resized_cond(uncond, full_idxs) if uncond is not None else None
+        sub_cond = get_resized_cond(cond, full_idxs, len(ctx_idxs)) if cond is not None else None
+        sub_uncond = get_resized_cond(uncond, full_idxs, len(ctx_idxs)) if uncond is not None else None
 
         sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
 

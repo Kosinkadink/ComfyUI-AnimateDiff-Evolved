@@ -341,7 +341,10 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
         weight_up = state_dict[up_key]
         # actual weights obtained by matrix multiplication of up and down weights
         # save as a tuple, so that (Motion)ModelPatcher's calculate_weight function detects len==1, applying it correctly
-        patches[model_key] = (torch.mm(weight_up, weight_down),)
+        patches[model_key] = (torch.mm(
+            comfy.model_management.cast_to_device(weight_up, weight_up.device, torch.float32),
+            comfy.model_management.cast_to_device(weight_down, weight_down.device, torch.float32)
+            ),)
     del state_dict
     # add patches to motion ModelPatcher
     motion_model.add_patches(patches=patches, strength_patch=lora.strength)
