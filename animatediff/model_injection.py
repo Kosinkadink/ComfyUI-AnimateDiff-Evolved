@@ -334,8 +334,10 @@ def load_motion_lora_as_patches(motion_model: MotionModelPatcher, lora: MotionLo
 
         # adapt key to match motion_module key format - remove 'processor.', '_lora', 'down.', and 'up.'
         model_key = key.replace("processor.", "").replace("_lora", "").replace("down.", "").replace("up.", "")
+
         # motion_module keys have a '0.' after all 'to_out.' weight keys
-        model_key = model_key.replace("to_out.", "to_out.0.")
+        if "to_out.0." not in model_key:
+            model_key = model_key.replace("to_out.", "to_out.0.")
         
         weight_down = state_dict[key]
         weight_up = state_dict[up_key]
