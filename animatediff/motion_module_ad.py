@@ -16,6 +16,7 @@ import comfy.ops
 import comfy.model_management
 
 from .context import ContextFuseMethod, ContextOptions, get_context_weights, get_context_windows
+from .motion_module_adapter import AdapterEmbed
 from .utils_motion import CrossAttentionMM, MotionCompatibilityError, extend_to_batch_size, prepare_mask_batch
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
@@ -109,16 +110,19 @@ def find_hotshot_module_num(key: str) -> Union[int, None]:
     return None
 
 
+def has_img_encoder(mm_state_dict: dict[str, Tensor]):
+    for key in mm_state_dict.keys():
+        if key.startswith("img_encoder."):
+            return True
+    return False
+
+
 def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> Tuple[dict[str, Tensor], AnimateDiffInfo]:
     # from pathlib import Path
     # with open(Path(__file__).parent.parent.parent / f"keys_{mm_name}.txt", "w") as afile:
     #     for key, value in mm_state_dict.items():
     #         afile.write(f"{key}:\t{value.shape}\n")
     
-    # remove all non-temporal keys (in case model has extra stuff in it)
-    for key in list(mm_state_dict.keys()):
-        if "temporal" not in key:
-            del mm_state_dict[key]
     # determine what SD model the motion module is intended for
     sd_type: str = None
     down_block_max = get_down_block_max(mm_state_dict)
@@ -134,6 +138,14 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
         mm_format = AnimateDiffFormat.HOTSHOTXL
     if is_animatelcm(mm_state_dict):
         mm_format = AnimateDiffFormat.ANIMATELCM
+    # for AnimateLCM-I2V purposes, check for img_encoder keys
+    contains_img_encoder = has_img_encoder(mm_state_dict)
+    # remove all non-temporal keys (in case model has extra stuff in it)
+    for key in list(mm_state_dict.keys()):
+        if "temporal" not in key:
+            if mm_format == AnimateDiffFormat.ANIMATELCM and contains_img_encoder and key.startswith("img_encoder."):
+                continue
+            del mm_state_dict[key]
     # determine the model's version
     mm_version = AnimateDiffVersion.V1
     if has_mid_block(mm_state_dict):
@@ -189,16 +201,20 @@ class AnimateDiffModel(nn.Module):
         else:
             layer_channels = (320, 640, 1280, 1280)
         # fill out down/up blocks and middle block, if present
-        for c in layer_channels:
-            self.down_blocks.append(MotionModule(c, temporal_position_encoding=self.has_position_encoding,
-                                                 temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.DOWN, ops=ops))
-        for c in reversed(layer_channels):
-            self.up_blocks.append(MotionModule(c, temporal_position_encoding=self.has_position_encoding,
-                                               temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.UP, ops=ops))
+        for idx, c in enumerate(layer_channels):
+            self.down_blocks.append(MotionModule(c, temporal_pe=self.has_position_encoding,
+                                                 temporal_pe_max_len=self.encoding_max_len, block_type=BlockType.DOWN, block_idx=idx, ops=ops))
+        for idx, c in enumerate(list(reversed(layer_channels))):
+            self.up_blocks.append(MotionModule(c, temporal_pe=self.has_position_encoding,
+                                               temporal_pe_max_len=self.encoding_max_len, block_type=BlockType.UP, block_idx=idx, ops=ops))
         if has_mid_block(mm_state_dict):
-            self.mid_block = MotionModule(1280, temporal_position_encoding=self.has_position_encoding,
-                                          temporal_position_encoding_max_len=self.encoding_max_len, block_type=BlockType.MID, ops=ops)
+            self.mid_block = MotionModule(1280, temporal_pe=self.has_position_encoding,
+                                          temporal_pe_max_len=self.encoding_max_len, block_type=BlockType.MID, ops=ops)
         self.AD_video_length: int = 24
+        # create AdapterEmbed if keys present for it
+        self.img_encoder: AdapterEmbed = None
+        if has_img_encoder(mm_state_dict):
+            self.img_encoder = AdapterEmbed(cin=4, channels=layer_channels, nums_rb=2, ksize=1, sk=True, use_conv=False, ops=ops)
 
     def get_device_debug(self):
         return self.down_blocks[0].motion_modules[0].temporal_transformer.proj_in.weight.device
@@ -385,26 +401,27 @@ class AnimateDiffModel(nn.Module):
 class MotionModule(nn.Module):
     def __init__(self,
             in_channels,
-            temporal_position_encoding=True,
-            temporal_position_encoding_max_len=24,
+            temporal_pe=True,
+            temporal_pe_max_len=24,
             block_type: str=BlockType.DOWN,
+            block_idx: int=0,
             ops=comfy.ops.disable_weight_init
         ):
         super().__init__()
         if block_type == BlockType.MID:
             # mid blocks contain only a single VanillaTemporalModule
-            self.motion_modules: Iterable[VanillaTemporalModule] = nn.ModuleList([get_motion_module(in_channels, temporal_position_encoding, temporal_position_encoding_max_len, ops=ops)])
+            self.motion_modules: Iterable[VanillaTemporalModule] = nn.ModuleList([get_motion_module(in_channels, block_type, block_idx, module_idx=0, temporal_pe=temporal_pe, temporal_pe_max_len=temporal_pe_max_len, ops=ops)])
         else:
             # down blocks contain two VanillaTemporalModules
             self.motion_modules: Iterable[VanillaTemporalModule] = nn.ModuleList(
                 [
-                    get_motion_module(in_channels, temporal_position_encoding, temporal_position_encoding_max_len, ops=ops),
-                    get_motion_module(in_channels, temporal_position_encoding, temporal_position_encoding_max_len, ops=ops)
+                    get_motion_module(in_channels, block_type, block_idx, module_idx=0, temporal_pe=temporal_pe, temporal_pe_max_len=temporal_pe_max_len, ops=ops),
+                    get_motion_module(in_channels, block_type, block_idx, module_idx=1, temporal_pe=temporal_pe, temporal_pe_max_len=temporal_pe_max_len, ops=ops)
                 ]
             )
             # up blocks contain one additional VanillaTemporalModule
             if block_type == BlockType.UP: 
-                self.motion_modules.append(get_motion_module(in_channels, temporal_position_encoding, temporal_position_encoding_max_len, ops=ops))
+                self.motion_modules.append(get_motion_module(in_channels, block_type, block_idx, module_idx=2, temporal_pe=temporal_pe, temporal_pe_max_len=temporal_pe_max_len, ops=ops))
     
     def set_video_length(self, video_length: int, full_length: int):
         for motion_module in self.motion_modules:
@@ -435,20 +452,25 @@ class MotionModule(nn.Module):
             motion_module.reset_temp_vars()
 
 
-def get_motion_module(in_channels, temporal_position_encoding, temporal_position_encoding_max_len, ops=comfy.ops.disable_weight_init):
-    return VanillaTemporalModule(in_channels=in_channels, temporal_position_encoding=temporal_position_encoding, temporal_position_encoding_max_len=temporal_position_encoding_max_len, ops=ops)
+def get_motion_module(in_channels, block_type: str, block_idx: int, module_idx: int,
+                      temporal_pe, temporal_pe_max_len, ops=comfy.ops.disable_weight_init):
+    return VanillaTemporalModule(in_channels=in_channels, block_type=block_type, block_idx=block_idx, module_idx=module_idx,
+                                 temporal_pe=temporal_pe, temporal_pe_max_len=temporal_pe_max_len, ops=ops)
 
 
 class VanillaTemporalModule(nn.Module):
     def __init__(
         self,
         in_channels,
+        block_type: str,
+        block_idx: int,
+        module_idx: int,
         num_attention_heads=8,
         num_transformer_block=1,
         attention_block_types=("Temporal_Self", "Temporal_Self"),
         cross_frame_attention_mode=None,
-        temporal_position_encoding=True,
-        temporal_position_encoding_max_len=24,
+        temporal_pe=True,
+        temporal_pe_max_len=24,
         temporal_attention_dim_div=1,
         zero_initialize=True,
         ops=comfy.ops.disable_weight_init,
@@ -459,7 +481,11 @@ class VanillaTemporalModule(nn.Module):
         self.full_length = 16
         self.sub_idxs = None
         self.view_options = None
-
+        # keep track of module's position in unet
+        self.block_type = block_type
+        self.block_idx = block_idx
+        self.module_idx = module_idx
+        # effect vars
         self.effect = None
         self.temp_effect_mask: Tensor = None
         self.prev_input_tensor_batch = 0
@@ -473,8 +499,8 @@ class VanillaTemporalModule(nn.Module):
             num_layers=num_transformer_block,
             attention_block_types=attention_block_types,
             cross_frame_attention_mode=cross_frame_attention_mode,
-            temporal_position_encoding=temporal_position_encoding,
-            temporal_position_encoding_max_len=temporal_position_encoding_max_len,
+            temporal_pe=temporal_pe,
+            temporal_pe_max_len=temporal_pe_max_len,
             ops=ops
         )
 
@@ -539,7 +565,7 @@ class VanillaTemporalModule(nn.Module):
             return self.temp_effect_mask[self.sub_idxs*batched_number]
         return self.temp_effect_mask[full_batched_idxs]
 
-    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None):
+    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None, transformer_options={}):
         if self.effect is None:
             return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options)
         # return weighted average of input_tensor and AD output
@@ -571,8 +597,8 @@ class TemporalTransformer3DModel(nn.Module):
         attention_bias=False,
         upcast_attention=False,
         cross_frame_attention_mode=None,
-        temporal_position_encoding=False,
-        temporal_position_encoding_max_len=24,
+        temporal_pe=False,
+        temporal_pe_max_len=24,
         ops=comfy.ops.disable_weight_init,
     ):
         super().__init__()
@@ -605,8 +631,8 @@ class TemporalTransformer3DModel(nn.Module):
                     attention_bias=attention_bias,
                     upcast_attention=upcast_attention,
                     cross_frame_attention_mode=cross_frame_attention_mode,
-                    temporal_position_encoding=temporal_position_encoding,
-                    temporal_position_encoding_max_len=temporal_position_encoding_max_len,
+                    temporal_pe=temporal_pe,
+                    temporal_pe_max_len=temporal_pe_max_len,
                     ops=ops,
                 )
                 for d in range(num_layers)
@@ -732,8 +758,8 @@ class TemporalTransformerBlock(nn.Module):
         attention_bias=False,
         upcast_attention=False,
         cross_frame_attention_mode=None,
-        temporal_position_encoding=False,
-        temporal_position_encoding_max_len=24,
+        temporal_pe=False,
+        temporal_pe_max_len=24,
         ops=comfy.ops.disable_weight_init,
     ):
         super().__init__()
@@ -755,8 +781,8 @@ class TemporalTransformerBlock(nn.Module):
                     #bias=attention_bias, # remove for Comfy CrossAttention
                     #upcast_attention=upcast_attention, # remove for Comfy CrossAttention
                     cross_frame_attention_mode=cross_frame_attention_mode,
-                    temporal_position_encoding=temporal_position_encoding,
-                    temporal_position_encoding_max_len=temporal_position_encoding_max_len,
+                    temporal_pe=temporal_pe,
+                    temporal_pe_max_len=temporal_pe_max_len,
                     ops=ops,
                 )
             )
@@ -898,8 +924,8 @@ class VersatileAttention(CrossAttentionMM):
         self,
         attention_mode=None,
         cross_frame_attention_mode=None,
-        temporal_position_encoding=False,
-        temporal_position_encoding_max_len=24,
+        temporal_pe=False,
+        temporal_pe_max_len=24,
         ops=comfy.ops.disable_weight_init,
         *args,
         **kwargs,
@@ -914,9 +940,9 @@ class VersatileAttention(CrossAttentionMM):
             PositionalEncoding(
                 kwargs["query_dim"],
                 dropout=0.0,
-                max_len=temporal_position_encoding_max_len,
+                max_len=temporal_pe_max_len,
             )
-            if (temporal_position_encoding and attention_mode == "Temporal")
+            if (temporal_pe and attention_mode == "Temporal")
             else None
         )
 

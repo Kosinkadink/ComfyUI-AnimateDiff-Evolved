@@ -93,7 +93,7 @@ def forward_timestep_embed_factory() -> Callable:
             elif isinstance(layer, openaimodel.TimestepBlock):
                 x = layer(x, emb)
             elif isinstance(layer, VanillaTemporalModule):
-                x = layer(x, context)
+                x = layer(x, context, transformer_options=transformer_options)
             elif isinstance(layer, attention.SpatialVideoTransformer):
                 x = layer(x, context, time_context, num_video_frames, image_only_indicator, transformer_options)
                 if "transformer_index" in transformer_options:
