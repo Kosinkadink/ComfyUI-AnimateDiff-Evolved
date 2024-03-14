@@ -16,7 +16,7 @@ import comfy.ops
 import comfy.model_management
 
 from .context import ContextFuseMethod, ContextOptions, get_context_weights, get_context_windows
-from .motion_module_adapter import AdapterEmbed
+from .animatelcm_i2v_adapter import AdapterEmbed
 from .utils_motion import CrossAttentionMM, MotionCompatibilityError, extend_to_batch_size, prepare_mask_batch
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
@@ -244,7 +244,11 @@ class AnimateDiffModel(nn.Module):
         return to_return
 
     def cleanup(self):
-        pass
+        self._reset_sub_idxs()
+        self._reset_scale_multiplier()
+        self._reset_temp_vars()
+        if self.img_encoder is not None:
+            self.img_encoder.cleanup()
 
     def inject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = model.model.diffusion_model
@@ -362,10 +366,10 @@ class AnimateDiffModel(nn.Module):
         if self.mid_block is not None:
             self.mid_block.set_view_options(view_options)
 
-    def reset(self):
-        self._reset_sub_idxs()
-        self._reset_scale_multiplier()
-        self._reset_temp_vars()
+    def set_img_features(self, img_features: list[Tensor]):
+        # img_features should only impact downblocks
+        for block in self.down_blocks:
+            block.set_img_features(img_features=img_features)
 
     def _set_scale_multiplier(self, multiplier: Union[float, None]):
         for block in self.down_blocks:
@@ -447,6 +451,10 @@ class MotionModule(nn.Module):
         for motion_module in self.motion_modules:
             motion_module.set_view_options(view_options=view_options)
 
+    def set_img_features(self, img_features: list[Tensor]):
+        for motion_module in self.motion_modules:
+            motion_module.set_img_features(img_features=img_features)
+
     def reset_temp_vars(self):
         for motion_module in self.motion_modules:
             motion_module.reset_temp_vars()
@@ -489,6 +497,8 @@ class VanillaTemporalModule(nn.Module):
         self.effect = None
         self.temp_effect_mask: Tensor = None
         self.prev_input_tensor_batch = 0
+        # AnimateLCM-I2V vars
+        self.img_features: list[Tensor] = None
 
         self.temporal_transformer = TemporalTransformer3DModel(
             in_channels=in_channels,
@@ -536,9 +546,14 @@ class VanillaTemporalModule(nn.Module):
     def set_view_options(self, view_options: ContextOptions):
         self.view_options = view_options
 
+    def set_img_features(self, img_features: list[Tensor]):
+        del self.img_features
+        self.img_features = img_features
+
     def reset_temp_vars(self):
         self.set_effect(None)
         self.set_view_options(None)
+        self.set_img_features(None)
         self.temporal_transformer.reset_temp_vars()
 
     def get_effect_mask(self, input_tensor: Tensor):
@@ -565,7 +580,11 @@ class VanillaTemporalModule(nn.Module):
             return self.temp_effect_mask[self.sub_idxs*batched_number]
         return self.temp_effect_mask[full_batched_idxs]
 
-    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None, transformer_options={}):
+    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None):
+        # do AnimateLCM-I2V stuff if needed
+        if self.img_features is not None:
+            if self.block_type == BlockType.DOWN and self.module_idx == 1:
+                input_tensor += self.img_features[self.block_idx]
         if self.effect is None:
             return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options)
         # return weighted average of input_tensor and AD output

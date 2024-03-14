@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 import comfy.ops
+import comfy.model_management
 
 
 def zero_module(module):
@@ -60,39 +61,77 @@ class AdapterEmbed(nn.Module):
         self.body = nn.ModuleList(self.body)
         self.conv_in = zero_module(ops.Conv2d(in_channels=cin, out_channels=channels[0],
                                               kernel_size=3, stride=1, padding=1))
-        self.motion_scale = 0.8  # settable
+        self.d_model = channels[0]
+        # settable
+        self.ref_drift = 0.5
         self.insertion_weights = [1.0, 1.0, 1.0, 1.0]
 
-        self.d_model = channels[0]
+    def set_ref_drift(self, ref_drift: float):
+        if ref_drift is None:
+            ref_drift = 0.5
+        self.ref_drift = ref_drift
     
-    def set_motion_scale(self, motion_scale: float):
-        self.motion_scale = motion_scale
+    def set_insertion_weights(self, insertion_weights: list[float]):
+        if insertion_weights is None:
+            insertion_weights = [1.0, 1.0, 1.0, 1.0]
+        assert len(insertion_weights) == 4
+        self.insertion_weights = insertion_weights
+    
+    def cleanup(self):
+        self.set_ref_drift(None)
+        self.set_insertion_weights(None)
 
-    def forward(self, x: Tensor, video_length: int):
+    def forward(self, x: Tensor, video_length: int, batched_number: int):
         b, c, h, w = x.shape
-        # get conds/unconds batched count
-        batched = b // video_length
 
         features = []
-        x = self.conv_in(x)
+        x = self.conv_in(x.to(comfy.model_management.unet_dtype()))
 
         pos_embedding = fixed_positional_embedding(
-            video_length, self.d_model).to(x.device)
+            video_length, self.d_model).to(x.dtype).to(x.device)
         pos_embedding = pos_embedding.unsqueeze(-1).unsqueeze(-1)
         pos_embedding = pos_embedding.expand(-1, -1, h, w)
         # match batched conds/unconds
-        x_pos = pos_embedding.repeat(batched, 1, 1, 1)
+        #x_pos = pos_embedding.repeat(batched_number, 1, 1, 1)
         # add x_pos with influence amount
-        x = x + (self.motion_scale*x_pos)
+        x = x + (pos_embedding * self.ref_drift)
 
         for i in range(len(self.channels)):
             for j in range(self.nums_rb):
                 # get real index in self.body that corresponds to current channel/resnetblock
                 idx = i*self.nums_rb + j
                 x = self.body[idx](x)
-            features.append(x)
+            # match real_x to batched_number
+            real_x = x.repeat(batched_number, 1, 1, 1)
+            features.append(real_x)
         features = [weight * feature for weight, feature in zip(features, self.insertion_weights)]
         return features
+
+    # def forward_old(self, x: Tensor, video_length: int):
+    #     b, c, h, w = x.shape
+    #     # get conds/unconds batched count
+    #     batched = b // video_length
+
+    #     features = []
+    #     x = self.conv_in(x)
+
+    #     pos_embedding = fixed_positional_embedding(
+    #         video_length, self.d_model).to(x.device)
+    #     pos_embedding = pos_embedding.unsqueeze(-1).unsqueeze(-1)
+    #     pos_embedding = pos_embedding.expand(-1, -1, h, w)
+    #     # match batched conds/unconds
+    #     x_pos = pos_embedding.repeat(batched, 1, 1, 1)
+    #     # add x_pos with influence amount
+    #     x = x + (self.ref_drift*x_pos)
+
+    #     for i in range(len(self.channels)):
+    #         for j in range(self.nums_rb):
+    #             # get real index in self.body that corresponds to current channel/resnetblock
+    #             idx = i*self.nums_rb + j
+    #             x = self.body[idx](x)
+    #         features.append(x)
+    #     features = [weight * feature for weight, feature in zip(features, self.insertion_weights)]
+    #     return features
 
 
 class ResnetBlockEmbed(nn.Module):

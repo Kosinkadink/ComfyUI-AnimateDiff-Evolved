@@ -109,6 +109,26 @@ def extend_to_batch_size(tensor: Tensor, batch_size: int):
     return tensor
 
 
+# from comfy/controlnet.py
+def ade_broadcast_image_to(tensor, target_batch_size, batched_number):
+    current_batch_size = tensor.shape[0]
+    #print(current_batch_size, target_batch_size)
+    if current_batch_size == 1:
+        return tensor
+
+    per_batch = target_batch_size // batched_number
+    tensor = tensor[:per_batch]
+
+    if per_batch > tensor.shape[0]:
+        tensor = torch.cat([tensor] * (per_batch // tensor.shape[0]) + [tensor[:(per_batch % tensor.shape[0])]], dim=0)
+
+    current_batch_size = tensor.shape[0]
+    if current_batch_size == target_batch_size:
+        return tensor
+    else:
+        return torch.cat([tensor] * batched_number, dim=0)
+
+
 def get_sorted_list_via_attr(objects: list, attr: str) -> list:
     if not objects:
         return objects

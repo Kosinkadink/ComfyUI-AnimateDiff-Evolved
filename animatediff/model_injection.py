@@ -15,7 +15,7 @@ from .ad_settings import AnimateDiffSettings
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, has_mid_block, normalize_ad_state_dict
 from .logger import logger
-from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, normalize_min_max
+from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -99,6 +99,14 @@ class MotionModelPatcher(ModelPatcher):
 
         self.scale_multival = None
         self.effect_multival = None
+
+        # AnimateLCM-I2V
+        self.orig_ref_drift: float = None
+        self.orig_insertion_weights: list[float] = None
+        self.orig_img_latents: Tensor = None
+        self.img_features: list[int, Tensor] = None  # temporary
+        self.img_latents_shape: tuple = None
+
         # temporary variables
         self.current_used_steps = 0
         self.current_keyframe: ADKeyframe = None
@@ -108,32 +116,22 @@ class MotionModelPatcher(ModelPatcher):
         self.combined_scale: Union[float, Tensor] = None
         self.combined_effect: Union[float, Tensor] = None
         self.was_within_range = False
+        self.prev_sub_idxs = None
+        self.prev_batched_number = None
 
     def patch_model(self, *args, **kwargs):
-        # patch as normal, but prepare_weights so that lowvram meta device works properly
+        # patch as normal; used to need to do prepare_weights call to work with lowvram, but no longer needed
+        # will consider removing this override at some point since it does nothing at the moment
         patched_model = super().patch_model(*args, **kwargs)
-        self.prepare_weights()
         return patched_model
-
-    def prepare_weights(self):
-        # in case lowvram is active and meta device is used, need to convert weights
-        # otherwise, will get exceptions thrown related to meta device
-        # TODO: with new comfy lowvram system, this is unnecessary
-        state_dict = self.model.state_dict()
-        for key in state_dict:
-            weight = comfy.model_management.resolve_lowvram_weight(state_dict[key], self.model, key)
-            try:
-                comfy.utils.set_attr(self.model, key, weight)
-            except Exception:
-                pass
 
     def pre_run(self, model: ModelPatcherAndInjector):
         self.cleanup()
-        self.model.reset()
-        # just in case, prepare_weights before every run
-        self.prepare_weights()
         self.model.set_scale(self.scale_multival)
         self.model.set_effect(self.effect_multival)
+        if self.model.img_encoder is not None:
+            self.model.img_encoder.set_ref_drift(self.orig_ref_drift)
+            self.model.img_encoder.set_insertion_weights(self.orig_insertion_weights)
 
     def initialize_timesteps(self, model: BaseModel):
         self.timestep_range = (model.model_sampling.percent_to_sigma(self.timestep_percent_range[0]),
@@ -192,9 +190,40 @@ class MotionModelPatcher(ModelPatcher):
         # update steps current keyframe is used
         self.current_used_steps += 1
 
+    def prepare_img_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str], latent_format):
+        # if no img_encoder, done
+        if self.model.img_encoder is None:
+            return
+        batched_number = len(cond_or_uncond)
+        full_length = ad_params["full_length"]
+        sub_idxs = ad_params["sub_idxs"]
+        goal_length = x.size(0) // batched_number
+        # calculate img_features if needed
+        if (self.img_latents_shape is None or sub_idxs != self.prev_sub_idxs or batched_number != self.prev_batched_number
+                or x.shape[2] != self.img_latents_shape[2] or x.shape[3] != self.img_latents_shape[3]):
+            if sub_idxs is not None and self.orig_img_latents.size(0) >= full_length:
+                img_latents = comfy.utils.common_upscale(self.orig_img_latents[sub_idxs], x.shape[3], x.shape[2], 'nearest-exact', 'center').to(x.dtype).to(x.device)
+            else:
+                img_latents = comfy.utils.common_upscale(self.orig_img_latents, x.shape[3], x.shape[2], 'nearest-exact', 'center').to(x.dtype).to(x.device)
+            img_latents = latent_format.process_in(img_latents)
+            # make sure img_latents matches goal_length
+            if goal_length != img_latents.shape[0]:
+                img_latents = ade_broadcast_image_to(img_latents, goal_length, batched_number)
+            img_features = self.model.img_encoder(img_latents, goal_length, batched_number)
+            self.model.set_img_features(img_features=img_features)
+            # cache values for next step
+            self.img_latents_shape = img_latents.shape
+        self.prev_sub_idxs = sub_idxs
+        self.prev_batched_number = batched_number
+
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
+        # AnimateLCM-I2V
+        del self.img_features
+        self.img_features = None
+        self.img_latents_shape = None
+        # Default
         self.current_used_steps = 0
         self.current_keyframe = None
         self.current_index = -1
@@ -203,6 +232,8 @@ class MotionModelPatcher(ModelPatcher):
         self.combined_scale = None
         self.combined_effect = None
         self.was_within_range = False
+        self.prev_sub_idxs = None
+        self.prev_batched_number = None
 
     def clone(self):
         # normal ModelPatcher clone actions
@@ -220,6 +251,7 @@ class MotionModelPatcher(ModelPatcher):
         n.keyframes = self.keyframes.clone()
         n.scale_multival = self.scale_multival
         n.effect_multival = self.effect_multival
+        n.orig_img_latents = self.orig_img_latents
         return n
 
 
@@ -267,6 +299,10 @@ class MotionModelGroup:
     def pre_run(self, model: ModelPatcherAndInjector):
         for motion_model in self.models:
             motion_model.pre_run(model)
+    
+    def cleanup(self):
+        for motion_model in self.models:
+            motion_model.cleanup()
     
     def prepare_current_keyframe(self, t: Tensor):
         for motion_model in self.models:

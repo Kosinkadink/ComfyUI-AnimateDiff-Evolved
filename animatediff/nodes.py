@@ -4,7 +4,8 @@ from .sampling import motion_sample_factory
 
 from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext, AnimateDiffModelSettings,
                          AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
-from .nodes_gen2 import UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode
+from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, LoadAnimateDiffModelNode, ADKeyframeNode,
+                         ApplyAnimateLCMI2VModel)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
@@ -78,6 +79,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ApplyAnimateDiffModelSimple": ApplyAnimateDiffModelBasicNode,
     "ADE_ApplyAnimateDiffModel": ApplyAnimateDiffModelNode,
     "ADE_LoadAnimateDiffModel": LoadAnimateDiffModelNode,
+    # AnimateLCM-I2V Nodes
+    "ADE_ApplyAnimateLCMI2VModel": ApplyAnimateLCMI2VModel,
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": MaskedLoraLoader,
     # Deprecated Nodes
@@ -140,6 +143,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_ApplyAnimateDiffModelSimple": "Apply AnimateDiff Model 🎭🅐🅓②",
     "ADE_ApplyAnimateDiffModel": "Apply AnimateDiff Model (Adv.) 🎭🅐🅓②",
     "ADE_LoadAnimateDiffModel": "Load AnimateDiff Model 🎭🅐🅓②",
+    # AnimateLCM-I2V Nodes
+    "ADE_ApplyAnimateLCMI2VModel": "Apply AnimateLCM-I2V Model 🎭🅐🅓②",
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
     # Deprecated Nodes
