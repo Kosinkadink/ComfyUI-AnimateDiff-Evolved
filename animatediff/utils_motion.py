@@ -248,3 +248,39 @@ class ADKeyframeGroup:
             if not tk.default:
                 cloned.add(tk)
         return cloned
+
+
+class DummyNNModule(nn.Module):
+    class DoNothingWhenCalled:
+        def __call__(self, *args, **kwargs):
+            return
+
+    '''
+    Class that does not throw exceptions for almost anything you throw at it. As name implies, does nothing.
+    '''
+    def __init__(self):
+        super().__init__()
+
+    def __getattr__(self, *args, **kwargs):
+        return self.DoNothingWhenCalled()
+    
+    def __setattr__(self, name, value):
+        pass
+    
+    def __iter__(self, *args, **kwargs):
+        pass
+    
+    def __next__(self, *args, **kwargs):
+        pass
+
+    def __len__(self, *args, **kwargs):
+        pass
+    
+    def __getitem__(self, *args, **kwargs):
+        pass
+    
+    def __setitem__(self, *args, **kwargs):
+        pass
+    
+    def __call__(self, *args, **kwargs):
+        pass

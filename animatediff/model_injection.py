@@ -13,7 +13,7 @@ from comfy.model_base import BaseModel
 
 from .ad_settings import AnimateDiffSettings
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, has_mid_block, normalize_ad_state_dict
+from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
 from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
@@ -103,6 +103,7 @@ class MotionModelPatcher(ModelPatcher):
         # AnimateLCM-I2V
         self.orig_ref_drift: float = None
         self.orig_insertion_weights: list[float] = None
+        self.orig_apply_ref_when_disabled = False
         self.orig_img_latents: Tensor = None
         self.img_features: list[int, Tensor] = None  # temporary
         self.img_latents_shape: tuple = None
@@ -210,7 +211,7 @@ class MotionModelPatcher(ModelPatcher):
             if goal_length != img_latents.shape[0]:
                 img_latents = ade_broadcast_image_to(img_latents, goal_length, batched_number)
             img_features = self.model.img_encoder(img_latents, goal_length, batched_number)
-            self.model.set_img_features(img_features=img_features)
+            self.model.set_img_features(img_features=img_features, apply_ref_when_disabled=self.orig_apply_ref_when_disabled)
             # cache values for next step
             self.img_latents_shape = img_latents.shape
         self.prev_sub_idxs = sub_idxs
@@ -252,6 +253,9 @@ class MotionModelPatcher(ModelPatcher):
         n.scale_multival = self.scale_multival
         n.effect_multival = self.effect_multival
         n.orig_img_latents = self.orig_img_latents
+        n.orig_ref_drift = self.orig_ref_drift
+        n.orig_insertion_weights = self.orig_insertion_weights.copy() if self.orig_insertion_weights is not None else self.orig_insertion_weights
+        n.orig_apply_ref_when_disabled = self.orig_apply_ref_when_disabled
         return n
 
 
@@ -450,6 +454,22 @@ def create_fresh_motion_module(motion_model: MotionModelPatcher) -> MotionModelP
     ad_wrapper.load_state_dict(motion_model.model.state_dict())
     return MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
                                       offload_device=comfy.model_management.unet_offload_device())
+
+
+def create_fresh_encoder_only_model(motion_model: MotionModelPatcher) -> MotionModelPatcher:
+    ad_wrapper = EncoderOnlyAnimateDiffModel(mm_state_dict=motion_model.model.state_dict(), mm_info=motion_model.model.mm_info)
+    ad_wrapper.to(comfy.model_management.unet_dtype())
+    ad_wrapper.to(comfy.model_management.unet_offload_device())
+    ad_wrapper.load_state_dict(motion_model.model.state_dict(), strict=False)
+    return MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
+                                      offload_device=comfy.model_management.unet_offload_device()) 
+
+
+def inject_img_encoder_into_model(motion_model: MotionModelPatcher, w_encoder: MotionModelPatcher):
+    motion_model.model.init_img_encoder()
+    motion_model.model.img_encoder.to(comfy.model_management.unet_dtype())
+    motion_model.model.img_encoder.to(comfy.model_management.unet_offload_device())
+    motion_model.model.img_encoder.load_state_dict(w_encoder.model.img_encoder.state_dict())
 
 
 def validate_model_compatibility_gen2(model: ModelPatcher, motion_model: MotionModelPatcher):
