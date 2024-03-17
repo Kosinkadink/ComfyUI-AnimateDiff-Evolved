@@ -82,7 +82,7 @@ NODE_CLASS_MAPPINGS = {
     # AnimateLCM-I2V Nodes
     "ADE_ApplyAnimateLCMI2VModel": ApplyAnimateLCMI2VModel,
     "ADE_LoadAnimateLCMI2VModel": LoadAnimateLCMI2VModelNode,
-    "ADE_UpscaleAndVaeEncode": UpscaleAndVaeEncode,
+    "ADE_UpscaleAndVAEEncode": UpscaleAndVaeEncode,
     "ADE_InjectI2VIntoAnimateDiffModel": LoadAnimateDiffAndInjectI2VNode,
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": MaskedLoraLoader,
@@ -149,7 +149,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # AnimateLCM-I2V Nodes
     "ADE_ApplyAnimateLCMI2VModel": "Apply AnimateLCM-I2V Model 🎭🅐🅓②",
     "ADE_LoadAnimateLCMI2VModel": "Load AnimateLCM-I2V Model 🎭🅐🅓②",
-    "ADE_UpscaleAndVaeEncode": "Scale Ref Image and Vae Encode 🎭🅐🅓②",
+    "ADE_UpscaleAndVAEEncode": "Scale Ref Image and VAE Encode 🎭🅐🅓②",
     "ADE_InjectI2VIntoAnimateDiffModel": "🧪Inject I2V into AnimateDiff Model 🎭🅐🅓②",
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
