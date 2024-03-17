@@ -58,17 +58,22 @@ NOTE: you can also use custom locations for models/motion loras by making use of
      - NOTE: You will need to use ```autoselect``` or ```linear (HotshotXL/default)``` beta_schedule, the sweetspot for context_length or total frames (when not using context) is 8 frames, and you will need to use an SDXL checkpoint.
 - AnimateDiff-SDXL support, with corresponding model. Currently, a beta version is out, which you can find info about at [AnimateDiff](https://github.com/guoyww/AnimateDiff/).
      - NOTE: You will need to use ```autoselect``` or ```linear (AnimateDiff-SDXL)``` beta_schedule. Other than that, same rules of thumb apply to AnimateDiff-SDXL as AnimateDiff.
-- [AnimateLCM](https://github.com/G-U-N/AnimateLCM) support
+- [AnimateLCM](https://huggingface.co/wangfuyun/AnimateLCM) support
      - NOTE: You will need to use ```autoselect``` or ```lcm``` or ```lcm[100_ots]``` beta_schedule. To use fully with LCM, be sure to use appropriate LCM lora, use the ```lcm``` sampler_name in KSampler nodes, and lower cfg to somewhere around 1.0 to 2.0. Don't forget to decrease steps (minimum = ~4 steps), since LCM converges faster (less steps). Increase step count to increase detail as desired.
+- [AnimateLCM-I2V](https://huggingface.co/wangfuyun/AnimateLCM-I2V) support, big thanks to [Fu-Yun Wang](https://github.com/G-U-N) for providing me the original diffusers code he created during his work on the paper
+     - NOTE: Requires same settings as described for AnimateLCM above. Requires ```Apply AnimateLCM-I2V Model``` Gen2 node usage so that ```ref_latent``` can be provided; use ```Scale Ref Image and VAE Encode``` node to preprocess input images. While this was intended as an img2video model, I found it works best for vid2vid purposes with ```ref_drift=0.0```, and to use it for only at least 1 step before switching over to other models via chaining with toher Apply AnimateDiff Model (Adv.) nodes. The ```apply_ref_when_disabled``` can be set to True to allow the img_encoder to do its thing even when the ```end_percent``` is reached. AnimateLCM-I2V is also extremely useful for maintaining coherence at higher resolutions (with ControlNet and SD LoRAs active, I could easily upscale from 512x512 source to 1024x1024 in a single pass). TODO: add examples
 - AnimateDiff Keyframes to change Scale and Effect at different points in the sampling process.
 - fp8 support; requires newest ComfyUI and torch >= 2.1 (decreases VRAM usage, but changes outputs)
 - Mac M1/M2/M3 support
 - Usage of Context Options and Sample Settings outside of AnimateDiff via Gen2 Use Evolved Sampling node
 
 ## Upcoming Features
-- Maskable Motion LoRA
-- Maskable SD LoRA (and perhaps maskable SD Models as well)
+- Maskable Motion LoRA (Goal: end of March)
+- Maskable SD LoRA (Goal: end of March)
+- Dynamic memory management for motion models that load/unload at different start/end_percents
 - [PIA](https://github.com/open-mmlab/PIA) support
+- [UniCtrl](https://github.com/XuweiyiChen/UniCtrl) support
+- Built-in prompt travel implementation
 - Anything else AnimateDiff-related that comes out
 
 
