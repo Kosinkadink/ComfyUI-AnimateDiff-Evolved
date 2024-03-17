@@ -1060,6 +1060,17 @@ class EncoderOnlyAnimateDiffModel(AnimateDiffModel):
         # fill out down/up blocks and middle block, if present
         for idx, c in enumerate(self.layer_channels):
             self.down_blocks.append(EncoderOnlyMotionModule(c, block_type=BlockType.DOWN, block_idx=idx, ops=self.ops))
+    
+    def _eject(self, unet_blocks: nn.ModuleList):
+        # eject all EncoderOnlyTemporalModule objects from all blocks
+        for block in unet_blocks:
+            idx_to_pop = []
+            for idx, component in enumerate(block):
+                if type(component) == EncoderOnlyTemporalModule:
+                    idx_to_pop.append(idx)
+            # pop in backwards order, as to not disturb what the indeces refer to
+            for idx in sorted(idx_to_pop, reverse=True):
+                block.pop(idx)
 
 
 class EncoderOnlyMotionModule(MotionModule):
