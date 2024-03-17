@@ -2,21 +2,21 @@ from pathlib import Path
 from typing import Union
 import torch
 
-import comfy.sample as comfy_sample
+from nodes import VAEEncode
+import comfy.utils
 from comfy.model_patcher import ModelPatcher
+from comfy.sd import VAE
 
 from .ad_settings import AnimateDiffSettings
-from .animatelcm_i2v_adapter import AdapterEmbed
-from .context import ContextOptions, ContextOptionsGroup, ContextSchedules
+from .context import ContextOptionsGroup
 from .logger import logger
-from .utils_model import BIGMAX, BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
+from .utils_model import BIGMAX, BetaSchedules, ScaleMethods, CropMethods, get_available_motion_models
 from .utils_motion import ADKeyframeGroup, ADKeyframe
-from .motion_lora import MotionLoraInfo, MotionLoraList
+from .motion_lora import MotionLoraList
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module, create_fresh_encoder_only_model,
-                              load_motion_module_gen1, load_motion_module_gen2, load_motion_lora_as_patches, inject_img_encoder_into_model, validate_model_compatibility_gen2)
+                              load_motion_module_gen2, load_motion_lora_as_patches, inject_img_encoder_into_model, validate_model_compatibility_gen2)
 from .motion_module_ad import AnimateDiffFormat
-from .sample_settings import SampleSettings, SeedNoiseGeneration
-from .sampling import motion_sample_factory
+from .sample_settings import SampleSettings
 
 
 class UseEvolvedSamplingNode:
@@ -318,3 +318,35 @@ class ADKeyframeNode:
                               inherit_missing=inherit_missing, guarantee_steps=guarantee_steps)
         prev_ad_keyframes.add(keyframe)
         return (prev_ad_keyframes,)
+
+
+class UpscaleAndVaeEncode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "vae": ("VAE",),
+                "latent_size": ("LATENT",),
+                "scale_method": (ScaleMethods._LIST_IMAGE,),
+                "crop": (CropMethods._LIST, {"default": CropMethods.CENTER},),
+            }
+        }
+    
+    RETURN_TYPES = ("LATENT",)
+    FUNCTION = "preprocess_images"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/AnimateLCM-I2V"
+
+    def preprocess_images(self, image: torch.Tensor, vae: VAE, latent_size: torch.Tensor, scale_method: str, crop: str):
+        b, c, h, w = latent_size["samples"].size()
+        image = image.movedim(-1,1)
+        image = comfy.utils.common_upscale(samples=image, width=w*8, height=h*8, upscale_method=scale_method, crop=crop)
+        image = image.movedim(1,-1)
+        # now that images are the expected size, VAEEncode them
+        try:  # account for old ComfyUI versions (TODO: remove this when other changes require ComfyUI update)
+            if not hasattr(vae, "vae_encode_crop_pixels"):
+                image = VAEEncode.vae_encode_crop_pixels(image)
+        except Exception:
+            pass
+        return ({"samples": vae.encode(image[:,:,:,:3])},)
