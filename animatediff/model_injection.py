@@ -11,7 +11,7 @@ import comfy.utils
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
 
-from .ad_settings import AnimateDiffSettings
+from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
@@ -534,70 +534,77 @@ def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: AnimateDiffSet
     if not mm_settings.has_anything_to_apply():
         return model_dict
     # first, handle PE Adjustments
-    for adjust in mm_settings.adjust_pe.adjusts:
-        if adjust.has_anything_to_apply():
+    for adjust_pe in mm_settings.adjust_pe.adjusts:
+        adjust_pe: AdjustPE
+        if adjust_pe.has_anything_to_apply():
             already_printed = False
             for key in model_dict:
                 if "attention_blocks" in key and "pos_encoder" in key:
                     # apply simple motion pe stretch, if needed
-                    if adjust.has_motion_pe_stretch():
+                    if adjust_pe.has_motion_pe_stretch():
                         original_length = model_dict[key].shape[1]
-                        new_pe_length = original_length + adjust.motion_pe_stretch
+                        new_pe_length = original_length + adjust_pe.motion_pe_stretch
                         interpolate_pe_to_length(model_dict, key, new_length=new_pe_length)
-                        if adjust.print_adjustment and not already_printed:
+                        if adjust_pe.print_adjustment and not already_printed:
                             logger.info(f"[Adjust PE]: PE Stretch from {original_length} to {new_pe_length}.")
                     # apply pe_idx_offset, if needed
-                    if adjust.has_initial_pe_idx_offset():
+                    if adjust_pe.has_initial_pe_idx_offset():
                         original_length = model_dict[key].shape[1]
-                        model_dict[key] = model_dict[key][:, adjust.initial_pe_idx_offset:]
-                        if adjust.print_adjustment and not already_printed:
-                            logger.info(f"[Adjust PE]: Offsetting PEs by {adjust.initial_pe_idx_offset}; PE length to shortens from {original_length} to {model_dict[key].shape[1]}.")
+                        model_dict[key] = model_dict[key][:, adjust_pe.initial_pe_idx_offset:]
+                        if adjust_pe.print_adjustment and not already_printed:
+                            logger.info(f"[Adjust PE]: Offsetting PEs by {adjust_pe.initial_pe_idx_offset}; PE length to shortens from {original_length} to {model_dict[key].shape[1]}.")
                     # apply has_cap_initial_pe_length, if needed
-                    if adjust.has_cap_initial_pe_length():
+                    if adjust_pe.has_cap_initial_pe_length():
                         original_length = model_dict[key].shape[1]
-                        model_dict[key] = model_dict[key][:, :adjust.cap_initial_pe_length]
-                        if adjust.print_adjustment and not already_printed:
+                        model_dict[key] = model_dict[key][:, :adjust_pe.cap_initial_pe_length]
+                        if adjust_pe.print_adjustment and not already_printed:
                             logger.info(f"[Adjust PE]: Capping PEs (initial) from {original_length} to {model_dict[key].shape[1]}.")
                     # apply interpolate_pe_to_length, if needed
-                    if adjust.has_interpolate_pe_to_length():
+                    if adjust_pe.has_interpolate_pe_to_length():
                         original_length = model_dict[key].shape[1]
-                        interpolate_pe_to_length(model_dict, key, new_length=adjust.interpolate_pe_to_length)
-                        if adjust.print_adjustment and not already_printed:
+                        interpolate_pe_to_length(model_dict, key, new_length=adjust_pe.interpolate_pe_to_length)
+                        if adjust_pe.print_adjustment and not already_printed:
                             logger.info(f"[Adjust PE]: Interpolating PE length from {original_length} to {model_dict[key].shape[1]}.")
                     # apply final_pe_idx_offset, if needed
-                    if adjust.has_final_pe_idx_offset():
+                    if adjust_pe.has_final_pe_idx_offset():
                         original_length = model_dict[key].shape[1]
-                        model_dict[key] = model_dict[key][:, adjust.final_pe_idx_offset:]
-                        if adjust.print_adjustment and not already_printed:
+                        model_dict[key] = model_dict[key][:, adjust_pe.final_pe_idx_offset:]
+                        if adjust_pe.print_adjustment and not already_printed:
                             logger.info(f"[Adjust PE]: Capping PEs (final) from {original_length} to {model_dict[key].shape[1]}.")
                     already_printed = True
-    # finally, apply any weight changes
-    for key in model_dict:
-        if "attention_blocks" in key:
-            if "pos_encoder" in key and mm_settings.adjust_pe.has_anything_to_apply():
-                # apply pe_strength, if needed
-                if mm_settings.has_pe_strength():
-                    model_dict[key] *= mm_settings.pe_strength
-            else:
-                # apply attn_strenth, if needed
-                if mm_settings.has_attn_strength():
-                    model_dict[key] *= mm_settings.attn_strength
-                # apply specific attn_strengths, if needed
-                if mm_settings.has_any_attn_sub_strength():
-                    if "to_q" in key and mm_settings.has_attn_q_strength():
-                        model_dict[key] *= mm_settings.attn_q_strength
-                    elif "to_k" in key and mm_settings.has_attn_k_strength():
-                        model_dict[key] *= mm_settings.attn_k_strength
-                    elif "to_v" in key and mm_settings.has_attn_v_strength():
-                        model_dict[key] *= mm_settings.attn_v_strength
-                    elif "to_out" in key:
-                        if key.strip().endswith("weight") and mm_settings.has_attn_out_weight_strength():
-                            model_dict[key] *= mm_settings.attn_out_weight_strength
-                        elif key.strip().endswith("bias") and mm_settings.has_attn_out_bias_strength():
-                            model_dict[key] *= mm_settings.attn_out_bias_strength
-        # apply other strength, if needed
-        elif mm_settings.has_other_strength():
-            model_dict[key] *= mm_settings.other_strength
+    # finally, handle Weight Adjustments
+    for adjust_w in mm_settings.adjust_weight.adjusts:
+        adjust_w: AdjustWeight
+        if adjust_w.has_anything_to_apply():
+            adjust_w.mark_attrs_as_unprinted()
+            for key in model_dict:
+                # apply global weight adjustments, if needed
+                adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_ALL, model_dict=model_dict, key=key)
+                if "attention_blocks" in key:
+                    # apply pe change, if needed
+                    if "pos_encoder" in key:
+                        adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_PE, model_dict=model_dict, key=key)
+                    else:
+                        # apply attn change, if needed
+                        adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_ATTN, model_dict=model_dict, key=key)
+                        # apply specific attn changes, if needed
+                        # apply attn_q change, if needed
+                        if "to_q" in key:
+                            adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_ATTN_Q, model_dict=model_dict, key=key)
+                        # apply attn_q change, if needed
+                        elif "to_k" in key:
+                            adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_ATTN_K, model_dict=model_dict, key=key)
+                        # apply attn_q change, if needed
+                        elif "to_v" in key:
+                            adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_ATTN_V, model_dict=model_dict, key=key)
+                        # apply to_out changes, if needed
+                        elif "to_out" in key:
+                            if key.strip().endswith("weight"):
+                                adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_ATTN_OUT_WEIGHT, model_dict=model_dict, key=key)
+                            elif key.strip().endswith("bias"):
+                                adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_ATTN_OUT_BIAS, model_dict=model_dict, key=key)
+                else:
+                    adjust_w.perform_applicable_ops(attr=AdjustWeight.ATTR_OTHER, model_dict=model_dict, key=key)
     return model_dict
 
 

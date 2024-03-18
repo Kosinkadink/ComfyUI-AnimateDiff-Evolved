@@ -2,8 +2,7 @@ import comfy.sample as comfy_sample
 
 from .sampling import motion_sample_factory
 
-from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext, AnimateDiffModelSettings,
-                         AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
+from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext)
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ApplyAnimateLCMI2VModel, ADKeyframeNode,
                          LoadAnimateDiffModelNode, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
@@ -12,9 +11,12 @@ from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, Sampl
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode)
-from .nodes_ad_settings import AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode
+from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
+                                WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
+                                WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
-from .nodes_deprecated import AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated
+from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated,
+                               AnimateDiffModelSettings, AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
 from .nodes_lora import AnimateDiffLoraLoader, MaskedLoraLoader
 
 from .logger import logger
@@ -55,6 +57,12 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AdjustPESweetspotStretch": SweetspotStretchPENode,
     "ADE_AdjustPEFullStretch": FullStretchPENode,
     "ADE_AdjustPEManual": ManualAdjustPENode,
+    "ADE_AdjustWeightAllAdd": WeightAdjustAllAddNode,
+    "ADE_AdjustWeightAllMult": WeightAdjustAllMultNode,
+    "ADE_AdjustWeightIndivAdd": WeightAdjustIndivAddNode,
+    "ADE_AdjustWeightIndivMult": WeightAdjustIndivMultNode,
+    "ADE_AdjustWeightIndivAttnAdd": WeightAdjustIndivAttnAddNode,
+    "ADE_AdjustWeightIndivAttnMult": WeightAdjustIndivAttnMultNode,
     # Sample Settings
     "ADE_CustomCFG": CustomCFGNode,
     "ADE_CustomCFGKeyframe": CustomCFGKeyframeNode,
@@ -122,6 +130,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AdjustPESweetspotStretch": "Adjust PE [Sweetspot Stretch] 🎭🅐🅓",
     "ADE_AdjustPEFullStretch": "Adjust PE [Full Stretch] 🎭🅐🅓",
     "ADE_AdjustPEManual": "Adjust PE [Manual] 🎭🅐🅓",
+    "ADE_AdjustWeightAllAdd": "Adjust Weight [All◆Add] 🎭🅐🅓",
+    "ADE_AdjustWeightAllMult": "Adjust Weight [All◆Mult] 🎭🅐🅓",
+    "ADE_AdjustWeightIndivAdd": "Adjust Weight [Indiv◆Add] 🎭🅐🅓",
+    "ADE_AdjustWeightIndivMult": "Adjust Weight [Indiv◆Mult] 🎭🅐🅓",
+    "ADE_AdjustWeightIndivAttnAdd": "Adjust Weight [Indiv-Attn◆Add] 🎭🅐🅓",
+    "ADE_AdjustWeightIndivAttnMult": "Adjust Weight [Indiv-Attn◆Mult] 🎭🅐🅓",
     # Sample Settings
     "ADE_CustomCFG": "Custom CFG 🎭🅐🅓",
     "ADE_CustomCFGKeyframe": "Custom CFG Keyframe 🎭🅐🅓",
