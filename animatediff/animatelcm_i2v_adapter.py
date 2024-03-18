@@ -85,14 +85,18 @@ class AdapterEmbed(nn.Module):
         b, c, h, w = x.shape
 
         features = []
-        x = self.conv_in(x.to(comfy.model_management.unet_dtype()))
+
+        use_dtype = comfy.model_management.unet_dtype()
+        # allow fp8 to work
+        if comfy.model_management.dtype_size(use_dtype) == 1:
+            use_dtype = x.dtype
+
+        x = self.conv_in(x.to(use_dtype))
 
         pos_embedding = fixed_positional_embedding(
-            video_length, self.d_model).to(x.dtype).to(x.device)
+            video_length, self.d_model).to(use_dtype).to(x.device)
         pos_embedding = pos_embedding.unsqueeze(-1).unsqueeze(-1)
         pos_embedding = pos_embedding.expand(-1, -1, h, w)
-        # match batched conds/unconds
-        #x_pos = pos_embedding.repeat(batched_number, 1, 1, 1)
         # add x_pos with influence amount
         x = x + (pos_embedding * self.ref_drift)
 
@@ -106,32 +110,6 @@ class AdapterEmbed(nn.Module):
             features.append(real_x)
         features = [weight * feature for weight, feature in zip(features, self.insertion_weights)]
         return features
-
-    # def forward_old(self, x: Tensor, video_length: int):
-    #     b, c, h, w = x.shape
-    #     # get conds/unconds batched count
-    #     batched = b // video_length
-
-    #     features = []
-    #     x = self.conv_in(x)
-
-    #     pos_embedding = fixed_positional_embedding(
-    #         video_length, self.d_model).to(x.device)
-    #     pos_embedding = pos_embedding.unsqueeze(-1).unsqueeze(-1)
-    #     pos_embedding = pos_embedding.expand(-1, -1, h, w)
-    #     # match batched conds/unconds
-    #     x_pos = pos_embedding.repeat(batched, 1, 1, 1)
-    #     # add x_pos with influence amount
-    #     x = x + (self.ref_drift*x_pos)
-
-    #     for i in range(len(self.channels)):
-    #         for j in range(self.nums_rb):
-    #             # get real index in self.body that corresponds to current channel/resnetblock
-    #             idx = i*self.nums_rb + j
-    #             x = self.body[idx](x)
-    #         features.append(x)
-    #     features = [weight * feature for weight, feature in zip(features, self.insertion_weights)]
-    #     return features
 
 
 class ResnetBlockEmbed(nn.Module):
