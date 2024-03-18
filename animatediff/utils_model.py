@@ -235,6 +235,23 @@ class InterpolationMethod:
         return weights
 
 
+class ScaleMethods:
+    NEAREST_EXACT = "nearest-exact"
+    BILINEAR = "bilinear"
+    AREA = "area"
+    BICUBIC = "bicubic"
+    LANCZOS = "lanczos"
+
+    _LIST_IMAGE = [NEAREST_EXACT, BILINEAR, AREA, BICUBIC, LANCZOS]
+
+
+class CropMethods:
+    DISABLED = "disabled"
+    CENTER = "center"
+
+    _LIST = [DISABLED, CENTER]
+
+
 class Folders:
     ANIMATEDIFF_MODELS = "animatediff_models"
     MOTION_LORA = "animatediff_motion_lora"
