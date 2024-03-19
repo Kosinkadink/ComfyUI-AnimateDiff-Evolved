@@ -83,7 +83,7 @@ class MaskedLoraLoader:
             for key in lora:
                 lfile.write(f"{key}:\t{lora[key].size()}\n")
 
-        #model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, strength_model, strength_clip)
+        model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, strength_model, strength_clip)
         #return (model_lora, clip_lora)
         return (model, clip)
         
