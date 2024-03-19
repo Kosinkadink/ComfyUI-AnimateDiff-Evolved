@@ -51,7 +51,10 @@ class ModelPatcherAndInjector(ModelPatcher):
 
     def patch_model(self, device_to=None, patch_weights=True):
         # first, perform model patching
-        patched_model = super().patch_model(device_to, patch_weights)
+        if patch_weights: # TODO: keep only else portion when don't need to worry about past comfy versions
+            patched_model = super().patch_model(device_to)
+        else:
+            patched_model = super().patch_model(device_to, patch_weights)
         # finally, perform motion model injection
         self.inject_model(device_to=device_to)
         return patched_model
