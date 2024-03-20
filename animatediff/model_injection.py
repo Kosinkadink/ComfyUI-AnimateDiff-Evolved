@@ -89,6 +89,13 @@ class ModelPatcherAndInjector(ModelPatcher):
         cloned.sample_settings = self.sample_settings
         cloned.motion_injection_params = self.motion_injection_params.clone() if self.motion_injection_params else self.motion_injection_params
         return cloned
+    
+    @classmethod
+    def create_from(cls, model: Union[ModelPatcher, 'ModelPatcherAndInjector']) -> 'ModelPatcherAndInjector':
+        if isinstance(model, ModelPatcherAndInjector):
+            return model.clone()
+        else:
+            return ModelPatcherAndInjector(model)
 
 
 class MotionModelPatcher(ModelPatcher):
