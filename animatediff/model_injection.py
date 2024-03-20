@@ -30,10 +30,17 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.patches = {}
         for k in m.patches:
             self.patches[k] = m.patches[k][:]
+        if hasattr(m, "patches_uuid"):
+            self.patches_uuid = m.patches_uuid
 
         self.object_patches = m.object_patches.copy()
         self.model_options = copy.deepcopy(m.model_options)
         self.model_keys = m.model_keys
+        if hasattr(m, "backup"):
+            self.backup = m.backup
+        if hasattr(m, "object_patches_backup"):
+            self.object_patches_backup = m.object_patches_backup
+
 
         # injection stuff
         self.motion_injection_params: InjectionParams = None
@@ -51,7 +58,7 @@ class ModelPatcherAndInjector(ModelPatcher):
 
     def patch_model(self, device_to=None, patch_weights=True):
         # first, perform model patching
-        if patch_weights: # TODO: keep only else portion when don't need to worry about past comfy versions
+        if patch_weights: # TODO: keep only 'else' portion when don't need to worry about past comfy versions
             patched_model = super().patch_model(device_to)
         else:
             patched_model = super().patch_model(device_to, patch_weights)
@@ -59,11 +66,14 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.inject_model(device_to=device_to)
         return patched_model
 
-    def unpatch_model(self, device_to=None):
+    def unpatch_model(self, device_to=None, unpatch_weights=True):
         # first, eject motion model from unet
         self.eject_model(device_to=device_to)
         # finally, do normal model unpatching
-        return super().unpatch_model(device_to)
+        if unpatch_weights: # TODO: keep only 'else' portion when don't need to worry about past comfy versions
+            return super().unpatch_model(device_to)
+        else:
+            return super().unpatch_model(device_to, unpatch_weights)
 
     def inject_model(self, device_to=None):
         if self.motion_models is not None:
@@ -245,10 +255,16 @@ class MotionModelPatcher(ModelPatcher):
         n.patches = {}
         for k in self.patches:
             n.patches[k] = self.patches[k][:]
+        if hasattr(n, "patches_uuid"):
+            self.patches_uuid = n.patches_uuid
 
         n.object_patches = self.object_patches.copy()
         n.model_options = copy.deepcopy(self.model_options)
         n.model_keys = self.model_keys
+        if hasattr(n, "backup"):
+            self.backup = n.backup
+        if hasattr(n, "object_patches_backup"):
+            self.object_patches_backup = n.object_patches_backup
         # extra cloned params
         n.timestep_percent_range = self.timestep_percent_range
         n.timestep_range = self.timestep_range
