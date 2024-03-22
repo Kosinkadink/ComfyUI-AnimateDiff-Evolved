@@ -76,7 +76,7 @@ class AnimateDiffLoaderGen1:
         
         # need to use a ModelPatcher that supports injection of motion modules into unet
         # need to use a ModelPatcher that supports injection of motion modules into unet
-        model = ModelPatcherAndInjector(model)
+        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
         model.motion_models = MotionModelGroup(motion_model)
         model.sample_settings = sample_settings if sample_settings is not None else SampleSettings()
         model.motion_injection_params = params
@@ -157,7 +157,7 @@ class LegacyAnimateDiffLoaderWithContext:
 
         motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
 
-        model = ModelPatcherAndInjector(model)
+        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
         model.motion_models = MotionModelGroup(motion_model)
         model.sample_settings = sample_settings if sample_settings is not None else SampleSettings()
         model.motion_injection_params = params

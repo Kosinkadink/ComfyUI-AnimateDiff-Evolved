@@ -2,6 +2,7 @@ from typing import Union
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+import uuid
 
 import comfy.model_management as model_management
 import comfy.ops
@@ -247,6 +248,42 @@ class ADKeyframeGroup:
         for tk in self.keyframes:
             if not tk.default:
                 cloned.add(tk)
+        return cloned
+
+
+class LoraHook:
+    def __init__(self, lora_name: str):
+        self.lora_name = lora_name
+        self.id = f"{lora_name}|{uuid.uuid4()}"
+    
+    # def __eq__(self, other: 'LoraHook'):
+    #     return self.id == other.id
+
+
+class LoraHookGroup:
+    '''
+    Stores LoRA hooks to apply for conditioning
+    '''
+    def __init__(self):
+        self.hooks = []
+    
+    def add(self, hook: str):
+        if hook not in self.hooks:
+            self.hooks.append(hook)
+    
+    def is_empty(self):
+        return len(self.hooks) == 0
+
+    def clone(self):
+        cloned = LoraHookGroup()
+        for hook in self.hooks:
+            cloned.add(hook)
+        return cloned
+
+    def clone_and_combine(self, other: 'LoraHookGroup'):
+        cloned = self.clone()
+        for hook in other.hooks:
+            cloned.add(hook)
         return cloned
 
 

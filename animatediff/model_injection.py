@@ -5,17 +5,20 @@ from einops import rearrange
 from torch import Tensor
 import torch.nn.functional as F
 import torch
+import uuid
 
 import comfy.model_management
 import comfy.utils
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
+from comfy.sd import CLIP
 
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
-from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max
+from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max,
+                           LoraHook, LoraHookGroup)
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -41,12 +44,48 @@ class ModelPatcherAndInjector(ModelPatcher):
         if hasattr(m, "object_patches_backup"):
             self.object_patches_backup = m.object_patches_backup
 
-
+        # lora hook stuff
+        self.hooked_patches = {}
+        self.hooked_backup = {}
+        self.current_lora_hooks = None
         # injection stuff
-        self.motion_injection_params: InjectionParams = None
+        self.motion_injection_params: InjectionParams = InjectionParams()
         self.sample_settings: SampleSettings = SampleSettings()
         self.motion_models: MotionModelGroup = None
     
+    def add_hooked_patches(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
+        '''
+        Based on add_patches, but for hooked weights.
+        '''
+        # TODO: make this work with timestep scheduling
+        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook, {})
+        p = set()
+        for key in patches:
+            if key in self.model_keys:
+                p.add(key)
+                current_patches: list[tuple] = current_hooked_patches.get(key, [])
+                current_patches.append((strength_patch, patches[key], strength_model))
+                current_hooked_patches[key] = current_patches
+        self.hooked_patches[lora_hook] = current_hooked_patches
+        # since should care about these patches too to determine if same model, roll patches_uuid
+        self.patches_uuid = uuid.uuid4()
+        return list(p)
+    
+    def get_combined_hooked_patches(self, lora_hooks: LoraHookGroup):
+        '''
+        Returns patches for selected lora_hooks.
+        '''
+        # combined_patches will contain weights of all relevant lora_hooks, per key
+        combined_patches = {}
+        if lora_hooks is not None:
+            for hook in lora_hooks.hooks:
+                hook_patches: dict = self.hooked_patches.get(hook, {})
+                for key in hook_patches.keys():
+                    current_patches: list[tuple] = combined_patches.get(key, [])
+                    current_patches.extend(hook_patches[key])
+                    combined_patches[key] = current_patches
+        return combined_patches
+
     def model_patches_to(self, device):
         super().model_patches_to(device)
         if self.motion_models is not None:
@@ -71,6 +110,8 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.eject_model(device_to=device_to)
         # finally, do normal model unpatching
         if unpatch_weights: # TODO: keep only 'else' portion when don't need to worry about past comfy versions
+            # handle hooked_patches first
+            self.unpatch_hooked(device_to=device_to)
             return super().unpatch_model(device_to)
         else:
             return super().unpatch_model(device_to, unpatch_weights)
@@ -93,19 +134,139 @@ class ModelPatcherAndInjector(ModelPatcher):
                 except Exception:
                     pass
 
-    def clone(self):
+    def apply_lora_hooks(self, lora_hooks: LoraHookGroup, device_to=None):
+        # first, determine if need to reapply patches
+        if self.current_lora_hooks == lora_hooks:
+            return
+        # unpatch hooks, if needed
+        self.unpatch_hooked(device_to=device_to)
+        # finally, patch hooks
+        # TODO: handle lowvram
+        self.patch_hooked(lora_hooks=lora_hooks, device_to=device_to)
+
+    def patch_hooked(self, lora_hooks: LoraHookGroup, device_to=None, patch_weights=True) -> None:
+        if not patch_weights:
+            return
+        # use current device
+        if not device_to:
+            device_to=self.current_device
+        # first, unpatch any previous patches
+        self.unpatch_hooked()
+        # then, handle weights
+        if patch_weights:
+            model_sd = self.model_state_dict()
+            # get combined patches of relevant lora_hooks
+            relevant_patches = self.get_combined_hooked_patches(lora_hooks=lora_hooks)
+            for key in relevant_patches:
+                if key not in model_sd:
+                    logger.warning(f"LoraHook hook could not patch. key doesn't exist in model: {key}")
+                    continue
+                self.patch_hooked_weight_to_device(combined_patches=relevant_patches, key=key, device_to=device_to)
+            self.current_lora_hooks = lora_hooks
+
+    def patch_hooked_lowvram(self, lora_hooks: LoraHookGroup, device_to=None, lowvram_model_memory=0):
+        # TODO: handle lowvram situation
+        pass
+
+    def patch_hooked_weight_to_device(self, combined_patches: dict, key: str, device_to=None):
+        if key not in combined_patches:
+            return
+        
+        weight: Tensor = comfy.utils.get_attr(self.model, key)
+
+        inplace_update = self.weight_inplace_update
+
+        if key not in self.hooked_backup:
+            self.hooked_backup[key] = weight.to(device=self.offload_device, copy=inplace_update)
+        
+        if device_to is not None:
+            temp_weight = comfy.model_management.cast_to_device(weight, device_to, torch.float32, copy=True)
+        else:
+            temp_weight = weight.to(torch.float32, copy=True)
+        out_weight = self.calculate_weight(combined_patches[key], temp_weight, key).to(weight.dtype)
+        if inplace_update:
+            comfy.utils.copy_to_param(self.model, key, out_weight)
+        else:
+            comfy.utils.set_attr_param(self.model, key, out_weight)
+
+    def unpatch_hooked(self, device_to=None, unpatch_weights=True) -> None:
+        if not unpatch_weights:
+            return
+        # if no backups from before hook, then nothing to unpatch
+        if len(self.hooked_backup) == 0:
+            return
+        # TODO: handle lowvram, assuming there is something that needs to be done
+        if self.model_lowvram:
+            pass
+        keys = list(self.hooked_backup.keys())
+
+        if self.weight_inplace_update:
+            for k in keys:
+                if device_to is None:
+                    comfy.utils.copy_to_param(self.model, k, self.hooked_backup[k].to(device=self.current_device))
+                else:
+                    comfy.utils.copy_to_param(self.model, k, self.hooked_backup[k])
+        else:
+            for k in keys:
+                if device_to is None:
+                    comfy.utils.set_attr_param(self.model, k, self.hooked_backup[k].to(device=self.current_device))
+                else:
+                    comfy.utils.set_attr_param(self.model, k, self.hooked_backup[k])
+        # clear hooked_backup
+        self.hooked_backup.clear()
+        self.current_lora_hooks = None
+
+    def clone(self, hooks_only=False):
         cloned = ModelPatcherAndInjector(self)
-        cloned.motion_models = self.motion_models.clone() if self.motion_models else self.motion_models
-        cloned.sample_settings = self.sample_settings
-        cloned.motion_injection_params = self.motion_injection_params.clone() if self.motion_injection_params else self.motion_injection_params
+        for hook in self.hooked_patches:
+            cloned.hooked_patches[hook] = {}
+            for k in self.hooked_patches[hook]:
+                cloned.hooked_patches[hook][k] = self.hooked_patches[hook][k][:]
+        cloned.hooked_backup = self.hooked_backup
+        cloned.current_lora_hooks = self.current_lora_hooks
+        if not hooks_only:
+            cloned.motion_models = self.motion_models.clone() if self.motion_models else self.motion_models
+            cloned.sample_settings = self.sample_settings
+            cloned.motion_injection_params = self.motion_injection_params.clone() if self.motion_injection_params else self.motion_injection_params
         return cloned
     
     @classmethod
-    def create_from(cls, model: Union[ModelPatcher, 'ModelPatcherAndInjector']) -> 'ModelPatcherAndInjector':
+    def create_from(cls, model: Union[ModelPatcher, 'ModelPatcherAndInjector'], hooks_only=False) -> 'ModelPatcherAndInjector':
         if isinstance(model, ModelPatcherAndInjector):
-            return model.clone()
+            return model.clone(hooks_only=hooks_only)
         else:
             return ModelPatcherAndInjector(model)
+
+
+def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora: dict[str, Tensor], lora_hook: LoraHook, strength_model: float, strength_clip: float):
+    key_map = {}
+    if model is not None:
+        key_map = comfy.lora.model_lora_keys_unet(model.model, key_map)
+    if clip is not None:
+        key_map = comfy.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
+
+    loaded = comfy.lora.load_lora(lora, key_map)
+    if model is not None:
+        new_modelpatcher = ModelPatcherAndInjector.create_from(model)
+        k = new_modelpatcher.add_hooked_patches(lora_hook=lora_hook, patches=loaded, strength_patch=strength_model)
+    else:
+        k = ()
+        new_modelpatcher = None
+    
+    if clip is not None:
+        new_clip = clip.clone()
+        # TODO: handle a special version of CLIP with hooked_patches
+        k1 = ()
+    else:
+        k1 = ()
+        new_clip = None
+    k = set(k)
+    k1 = set(k1)
+    for x in loaded:
+        if (x not in k) and (x not in k1):
+            logger.warning(f"NOT LOADED {x}")
+    
+    return (new_modelpatcher, new_clip)
 
 
 class MotionModelPatcher(ModelPatcher):
@@ -358,6 +519,7 @@ def get_vanilla_model_patcher(m: ModelPatcher) -> ModelPatcher:
     model.model_options = copy.deepcopy(m.model_options)
     model.model_keys = m.model_keys
     return model
+
 
 # adapted from https://github.com/guoyww/AnimateDiff/blob/main/animatediff/utils/convert_lora_safetensor_to_diffusers.py
 # Example LoRA keys:

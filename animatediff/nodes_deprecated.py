@@ -54,7 +54,7 @@ class AnimateDiffLoader_Deprecated:
                 apply_v2_properly=False,
         )
         # inject for use in sampling code
-        model = ModelPatcherAndInjector(model)
+        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
         model.motion_models = MotionModelGroup(motion_model)
         model.motion_injection_params = params
 
@@ -123,7 +123,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         # set context settings
         params.set_context(context_options=context_group)
         # inject for use in sampling code
-        model = ModelPatcherAndInjector(model)
+        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
         model.motion_models = MotionModelGroup(motion_model)
         model.motion_injection_params = params
 

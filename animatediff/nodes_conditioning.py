@@ -1,9 +1,13 @@
+import uuid
 import folder_paths
+from typing import Union
 
 from comfy.model_patcher import ModelPatcher
+from comfy.sd import CLIP
 import comfy.utils
 
-from .model_injection import ModelPatcherAndInjector
+from .utils_motion import LoraHook, LoraHookGroup
+from .model_injection import ModelPatcherAndInjector, load_hooked_lora_for_models
 
 # based on ComfyUI's nodes.py LoraLoader
 class MaskableLoraLoader:
@@ -22,11 +26,11 @@ class MaskableLoraLoader:
             }
         }
     
-    RETURN_TYPES = ("MODEL", "CLIP", "LORA_IDS")
+    RETURN_TYPES = ("MODEL", "CLIP", "LORA_HOOK")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
     FUNCTION = "load_lora"
 
-    def load_lora(self, model: ModelPatcher, clip: ModelPatcher, lora_name: str, strength_model: float, strength_clip: float):
+    def load_lora(self, model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora_name: str, strength_model: float, strength_clip: float):
         if strength_model == 0 and strength_clip == 0:
             return (model, clip)
         
@@ -44,8 +48,12 @@ class MaskableLoraLoader:
             lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
             self.loaded_lora = (lora_path, lora)
 
-        model_lora, clip_lora = model.clone(), clip.clone()
-        return (model_lora, clip_lora)
+        lora_hook = LoraHook(lora_name=lora_name)
+        lora_hook_group = LoraHookGroup()
+        lora_hook_group.add(lora_hook)
+        model_lora, clip_lora = load_hooked_lora_for_models(model=model, clip=clip, lora=lora, lora_hook=lora_hook,
+                                                            strength_model=strength_model, strength_clip=strength_clip)
+        return (model_lora, clip_lora, lora_hook_group)
 
 
 class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
@@ -59,9 +67,52 @@ class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
             }
         }
 
-    RETURN_TYPES = ("MODEL", "LORA_IDS")
+    RETURN_TYPES = ("MODEL", "LORA_HOOK")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
     FUNCTION = "load_lora_model_only"
 
     def load_lora_model_only(self, model: ModelPatcher, lora_name: str, strength_model: float):
-        return (self.load_lora(model, None, lora_name, strength_model, 0)[0],)
+        model_lora, clip_lora, lora_hook = self.load_lora(model=model, clip=None, lora_name=lora_name,
+                                                          strength_model=strength_model, strength_clip=0)
+        return (model_lora, lora_hook)
+
+
+class AttachLoraHook:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "conditioning": ("CONDITIONING",),
+                "lora_hook": ("LORA_HOOK",),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "attach_lora_hook"
+
+    def attach_lora_hook(self, conditioning, lora_hook: LoraHookGroup):
+        c = []
+        for t in conditioning:
+            n = [t[0], t[1].copy()]
+            n[1]["lora_hook"] = lora_hook
+            c.append(n)
+        return (c, )
+
+
+class CombineLoraHooks:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "lora_hook_A": ("LORA_HOOK",),
+                "lora_hook_B": ("LORA_HOOK",),
+            }
+        }
+    
+    RETURN_TYPES = ("LORA_HOOK",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "combine_lora_hooks"
+
+    def combine_lora_hooks(self, lora_hook_A: LoraHookGroup, lora_hook_B: LoraHookGroup):
+        return (lora_hook_A.clone_and_combine(lora_hook_B),)
