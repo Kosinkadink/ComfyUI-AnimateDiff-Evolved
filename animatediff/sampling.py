@@ -562,6 +562,8 @@ def calc_cond_uncond_batch_wrapper(model, cond, uncond, x_in, timestep, model_op
     # check if conds or unconds contain lora_hook
     contains_lora_hooks = False
     for cond_uncond in [cond, uncond]:
+        if cond_uncond is None:
+            continue
         for t in cond_uncond:
             if "lora_hook" in t:
                 contains_lora_hooks = True
