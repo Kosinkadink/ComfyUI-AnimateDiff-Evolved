@@ -49,6 +49,7 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.hooked_backup = {}
         self.current_lora_hooks = None
         # injection stuff
+        self.currently_injected = False
         self.motion_injection_params: InjectionParams = InjectionParams()
         self.sample_settings: SampleSettings = SampleSettings()
         self.motion_models: MotionModelGroup = None
@@ -119,6 +120,7 @@ class ModelPatcherAndInjector(ModelPatcher):
     def inject_model(self, device_to=None):
         if self.motion_models is not None:
             for motion_model in self.motion_models.models:
+                self.currently_injected = True
                 motion_model.model.inject(self)
                 try:
                     motion_model.model.to(device_to)
@@ -133,6 +135,7 @@ class ModelPatcherAndInjector(ModelPatcher):
                     motion_model.model.to(device_to)
                 except Exception:
                     pass
+            self.currently_injected = False
 
     def apply_lora_hooks(self, lora_hooks: LoraHookGroup, device_to=None):
         # first, determine if need to reapply patches
@@ -150,10 +153,13 @@ class ModelPatcherAndInjector(ModelPatcher):
         # use current device
         if not device_to:
             device_to=self.current_device
-        # first, unpatch any previous patches
-        self.unpatch_hooked()
         # then, handle weights
         if patch_weights:
+            # first, unpatch any previous patches
+            self.unpatch_hooked()
+            was_injected = self.currently_injected
+            if was_injected:
+                self.eject_model()
             model_sd = self.model_state_dict()
             # get combined patches of relevant lora_hooks
             relevant_patches = self.get_combined_hooked_patches(lora_hooks=lora_hooks)
@@ -163,6 +169,10 @@ class ModelPatcherAndInjector(ModelPatcher):
                     continue
                 self.patch_hooked_weight_to_device(combined_patches=relevant_patches, key=key, device_to=device_to)
             self.current_lora_hooks = lora_hooks
+            # reinject model, if needed
+            if was_injected:
+                self.inject_model()
+        
 
     def patch_hooked_lowvram(self, lora_hooks: LoraHookGroup, device_to=None, lowvram_model_memory=0):
         # TODO: handle lowvram situation
@@ -195,6 +205,9 @@ class ModelPatcherAndInjector(ModelPatcher):
         # if no backups from before hook, then nothing to unpatch
         if len(self.hooked_backup) == 0:
             return
+        was_injected = self.currently_injected
+        if was_injected:
+            self.eject_model()
         # TODO: handle lowvram, assuming there is something that needs to be done
         if self.model_lowvram:
             pass
@@ -215,6 +228,9 @@ class ModelPatcherAndInjector(ModelPatcher):
         # clear hooked_backup
         self.hooked_backup.clear()
         self.current_lora_hooks = None
+        # reinject model, if necessary
+        if was_injected:
+            self.inject_model()
 
     def clone(self, hooks_only=False):
         cloned = ModelPatcherAndInjector(self)
@@ -224,6 +240,7 @@ class ModelPatcherAndInjector(ModelPatcher):
                 cloned.hooked_patches[hook][k] = self.hooked_patches[hook][k][:]
         cloned.hooked_backup = self.hooked_backup
         cloned.current_lora_hooks = self.current_lora_hooks
+        cloned.currently_injected = self.currently_injected
         if not hooks_only:
             cloned.motion_models = self.motion_models.clone() if self.motion_models else self.motion_models
             cloned.sample_settings = self.sample_settings
