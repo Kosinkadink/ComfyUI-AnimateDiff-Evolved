@@ -6,7 +6,7 @@ from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithConte
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ApplyAnimateLCMI2VModel, ADKeyframeNode,
                          LoadAnimateDiffModelNode, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
-from .nodes_conditioning import MaskableLoraLoaderModelOnly, AttachLoraHook, CombineLoraHooks
+from .nodes_conditioning import MaskableLoraLoader, MaskableLoraLoaderModelOnly, SetModelLoraHook, SetClipLoraHook, CombineLoraHooks
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
@@ -18,7 +18,7 @@ from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, Swe
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect
 from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated,
                                AnimateDiffModelSettings, AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
-from .nodes_lora import AnimateDiffLoraLoader, MaskedLoraLoader
+from .nodes_lora import AnimateDiffLoraLoader
 
 from .logger import logger
 
@@ -50,9 +50,11 @@ NODE_CLASS_MAPPINGS = {
     "ADE_IterationOptsDefault": IterationOptionsNode,
     "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
     # Conditioning
+    "ADE_RegisterLoraHook": MaskableLoraLoader,
     "ADE_RegisterLoraHookModelOnly": MaskableLoraLoaderModelOnly,
     "ADE_CombineLoraHooks": CombineLoraHooks,
-    "ADE_AttachLoraHookToConditioning": AttachLoraHook,
+    "ADE_AttachLoraHookToConditioning": SetModelLoraHook,
+    "ADE_AttachLoraHookToCLIP": SetClipLoraHook,
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
@@ -97,8 +99,6 @@ NODE_CLASS_MAPPINGS = {
     "ADE_LoadAnimateLCMI2VModel": LoadAnimateLCMI2VModelNode,
     "ADE_UpscaleAndVAEEncode": UpscaleAndVaeEncode,
     "ADE_InjectI2VIntoAnimateDiffModel": LoadAnimateDiffAndInjectI2VNode,
-    # MaskedLoraLoader
-    #"ADE_MaskedLoadLora": MaskedLoraLoader,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
@@ -127,9 +127,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
     "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",
     # Conditioning
+    "ADE_RegisterLoraHook": "Register LoRA Hook 🎭🅐🅓",
     "ADE_RegisterLoraHookModelOnly": "Register LoRA Hook (Model Only) 🎭🅐🅓",
     "ADE_CombineLoraHooks": "Combine LoRA Hooks 🎭🅐🅓",
-    "ADE_AttachLoraHookToConditioning": "Attach LoRA Hook to Conditioning 🎭🅐🅓",
+    "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
+    "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
@@ -174,8 +176,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_LoadAnimateLCMI2VModel": "Load AnimateLCM-I2V Model 🎭🅐🅓②",
     "ADE_UpscaleAndVAEEncode": "Scale Ref Image and VAE Encode 🎭🅐🅓②",
     "ADE_InjectI2VIntoAnimateDiffModel": "🧪Inject I2V into AnimateDiff Model 🎭🅐🅓②",
-    # MaskedLoraLoader
-    #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "🚫AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",

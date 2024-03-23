@@ -7,7 +7,7 @@ from comfy.sd import CLIP
 import comfy.utils
 
 from .utils_motion import LoraHook, LoraHookGroup
-from .model_injection import ModelPatcherAndInjector, load_hooked_lora_for_models
+from .model_injection import ModelPatcherAndInjector, CLIPWithHooks, load_hooked_lora_for_models
 
 # based on ComfyUI's nodes.py LoraLoader
 class MaskableLoraLoader:
@@ -77,7 +77,7 @@ class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
         return (model_lora, lora_hook)
 
 
-class AttachLoraHook:
+class SetModelLoraHook:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -98,6 +98,27 @@ class AttachLoraHook:
             n[1]["lora_hook"] = lora_hook
             c.append(n)
         return (c, )
+    
+
+class SetClipLoraHook:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "lora_hook": ("LORA_HOOK",),
+            }
+        }
+    
+    RETURN_TYPES = ("CLIP",)
+    RETURN_NAMES = ("hook_CLIP",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "apply_lora_hook"
+
+    def apply_lora_hook(self, clip: CLIP, lora_hook: LoraHookGroup):
+        new_clip = CLIPWithHooks(clip)
+        new_clip.set_desired_hooks(lora_hooks=lora_hook)
+        return (new_clip, )
 
 
 class CombineLoraHooks:

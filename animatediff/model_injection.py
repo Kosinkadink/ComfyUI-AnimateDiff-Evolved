@@ -255,6 +255,39 @@ class ModelPatcherAndInjector(ModelPatcher):
             return ModelPatcherAndInjector(model)
 
 
+class CLIPWithHooks(CLIP):
+    def __init__(self, clip: Union[CLIP, 'CLIPWithHooks']):
+        super().__init__(no_init=True)
+        self.patcher = ModelPatcherAndInjector.create_from(clip.patcher)
+        self.cond_stage_model = clip.cond_stage_model
+        self.tokenizer = clip.tokenizer
+        self.layer_idx = clip.layer_idx
+        self.desired_hooks: LoraHookGroup = None
+        if hasattr(clip, "desired_hooks"):
+            self.desired_hooks = clip.desired_hooks
+    
+    def clone(self):
+        cloned = CLIPWithHooks(clip=self)
+        return cloned
+
+    def set_desired_hooks(self, lora_hooks: LoraHookGroup):
+        self.desired_hooks = lora_hooks
+
+    def add_hooked_patches(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
+        return self.patcher.add_hooked_patches(lora_hook=lora_hook, patches=patches, strength_patch=strength_patch, strength_model=strength_model)
+
+    def load_model(self, *args, **kwargs):
+        self.patcher.unpatch_hooked()
+        returned = super().load_model(*args, **kwargs)
+        # apply desired hooks
+        self.patcher.patch_hooked(lora_hooks=self.desired_hooks)
+        return returned
+
+    def encode_from_tokens(self, *args, **kwargs):
+        returned = super().encode_from_tokens(*args, **kwargs)
+        return returned
+
+
 def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora: dict[str, Tensor], lora_hook: LoraHook, strength_model: float, strength_clip: float):
     key_map = {}
     if model is not None:
@@ -271,9 +304,8 @@ def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInject
         new_modelpatcher = None
     
     if clip is not None:
-        new_clip = clip.clone()
-        # TODO: handle a special version of CLIP with hooked_patches
-        k1 = ()
+        new_clip = CLIPWithHooks(clip)
+        k1 = new_clip.add_hooked_patches(lora_hook=lora_hook, patches=loaded, strength_patch=strength_clip)
     else:
         k1 = ()
         new_clip = None
