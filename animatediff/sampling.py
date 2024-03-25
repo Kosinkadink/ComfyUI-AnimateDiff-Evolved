@@ -52,6 +52,8 @@ class AnimateDiffHelper_GlobalState:
         self.current_step: int = 0
         self.total_steps: int = 0
         if self.model_patcher is not None:
+            self.model_patcher.unpatch_hooked()
+            self.model_patcher.clear_cached_hooked_weights()
             del self.model_patcher
             self.model_patcher = None
         if self.motion_models is not None:
@@ -275,6 +277,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
         cached_noise = None
         function_injections = FunctionInjectionHolder()
         try:
+            if len(model.hooked_patches) > 0:
+                model_management.cleanup_models()
             if model.sample_settings.custom_cfg is not None:
                 model = model.sample_settings.custom_cfg.patch_model(model)
             # clone params from model

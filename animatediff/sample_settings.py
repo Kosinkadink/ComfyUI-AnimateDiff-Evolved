@@ -11,7 +11,7 @@ from comfy.model_base import BaseModel
 from . import freeinit
 from .context import ContextOptions, ContextOptionsGroup
 from .utils_model import SigmaSchedule
-from .utils_motion import extend_to_batch_size, get_sorted_list_via_attr, prepare_mask_batch
+from .utils_motion import extend_to_batch_size, get_sorted_list_via_attr, prepare_mask_batch, LoraHookMode
 from .logger import logger
 
 

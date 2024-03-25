@@ -18,7 +18,7 @@ from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
 from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max,
-                           LoraHook, LoraHookGroup)
+                           LoraHook, LoraHookGroup, LoraHookMode)
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -45,15 +45,49 @@ class ModelPatcherAndInjector(ModelPatcher):
             self.object_patches_backup = m.object_patches_backup
 
         # lora hook stuff
-        self.hooked_patches = {}
+        self.hooked_patches = {} # binds LoraHook to specific keys
         self.hooked_backup = {}
+        self.cached_hooked_patches = {} # binds LoraHookGroup to pre-calculated weights (speed optimization)
         self.current_lora_hooks = None
+        self.lora_hook_mode = LoraHookMode.MAX_SPEED
         # injection stuff
         self.currently_injected = False
         self.motion_injection_params: InjectionParams = InjectionParams()
         self.sample_settings: SampleSettings = SampleSettings()
         self.motion_models: MotionModelGroup = None
     
+    def clone(self, hooks_only=False):
+        cloned = ModelPatcherAndInjector(self)
+        # copy lora hooks
+        for hook in self.hooked_patches:
+            cloned.hooked_patches[hook] = {}
+            for k in self.hooked_patches[hook]:
+                cloned.hooked_patches[hook][k] = self.hooked_patches[hook][k][:]
+        # copy pre-calc weights bound to LoraHookGroups
+        for group in self.cached_hooked_patches:
+            cloned.cached_hooked_patches[group] = {}
+            for k in self.cached_hooked_patches[group]:
+                cloned.cached_hooked_patches[group][k] = self.cached_hooked_patches[group][k]
+        cloned.hooked_backup = self.hooked_backup
+        cloned.current_lora_hooks = self.current_lora_hooks
+        cloned.currently_injected = self.currently_injected
+        cloned.lora_hook_mode = self.lora_hook_mode
+        if not hooks_only:
+            cloned.motion_models = self.motion_models.clone() if self.motion_models else self.motion_models
+            cloned.sample_settings = self.sample_settings
+            cloned.motion_injection_params = self.motion_injection_params.clone() if self.motion_injection_params else self.motion_injection_params
+        return cloned
+    
+    @classmethod
+    def create_from(cls, model: Union[ModelPatcher, 'ModelPatcherAndInjector'], hooks_only=False) -> 'ModelPatcherAndInjector':
+        if isinstance(model, ModelPatcherAndInjector):
+            return model.clone(hooks_only=hooks_only)
+        else:
+            return ModelPatcherAndInjector(model)
+
+    def set_lora_hook_mode(self, lora_hook_mode: str):
+        self.lora_hook_mode = lora_hook_mode
+
     def add_hooked_patches(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
         '''
         Based on add_patches, but for hooked weights.
@@ -113,6 +147,7 @@ class ModelPatcherAndInjector(ModelPatcher):
         if unpatch_weights: # TODO: keep only 'else' portion when don't need to worry about past comfy versions
             # handle hooked_patches first
             self.unpatch_hooked(device_to=device_to)
+            self.clear_cached_hooked_weights()
             return super().unpatch_model(device_to)
         else:
             return super().unpatch_model(device_to, unpatch_weights)
@@ -157,43 +192,77 @@ class ModelPatcherAndInjector(ModelPatcher):
         if patch_weights:
             # first, unpatch any previous patches
             self.unpatch_hooked()
+            # eject model, if needed
             was_injected = self.currently_injected
             if was_injected:
                 self.eject_model()
+
             model_sd = self.model_state_dict()
-            # get combined patches of relevant lora_hooks
-            relevant_patches = self.get_combined_hooked_patches(lora_hooks=lora_hooks)
-            for key in relevant_patches:
-                if key not in model_sd:
-                    logger.warning(f"LoraHook hook could not patch. key doesn't exist in model: {key}")
-                    continue
-                self.patch_hooked_weight_to_device(combined_patches=relevant_patches, key=key, device_to=device_to)
+            # if have cached weights for lora_hooks, use it
+            cached_weights = self.cached_hooked_patches.get(lora_hooks, None)
+            if cached_weights is not None:
+                for key in cached_weights:
+                    if key not in model_sd:
+                        logger.warning(f"Cached LoraHook hook could not patch. key doesn't exist in model: {key}")
+                    self.patch_cached_hooked_weight(cached_weights=cached_weights, key=key)
+            else:
+                # get combined patches of relevant lora_hooks
+                relevant_patches = self.get_combined_hooked_patches(lora_hooks=lora_hooks)
+                for key in relevant_patches:
+                    if key not in model_sd:
+                        logger.warning(f"LoraHook hook could not patch. key doesn't exist in model: {key}")
+                        continue
+                    self.patch_hooked_weight_to_device(lora_hooks=lora_hooks, combined_patches=relevant_patches, key=key, device_to=device_to)
             self.current_lora_hooks = lora_hooks
             # reinject model, if needed
             if was_injected:
                 self.inject_model()
-        
 
     def patch_hooked_lowvram(self, lora_hooks: LoraHookGroup, device_to=None, lowvram_model_memory=0):
         # TODO: handle lowvram situation
         pass
 
-    def patch_hooked_weight_to_device(self, combined_patches: dict, key: str, device_to=None):
+    def patch_cached_hooked_weight(self, cached_weights: dict, key: str):
+        inplace_update = self.weight_inplace_update
+        target_device = self.offload_device
+        if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
+            target_device = self.current_device
+
+        weight: Tensor = comfy.utils.get_attr(self.model, key)
+
+        if key not in self.hooked_backup:
+            self.hooked_backup[key] = weight.to(device=target_device, copy=inplace_update)
+        if inplace_update:
+            comfy.utils.copy_to_param(self.model, key, cached_weights[key])
+        else:
+            comfy.utils.set_attr_param(self.model, key, cached_weights[key])
+
+    def clear_cached_hooked_weights(self):
+        self.cached_hooked_patches.clear()
+        self.current_lora_hooks = None
+
+    def patch_hooked_weight_to_device(self, lora_hooks: LoraHookGroup, combined_patches: dict, key: str, device_to=None):
         if key not in combined_patches:
             return
         
         weight: Tensor = comfy.utils.get_attr(self.model, key)
 
         inplace_update = self.weight_inplace_update
+        target_device = self.offload_device
+        if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
+            target_device = self.current_device
 
         if key not in self.hooked_backup:
-            self.hooked_backup[key] = weight.to(device=self.offload_device, copy=inplace_update)
+            self.hooked_backup[key] = weight.to(device=target_device, copy=inplace_update)
         
         if device_to is not None:
             temp_weight = comfy.model_management.cast_to_device(weight, device_to, torch.float32, copy=True)
         else:
             temp_weight = weight.to(torch.float32, copy=True)
         out_weight = self.calculate_weight(combined_patches[key], temp_weight, key).to(weight.dtype)
+        if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
+            self.cached_hooked_patches.setdefault(lora_hooks, {})
+            self.cached_hooked_patches[lora_hooks][key] = out_weight
         if inplace_update:
             comfy.utils.copy_to_param(self.model, key, out_weight)
         else:
@@ -212,7 +281,6 @@ class ModelPatcherAndInjector(ModelPatcher):
         if self.model_lowvram:
             pass
         keys = list(self.hooked_backup.keys())
-
         if self.weight_inplace_update:
             for k in keys:
                 if device_to is None:
@@ -232,33 +300,12 @@ class ModelPatcherAndInjector(ModelPatcher):
         if was_injected:
             self.inject_model()
 
-    def clone(self, hooks_only=False):
-        cloned = ModelPatcherAndInjector(self)
-        for hook in self.hooked_patches:
-            cloned.hooked_patches[hook] = {}
-            for k in self.hooked_patches[hook]:
-                cloned.hooked_patches[hook][k] = self.hooked_patches[hook][k][:]
-        cloned.hooked_backup = self.hooked_backup
-        cloned.current_lora_hooks = self.current_lora_hooks
-        cloned.currently_injected = self.currently_injected
-        if not hooks_only:
-            cloned.motion_models = self.motion_models.clone() if self.motion_models else self.motion_models
-            cloned.sample_settings = self.sample_settings
-            cloned.motion_injection_params = self.motion_injection_params.clone() if self.motion_injection_params else self.motion_injection_params
-        return cloned
-    
-    @classmethod
-    def create_from(cls, model: Union[ModelPatcher, 'ModelPatcherAndInjector'], hooks_only=False) -> 'ModelPatcherAndInjector':
-        if isinstance(model, ModelPatcherAndInjector):
-            return model.clone(hooks_only=hooks_only)
-        else:
-            return ModelPatcherAndInjector(model)
-
 
 class CLIPWithHooks(CLIP):
     def __init__(self, clip: Union[CLIP, 'CLIPWithHooks']):
         super().__init__(no_init=True)
         self.patcher = ModelPatcherAndInjector.create_from(clip.patcher)
+        self.patcher.set_lora_hook_mode(lora_hook_mode=LoraHookMode.MIN_VRAM)
         self.cond_stage_model = clip.cond_stage_model
         self.tokenizer = clip.tokenizer
         self.layer_idx = clip.layer_idx

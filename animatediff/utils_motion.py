@@ -251,6 +251,11 @@ class ADKeyframeGroup:
         return cloned
 
 
+class LoraHookMode:
+    MIN_VRAM = "min_vram"
+    MAX_SPEED = "max_speed"
+
+
 class LoraHook:
     def __init__(self, lora_name: str):
         self.lora_name = lora_name
@@ -265,8 +270,14 @@ class LoraHookGroup:
     Stores LoRA hooks to apply for conditioning
     '''
     def __init__(self):
-        self.hooks = []
+        self.hooks: list[LoraHook] = []
     
+    def names(self):
+        names = []
+        for hook in self.hooks:
+            names.append(hook.lora_name)
+        return ",".join(names)
+
     def add(self, hook: str):
         if hook not in self.hooks:
             self.hooks.append(hook)
