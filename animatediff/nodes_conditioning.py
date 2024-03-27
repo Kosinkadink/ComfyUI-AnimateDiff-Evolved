@@ -4,10 +4,11 @@ from typing import Union
 
 from comfy.model_patcher import ModelPatcher
 from comfy.sd import CLIP
+import comfy.sd
 import comfy.utils
 
 from .utils_motion import LoraHook, LoraHookGroup
-from .model_injection import ModelPatcherAndInjector, CLIPWithHooks, load_hooked_lora_for_models
+from .model_injection import ModelPatcherAndInjector, CLIPWithHooks, load_hooked_lora_for_models, load_model_as_hooked_lora_for_models
 
 # based on ComfyUI's nodes.py LoraLoader
 class MaskableLoraLoader:
@@ -77,6 +78,55 @@ class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
         return (model_lora, lora_hook)
 
 
+class MaskableSDModelLoader:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "clip": ("CLIP",),
+                "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
+            }
+        }
+    
+    RETURN_TYPES = ("MODEL", "CLIP", "LORA_HOOK")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "load_model_as_lora"
+
+    def load_model_as_lora(self, model: ModelPatcher, clip: CLIP, ckpt_name: str):
+        ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
+        out = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
+        model_loaded = out[0]
+        clip_loaded = out[1]
+
+        lora_hook = LoraHook(lora_name=ckpt_name)
+        lora_hook_group = LoraHookGroup()
+        lora_hook_group.add(lora_hook)
+        model_lora, clip_lora = load_model_as_hooked_lora_for_models(model=model, clip=clip,
+                                                                     model_loaded=model_loaded, clip_loaded=clip_loaded,
+                                                                     lora_hook=lora_hook)
+        return (model_lora, clip_lora, lora_hook_group)
+
+
+class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
+            }
+        }
+    
+    RETURN_TYPES = ("MODEL", "LORA_HOOK")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "load_model_as_lora_model_only"
+
+    def load_model_as_lora_model_only(self, model: ModelPatcher, ckpt_name: str):
+        model_lora, clip_lora, lora_hook = self.load_model_as_lora(model=model, clip=None, ckpt_name=ckpt_name)
+        return (model_lora, lora_hook)
+
+
 class SetModelLoraHook:
     @classmethod
     def INPUT_TYPES(s):
@@ -132,8 +182,67 @@ class CombineLoraHooks:
         }
     
     RETURN_TYPES = ("LORA_HOOK",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine hooks"
     FUNCTION = "combine_lora_hooks"
 
     def combine_lora_hooks(self, lora_hook_A: LoraHookGroup, lora_hook_B: LoraHookGroup):
         return (lora_hook_A.clone_and_combine(lora_hook_B),)
+
+
+class CombineLoraHookFourOptional:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+
+            },
+            "optional": {
+                "lora_hook_A": ("LORA_HOOK",),
+                "lora_hook_B": ("LORA_HOOK",),
+                "lora_hook_C": ("LORA_HOOK",),
+                "lora_hook_D": ("LORA_HOOK",),
+            }
+        }
+
+    RETURN_TYPES = ("LORA_HOOK",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine hooks"
+    FUNCTION = "combine_lora_hooks"
+
+    def combine_lora_hooks(self,
+                           lora_hook_A: LoraHookGroup=None, lora_hook_B: LoraHookGroup=None,
+                           lora_hook_C: LoraHookGroup=None, lora_hook_D: LoraHookGroup=None,):
+        candidates = [lora_hook_A, lora_hook_B, lora_hook_C, lora_hook_D]
+        return (LoraHookGroup.combine_all_lora_hooks(candidates),)
+
+
+class CombineLoraHookEightOptional:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "optional": {
+                "lora_hook_A": ("LORA_HOOK",),
+                "lora_hook_B": ("LORA_HOOK",),
+                "lora_hook_C": ("LORA_HOOK",),
+                "lora_hook_D": ("LORA_HOOK",),
+                "lora_hook_E": ("LORA_HOOK",),
+                "lora_hook_F": ("LORA_HOOK",),
+                "lora_hook_G": ("LORA_HOOK",),
+                "lora_hook_H": ("LORA_HOOK",),
+            }
+        }
+
+    RETURN_TYPES = ("LORA_HOOK",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine hooks"
+    FUNCTION = "combine_lora_hooks"
+
+    def combine_lora_hooks(self,
+                           lora_hook_A: LoraHookGroup=None, lora_hook_B: LoraHookGroup=None,
+                           lora_hook_C: LoraHookGroup=None, lora_hook_D: LoraHookGroup=None,
+                           lora_hook_E: LoraHookGroup=None, lora_hook_F: LoraHookGroup=None,
+                           lora_hook_G: LoraHookGroup=None, lora_hook_H: LoraHookGroup=None):
+        candidates = [lora_hook_A, lora_hook_B, lora_hook_C, lora_hook_D,
+                      lora_hook_E, lora_hook_F, lora_hook_G, lora_hook_H]
+        return (LoraHookGroup.combine_all_lora_hooks(candidates),)
+
+# NOTE: if at some point I add more Javascript stuff to this repo, there should be a combine node
+#   that dynamically increases the hooks available to plug in on the node

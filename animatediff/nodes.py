@@ -6,7 +6,9 @@ from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithConte
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ApplyAnimateLCMI2VModel, ADKeyframeNode,
                          LoadAnimateDiffModelNode, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
-from .nodes_conditioning import MaskableLoraLoader, MaskableLoraLoaderModelOnly, SetModelLoraHook, SetClipLoraHook, CombineLoraHooks
+from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
+                                 SetModelLoraHook, SetClipLoraHook,
+                                 CombineLoraHooks, CombineLoraHookFourOptional, CombineLoraHookEightOptional)
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
@@ -52,7 +54,11 @@ NODE_CLASS_MAPPINGS = {
     # Conditioning
     "ADE_RegisterLoraHook": MaskableLoraLoader,
     "ADE_RegisterLoraHookModelOnly": MaskableLoraLoaderModelOnly,
+    #"ADE_RegisterModelAsLoraHook": MaskableSDModelLoader,  # CLIP replace does not work properly
+    "ADE_RegisterModelAsLoraHookModelOnly": MaskableSDModelLoaderModelOnly,
     "ADE_CombineLoraHooks": CombineLoraHooks,
+    "ADE_CombineLoraHooksFour": CombineLoraHookFourOptional,
+    "ADE_CombineLoraHooksEight": CombineLoraHookEightOptional,
     "ADE_AttachLoraHookToConditioning": SetModelLoraHook,
     "ADE_AttachLoraHookToCLIP": SetClipLoraHook,
     # Noise Layer Nodes
@@ -129,7 +135,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Conditioning
     "ADE_RegisterLoraHook": "Register LoRA Hook 🎭🅐🅓",
     "ADE_RegisterLoraHookModelOnly": "Register LoRA Hook (Model Only) 🎭🅐🅓",
-    "ADE_CombineLoraHooks": "Combine LoRA Hooks 🎭🅐🅓",
+    #"ADE_RegisterModelAsLoraHook": "Register Model as LoRA Hook+ 🎭🅐🅓",  # CLIP replace does not work properly
+    "ADE_RegisterModelAsLoraHookModelOnly": "Register Model as LoRA Hook 🎭🅐🅓",
+    "ADE_CombineLoraHooks": "Combine LoRA Hooks [2] 🎭🅐🅓",
+    "ADE_CombineLoraHooksFour": "Combine LoRA Hooks [4] 🎭🅐🅓",
+    "ADE_CombineLoraHooksEight": "Combine LoRA Hooks [8] 🎭🅐🅓",
     "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
     "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
     # Noise Layer Nodes

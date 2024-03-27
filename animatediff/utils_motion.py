@@ -297,6 +297,22 @@ class LoraHookGroup:
             cloned.add(hook)
         return cloned
 
+    @staticmethod
+    def combine_all_lora_hooks(lora_hooks_list: list['LoraHookGroup'], require_count=2) -> 'LoraHookGroup':
+        actual: list[LoraHookGroup] = []
+        for group in lora_hooks_list:
+            if group is not None:
+                actual.append(group)
+        if len(actual) < require_count:
+            raise Exception(f"Need at least {require_count} LoRA Hooks to combine, but only had {len(actual)}.")
+        final_hook: LoraHookGroup = None
+        for hook in actual:
+            if final_hook is None:
+                final_hook = hook.clone()
+            else:
+                final_hook = final_hook.clone_and_combine(hook)
+        return final_hook
+
 
 class DummyNNModule(nn.Module):
     class DoNothingWhenCalled:
