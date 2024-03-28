@@ -54,7 +54,7 @@ NODE_CLASS_MAPPINGS = {
     # Conditioning
     "ADE_RegisterLoraHook": MaskableLoraLoader,
     "ADE_RegisterLoraHookModelOnly": MaskableLoraLoaderModelOnly,
-    #"ADE_RegisterModelAsLoraHook": MaskableSDModelLoader,  # CLIP replace does not work properly
+    #"ADE_RegisterModelAsLoraHook": MaskableSDModelLoader,  # CLIP does not work properly on first run
     "ADE_RegisterModelAsLoraHookModelOnly": MaskableSDModelLoaderModelOnly,
     "ADE_CombineLoraHooks": CombineLoraHooks,
     "ADE_CombineLoraHooksFour": CombineLoraHookFourOptional,
@@ -91,10 +91,6 @@ NODE_CLASS_MAPPINGS = {
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderGen1": AnimateDiffLoaderGen1,
     "ADE_AnimateDiffLoaderWithContext": LegacyAnimateDiffLoaderWithContext,
-    "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
-    "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
-    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
-    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": AnimateDiffModelSettingsAdvancedAttnStrengths,
     # Gen2 Nodes
     "ADE_UseEvolvedSampling": UseEvolvedSamplingNode,
     "ADE_ApplyAnimateDiffModelSimple": ApplyAnimateDiffModelBasicNode,
@@ -109,6 +105,10 @@ NODE_CLASS_MAPPINGS = {
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
     "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
+    "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
+    "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
+    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
+    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": AnimateDiffModelSettingsAdvancedAttnStrengths,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     # Unencapsulated
@@ -135,13 +135,13 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Conditioning
     "ADE_RegisterLoraHook": "Register LoRA Hook 🎭🅐🅓",
     "ADE_RegisterLoraHookModelOnly": "Register LoRA Hook (Model Only) 🎭🅐🅓",
-    #"ADE_RegisterModelAsLoraHook": "Register Model as LoRA Hook+ 🎭🅐🅓",  # CLIP replace does not work properly
-    "ADE_RegisterModelAsLoraHookModelOnly": "Register Model as LoRA Hook 🎭🅐🅓",
+    #"ADE_RegisterModelAsLoraHook": "🔬Register Model as LoRA Hook 🎭🅐🅓",  # CLIP does not work properly on first run
+    "ADE_RegisterModelAsLoraHookModelOnly": "Register Model as LoRA Hook (MO) 🎭🅐🅓",
     "ADE_CombineLoraHooks": "Combine LoRA Hooks [2] 🎭🅐🅓",
     "ADE_CombineLoraHooksFour": "Combine LoRA Hooks [4] 🎭🅐🅓",
     "ADE_CombineLoraHooksEight": "Combine LoRA Hooks [8] 🎭🅐🅓",
     "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
-    "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
+    "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook🔬 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
@@ -172,10 +172,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderGen1": "AnimateDiff Loader 🎭🅐🅓①",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader [Legacy] 🎭🅐🅓①",
-    "ADE_AnimateDiffModelSettings_Release": "🚫[DEPR] Motion Model Settings 🎭🅐🅓①",
-    "ADE_AnimateDiffModelSettingsSimple": "🚫[DEPR] Motion Model Settings (Simple) 🎭🅐🅓①",
-    "ADE_AnimateDiffModelSettings": "🚫[DEPR] Motion Model Settings (Advanced) 🎭🅐🅓①",
-    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": "🚫[DEPR] Motion Model Settings (Adv. Attn) 🎭🅐🅓①",
     # Gen2 Nodes
     "ADE_UseEvolvedSampling": "Use Evolved Sampling 🎭🅐🅓②",
     "ADE_ApplyAnimateDiffModelSimple": "Apply AnimateDiff Model 🎭🅐🅓②",
@@ -190,4 +186,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "🚫AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffCombine": "🚫AnimateDiff Combine [DEPRECATED, Use Video Combine (VHS) Instead!] 🎭🅐🅓",
+    "ADE_AnimateDiffModelSettings_Release": "🚫[DEPR] Motion Model Settings 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettingsSimple": "🚫[DEPR] Motion Model Settings (Simple) 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettings": "🚫[DEPR] Motion Model Settings (Advanced) 🎭🅐🅓①",
+    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": "🚫[DEPR] Motion Model Settings (Adv. Attn) 🎭🅐🅓①",
 }

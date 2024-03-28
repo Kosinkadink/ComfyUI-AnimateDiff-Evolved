@@ -1,5 +1,5 @@
 import copy
-from typing import Union
+from typing import Union, Callable
 
 from einops import rearrange
 from torch import Tensor
@@ -381,17 +381,43 @@ class CLIPWithHooks(CLIP):
     def add_hooked_replace_patches(self, lora_hook: LoraHook, patches):
         return self.patcher.add_hooked_replace_patches(lora_hook=lora_hook, patches=patches)
 
-    def load_model(self, *args, **kwargs):
-        self.patcher.unpatch_hooked()
-        returned = super().load_model(*args, **kwargs)
-        # apply desired hooks
-        self.patcher.patch_hooked(lora_hooks=self.desired_hooks)
-        return returned
+    # def load_model(self, *args, **kwargs):
+    #     #comfy.model_management.cleanup_models()
+    #     #return super().load_model(*args, **kwargs)
+    #     self.patcher.unpatch_hooked()
+    #     returned = super().load_model(*args, **kwargs)
+    #     # apply desired hooks
+    #     self.patcher.patch_hooked(lora_hooks=self.desired_hooks)
+    #     return returned
 
     def encode_from_tokens(self, *args, **kwargs):
-        returned = super().encode_from_tokens(*args, **kwargs)
-        return returned
-
+        # to work properly, need to hack (and then unhack) cond_stage_model's encode_token_weights function
+        def encode_token_weights_factory(orig_encode_token_weights: Callable, clip: CLIPWithHooks):
+            def encode_token_weights_wrapper_hooked(*args, **kwargs):
+                try:
+                    # yeah, not sure why, but first patching is screwed up if things change... BUT only the first time.
+                    # so we apply it twice to avoid it... this will be future me's problem.
+                    # the first result will still end up slightly different than intended, but it's very close.
+                    if clip.desired_hooks is not None:
+                        temp_desired_hooks = clip.desired_hooks.clone() if clip.desired_hooks is not None else None
+                        clip.patcher.clear_cached_hooked_weights()
+                        clip.patcher.unpatch_hooked()
+                        clip.patcher.apply_lora_hooks(temp_desired_hooks)
+                        orig_encode_token_weights(*args, **kwargs)
+                    clip.patcher.clear_cached_hooked_weights()
+                    clip.patcher.apply_lora_hooks(clip.desired_hooks)
+                    return orig_encode_token_weights(*args, **kwargs)
+                finally:
+                    clip.patcher.unpatch_hooked()
+                    clip.patcher.clear_cached_hooked_weights()
+            return encode_token_weights_wrapper_hooked
+        try:
+            orig_encode_token_weights = self.cond_stage_model.encode_token_weights
+            self.cond_stage_model.encode_token_weights = encode_token_weights_factory(orig_encode_token_weights, self)
+            return super().encode_from_tokens(*args, **kwargs)
+        finally:
+            self.cond_stage_model.encode_token_weights = orig_encode_token_weights
+            
 
 def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora: dict[str, Tensor], lora_hook: LoraHook, strength_model: float, strength_clip: float):
     key_map = {}
@@ -400,7 +426,7 @@ def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInject
     if clip is not None:
         key_map = comfy.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
 
-    loaded = comfy.lora.load_lora(lora, key_map)
+    loaded: dict[str] = comfy.lora.load_lora(lora, key_map)
     if model is not None:
         new_modelpatcher = ModelPatcherAndInjector.create_from(model)
         k = new_modelpatcher.add_hooked_patches(lora_hook=lora_hook, patches=loaded, strength_patch=strength_model)
@@ -417,10 +443,8 @@ def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInject
     k = set(k)
     k1 = set(k1)
     for x in loaded:
-        #if x.startswith()
         if (x not in k) and (x not in k1):
             logger.warning(f"NOT LOADED {x}")
-    
     return (new_modelpatcher, new_clip)
 
 

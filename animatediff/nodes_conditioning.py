@@ -194,7 +194,6 @@ class CombineLoraHookFourOptional:
     def INPUT_TYPES(s):
         return {
             "required": {
-
             },
             "optional": {
                 "lora_hook_A": ("LORA_HOOK",),
@@ -219,6 +218,8 @@ class CombineLoraHookEightOptional:
     @classmethod
     def INPUT_TYPES(s):
         return {
+            "required": {
+            },
             "optional": {
                 "lora_hook_A": ("LORA_HOOK",),
                 "lora_hook_B": ("LORA_HOOK",),
