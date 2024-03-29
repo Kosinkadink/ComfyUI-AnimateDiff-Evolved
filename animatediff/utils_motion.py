@@ -253,7 +253,9 @@ class ADKeyframeGroup:
 
 class LoraHookMode:
     MIN_VRAM = "min_vram"
+    MIN_VRAM_LOWVRAM = "min_vram_lowvram"
     MAX_SPEED = "max_speed"
+    MAX_SPEED_LOWVRAM = "max_speed_lowvram"
 
 
 class LoraHook:

@@ -135,13 +135,13 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Conditioning
     "ADE_RegisterLoraHook": "Register LoRA Hook 🎭🅐🅓",
     "ADE_RegisterLoraHookModelOnly": "Register LoRA Hook (Model Only) 🎭🅐🅓",
-    #"ADE_RegisterModelAsLoraHook": "🔬Register Model as LoRA Hook 🎭🅐🅓",  # CLIP does not work properly on first run
+    #"ADE_RegisterModelAsLoraHook": "Register Model as LoRA Hook🔬 🎭🅐🅓",  # CLIP does not work properly on first run
     "ADE_RegisterModelAsLoraHookModelOnly": "Register Model as LoRA Hook (MO) 🎭🅐🅓",
     "ADE_CombineLoraHooks": "Combine LoRA Hooks [2] 🎭🅐🅓",
     "ADE_CombineLoraHooksFour": "Combine LoRA Hooks [4] 🎭🅐🅓",
     "ADE_CombineLoraHooksEight": "Combine LoRA Hooks [8] 🎭🅐🅓",
     "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
-    "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook🔬 🎭🅐🅓",
+    "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
