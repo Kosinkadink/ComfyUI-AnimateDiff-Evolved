@@ -409,7 +409,7 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
     if not ADGS.is_using_sliding_context():
-        cond_pred, uncond_pred = calc_cond_uncond_batch_wrapper(model, cond, uncond_, x, timestep, model_options)
+        cond_pred, uncond_pred = calc_cond_uncond_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)
     else:
         cond_pred, uncond_pred = sliding_calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
 
@@ -428,6 +428,7 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     return cfg_result
 
 
+# TODO: properly carry over changes from calc_cond_batch
 # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
 def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, model_options):
@@ -523,7 +524,7 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         sub_cond = get_resized_cond(cond, full_idxs, len(ctx_idxs)) if cond is not None else None
         sub_uncond = get_resized_cond(uncond, full_idxs, len(ctx_idxs)) if uncond is not None else None
 
-        sub_cond_out, sub_uncond_out = calc_cond_uncond_batch_wrapper(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
+        sub_cond_out, sub_uncond_out = calc_cond_uncond_batch_wrapper(model, [sub_cond, sub_uncond], sub_x, sub_timestep, model_options)
 
         if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
             full_length = ADGS.params.full_length
@@ -560,10 +561,10 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         return cond_final, uncond_final
 
 
-def calc_cond_uncond_batch_wrapper(model, cond, uncond, x_in, timestep, model_options):
+def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, timestep, model_options):
     # check if conds or unconds contain lora_hook
     contains_lora_hooks = False
-    for cond_uncond in [cond, uncond]:
+    for cond_uncond in conds:
         if cond_uncond is None:
             continue
         for t in cond_uncond:
@@ -573,9 +574,11 @@ def calc_cond_uncond_batch_wrapper(model, cond, uncond, x_in, timestep, model_op
         if contains_lora_hooks:
             break
     if contains_lora_hooks:
-        return calc_cond_uncond_batch_lora_hook(model, cond, uncond, x_in, timestep, model_options)
-    return comfy.samplers.calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options)
-
+        return calc_cond_uncond_batch_lora_hook(model, conds[0], conds[1], x_in, timestep, model_options)
+    # keep for backwards compatibility, for now
+    if not hasattr(comfy.samplers, "calc_cond_batch"):
+        return comfy.samplers.calc_cond_uncond_batch(model, conds[0], conds[1], x_in, timestep, model_options)
+    return comfy.samplers.calc_cond_batch(model, conds, x_in, timestep, model_options) 
 
 def calc_cond_uncond_batch_lora_hook(model, cond, uncond, x_in, timestep, model_options):
     out_cond = torch.zeros_like(x_in)
