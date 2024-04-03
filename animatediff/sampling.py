@@ -402,7 +402,10 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
     if not ADGS.is_using_sliding_context():
-        cond_pred, uncond_pred = comfy.samplers.calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
+        if hasattr(comfy.samplers, "calc_cond_batch"):
+            cond_pred, uncond_pred = comfy.samplers.calc_cond_batch(model, [cond, uncond_], x, timestep, model_options)
+        else:
+            cond_pred, uncond_pred = comfy.samplers.calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
     else:
         cond_pred, uncond_pred = sliding_calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
 
@@ -516,7 +519,10 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         sub_cond = get_resized_cond(cond, full_idxs, len(ctx_idxs)) if cond is not None else None
         sub_uncond = get_resized_cond(uncond, full_idxs, len(ctx_idxs)) if uncond is not None else None
 
-        sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
+        if hasattr(comfy.samplers, "calc_cond_batch"):
+            sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_batch(model, [sub_cond, sub_uncond], sub_x, sub_timestep, model_options)
+        else:
+            sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
 
         if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
             full_length = ADGS.params.full_length
