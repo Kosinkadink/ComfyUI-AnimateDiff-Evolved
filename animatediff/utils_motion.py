@@ -2,6 +2,7 @@ from typing import Union
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+import uuid
 
 import comfy.model_management as model_management
 import comfy.ops
@@ -248,6 +249,71 @@ class ADKeyframeGroup:
             if not tk.default:
                 cloned.add(tk)
         return cloned
+
+
+class LoraHookMode:
+    MIN_VRAM = "min_vram"
+    MIN_VRAM_LOWVRAM = "min_vram_lowvram"
+    MAX_SPEED = "max_speed"
+    MAX_SPEED_LOWVRAM = "max_speed_lowvram"
+
+
+class LoraHook:
+    def __init__(self, lora_name: str):
+        self.lora_name = lora_name
+        self.id = f"{lora_name}|{uuid.uuid4()}"
+    
+    # def __eq__(self, other: 'LoraHook'):
+    #     return self.id == other.id
+
+
+class LoraHookGroup:
+    '''
+    Stores LoRA hooks to apply for conditioning
+    '''
+    def __init__(self):
+        self.hooks: list[LoraHook] = []
+    
+    def names(self):
+        names = []
+        for hook in self.hooks:
+            names.append(hook.lora_name)
+        return ",".join(names)
+
+    def add(self, hook: str):
+        if hook not in self.hooks:
+            self.hooks.append(hook)
+    
+    def is_empty(self):
+        return len(self.hooks) == 0
+
+    def clone(self):
+        cloned = LoraHookGroup()
+        for hook in self.hooks:
+            cloned.add(hook)
+        return cloned
+
+    def clone_and_combine(self, other: 'LoraHookGroup'):
+        cloned = self.clone()
+        for hook in other.hooks:
+            cloned.add(hook)
+        return cloned
+
+    @staticmethod
+    def combine_all_lora_hooks(lora_hooks_list: list['LoraHookGroup'], require_count=2) -> 'LoraHookGroup':
+        actual: list[LoraHookGroup] = []
+        for group in lora_hooks_list:
+            if group is not None:
+                actual.append(group)
+        if len(actual) < require_count:
+            raise Exception(f"Need at least {require_count} LoRA Hooks to combine, but only had {len(actual)}.")
+        final_hook: LoraHookGroup = None
+        for hook in actual:
+            if final_hook is None:
+                final_hook = hook.clone()
+            else:
+                final_hook = final_hook.clone_and_combine(hook)
+        return final_hook
 
 
 class DummyNNModule(nn.Module):
