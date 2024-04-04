@@ -16,7 +16,7 @@ import comfy.ops
 import comfy.model_management
 
 from .context import ContextFuseMethod, ContextOptions, get_context_weights, get_context_windows
-from .animatelcm_i2v_adapter import AdapterEmbed
+from .adapter_animatelcm_i2v import AdapterEmbed
 from .utils_motion import CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, prepare_mask_batch
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger

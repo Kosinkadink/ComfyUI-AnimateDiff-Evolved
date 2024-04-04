@@ -4,7 +4,8 @@ from .sampling import motion_sample_factory
 
 from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext)
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ApplyAnimateLCMI2VModel, ADKeyframeNode,
-                         LoadAnimateDiffModelNode, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
+                         LoadAnimateDiffModelNode, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode,
+                         LoadCameraCtrlAdapter)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
@@ -92,6 +93,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_LoadAnimateLCMI2VModel": LoadAnimateLCMI2VModelNode,
     "ADE_UpscaleAndVAEEncode": UpscaleAndVaeEncode,
     "ADE_InjectI2VIntoAnimateDiffModel": LoadAnimateDiffAndInjectI2VNode,
+    # CameraCtrl Nodes
+    "ADE_LoadCameraCtrlAdapter": LoadCameraCtrlAdapter,
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": MaskedLoraLoader,
     # Deprecated Nodes
@@ -165,6 +168,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_LoadAnimateLCMI2VModel": "Load AnimateLCM-I2V Model 🎭🅐🅓②",
     "ADE_UpscaleAndVAEEncode": "Scale Ref Image and VAE Encode 🎭🅐🅓②",
     "ADE_InjectI2VIntoAnimateDiffModel": "🧪Inject I2V into AnimateDiff Model 🎭🅐🅓②",
+    # CameraCtrl Nodes
+    "ADE_LoadCameraCtrlAdapter": "Load CameraCtrl Adapter 🎭🅐🅓②",
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
     # Deprecated Nodes

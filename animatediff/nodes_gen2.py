@@ -10,7 +10,7 @@ from comfy.sd import VAE
 from .ad_settings import AnimateDiffSettings
 from .context import ContextOptionsGroup
 from .logger import logger
-from .utils_model import BIGMAX, BetaSchedules, ScaleMethods, CropMethods, get_available_motion_models
+from .utils_model import BIGMAX, BetaSchedules, ScaleMethods, CropMethods, get_available_motion_models, get_motion_model_path
 from .utils_motion import ADKeyframeGroup, ADKeyframe
 from .motion_lora import MotionLoraList
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module, create_fresh_encoder_only_model,
@@ -284,6 +284,33 @@ class LoadAnimateDiffAndInjectI2VNode:
         loaded_motion_model = load_motion_module_gen2(model_name=model_name, motion_model_settings=ad_settings)
         inject_img_encoder_into_model(motion_model=loaded_motion_model, w_encoder=motion_model)
         return (loaded_motion_model,)
+
+
+class LoadCameraCtrlAdapter:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model_name": (get_available_motion_models(),),
+            },
+        }
+    
+    RETURN_TYPES = ("MOTION_MODEL_ADE",)#("CAMERA_CTRL",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    FUNCTION = "load_camera_ctrl"
+    
+    def load_camera_ctrl(self, model_name: str):
+        model_path = get_motion_model_path(model_name)
+        logger.info(f"Loading CameraCtrl Adapter {model_name}")
+        mm_state_dict: dict[str, torch.Tensor] = comfy.utils.load_torch_file(model_path, safe_load=True)
+        from pathlib import Path
+        with open(Path(__file__).parent.parent.parent / "cameractrl_keys.txt", "w") as cfile:
+            for key in mm_state_dict:
+                if type(mm_state_dict[key]) == torch.Tensor:
+                    cfile.write(f"{key}:        {list(mm_state_dict[key].shape)}\n")
+                else:
+                    cfile.write(f"{key}:        {mm_state_dict[key]}\n")
+        return (None,)
 
 
 class ADKeyframeNode:
