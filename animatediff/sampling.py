@@ -8,9 +8,14 @@ from einops import rearrange
 
 import comfy.ldm.modules.attention as attention
 from comfy.ldm.modules.diffusionmodules import openaimodel
-import comfy.model_management as model_management
+import comfy.model_management
 import comfy.samplers
 import comfy.sample
+SAMPLE_FALLBACK = False
+try:
+    import comfy.sampler_helpers
+except ImportError:
+    SAMPLE_FALLBACK = True
 import comfy.utils
 from comfy.controlnet import ControlBase
 import comfy.ops
@@ -220,9 +225,11 @@ class FunctionInjectionHolder:
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_manual_cast_forward = comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
-        self.orig_prepare_mask = comfy.sample.prepare_mask
-        self.orig_get_additional_models = comfy.sample.get_additional_models
-        self.orig_apply_model = model.model.apply_model # TODO: remove this if end up not needing to hack it
+        if SAMPLE_FALLBACK:  # for backwards compatibility, for now
+            self.orig_get_additional_models = comfy.sample.get_additional_models
+        else:
+            self.orig_get_additional_models = comfy.sampler_helpers.get_additional_models
+        self.orig_apply_model = model.model.apply_model
         # Inject Functions
         openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
         if params.unlimited_area_hack:
@@ -247,8 +254,10 @@ class FunctionInjectionHolder:
                     break
             del info
         comfy.samplers.sampling_function = evolved_sampling_function
-        comfy.sample.prepare_mask = prepare_mask_ad
-        comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
+        if SAMPLE_FALLBACK:  # for backwards compatibility, for now
+            comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
+        else:
+            comfy.sampler_helpers.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
 
     def restore_functions(self, model: ModelPatcherAndInjector):
         # Restoration
@@ -258,8 +267,10 @@ class FunctionInjectionHolder:
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_manual_cast_forward
             comfy.samplers.sampling_function = self.orig_sampling_function
-            comfy.sample.prepare_mask = self.orig_prepare_mask
-            comfy.sample.get_additional_models = self.orig_get_additional_models
+            if SAMPLE_FALLBACK:  # for backwards compatibility, for now
+                comfy.sample.get_additional_models = self.orig_get_additional_models
+            else:
+                comfy.sampler_helpers.get_additional_models = self.orig_get_additional_models
             model.model.apply_model = self.orig_apply_model
         except AttributeError:
             logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
@@ -339,7 +350,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             iter_kwargs = {}
             if iter_opts.need_sampler:
                 # -5 for sampler_name (not custom) and sampler (custom)
-                model_management.load_model_gpu(model)
+                comfy.model_management.load_model_gpu(model)
                 if is_custom:
                     iter_kwargs[IterationOptions.SAMPLER] = None #args[-5]
                 else:
@@ -413,19 +424,22 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     else:
         cond_pred, uncond_pred = sliding_calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
 
-    if "sampler_cfg_function" in model_options:
-        args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
-                "cond_denoised": cond_pred, "uncond_denoised": uncond_pred, "model": model, "model_options": model_options}
-        cfg_result = x - model_options["sampler_cfg_function"](args)
-    else:
-        cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
+    if hasattr(comfy.samplers, "cfg_function"):
+        return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
+    else: # for backwards compatibility, for now
+        if "sampler_cfg_function" in model_options:
+            args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
+                    "cond_denoised": cond_pred, "uncond_denoised": uncond_pred, "model": model, "model_options": model_options}
+            cfg_result = x - model_options["sampler_cfg_function"](args)
+        else:
+            cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
 
-    for fn in model_options.get("sampler_post_cfg_function", []):
-        args = {"denoised": cfg_result, "cond": cond, "uncond": uncond, "model": model, "uncond_denoised": uncond_pred, "cond_denoised": cond_pred,
-                "sigma": timestep, "model_options": model_options, "input": x}
-        cfg_result = fn(args)
+        for fn in model_options.get("sampler_post_cfg_function", []):
+            args = {"denoised": cfg_result, "cond": cond, "uncond": uncond, "model": model, "uncond_denoised": uncond_pred, "cond_denoised": cond_pred,
+                    "sigma": timestep, "model_options": model_options, "input": x}
+            cfg_result = fn(args)
 
-    return cfg_result
+        return cfg_result
 
 
 # TODO: properly carry over changes from calc_cond_batch
