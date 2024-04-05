@@ -8,7 +8,6 @@ from einops import rearrange
 
 import comfy.ldm.modules.attention as attention
 from comfy.ldm.modules.diffusionmodules import openaimodel
-import comfy.model_management as model_management
 import comfy.model_management
 import comfy.samplers
 import comfy.sample
@@ -344,7 +343,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             iter_kwargs = {}
             if iter_opts.need_sampler:
                 # -5 for sampler_name (not custom) and sampler (custom)
-                model_management.load_model_gpu(model)
+                comfy.model_management.load_model_gpu(model)
                 if is_custom:
                     iter_kwargs[IterationOptions.SAMPLER] = None #args[-5]
                 else:
