@@ -14,7 +14,7 @@ from .utils_model import BIGMAX, BetaSchedules, ScaleMethods, CropMethods, get_a
 from .utils_motion import ADKeyframeGroup, ADKeyframe
 from .motion_lora import MotionLoraList
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module, create_fresh_encoder_only_model,
-                              load_motion_module_gen2, load_motion_lora_as_patches, inject_img_encoder_into_model, validate_model_compatibility_gen2)
+                              load_motion_module_gen2, load_motion_lora_as_patches, inject_img_encoder_into_model, inject_camera_encoder_into_model, validate_model_compatibility_gen2)
 from .motion_module_ad import AnimateDiffFormat
 from .sample_settings import SampleSettings
 
@@ -286,6 +286,74 @@ class LoadAnimateDiffAndInjectI2VNode:
         return (loaded_motion_model,)
 
 
+class ApplyAnimateDiffWithCameraCtrl:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "motion_model": ("MOTION_MODEL_ADE",),
+                "ref_latent": ("LATENT",),
+                "ref_drift": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.001}),
+                "apply_ref_when_disabled": ("BOOLEAN", {"default": False}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+            },
+            "optional": {
+                "motion_lora": ("MOTION_LORA",),
+                "scale_multival": ("MULTIVAL",),
+                "effect_multival": ("MULTIVAL",),
+                "ad_keyframes": ("AD_KEYFRAMES",),
+                "prev_m_models": ("M_MODELS",),
+            }
+        }
+    
+    RETURN_TYPES = ("M_MODELS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    FUNCTION = "apply_motion_model"
+
+    def apply_motion_model(self, motion_model: MotionModelPatcher, ref_latent: dict, ref_drift: float=0.0, apply_ref_when_disabled=False, start_percent: float=0.0, end_percent: float=1.0,
+                           motion_lora: MotionLoraList=None, ad_keyframes: ADKeyframeGroup=None,
+                           scale_multival=None, effect_multival=None,
+                           prev_m_models: MotionModelGroup=None,):
+        new_m_models = ApplyAnimateDiffModelNode.apply_motion_model(self, motion_model, start_percent=start_percent, end_percent=end_percent,
+                                                                    motion_lora=motion_lora, ad_keyframes=ad_keyframes,
+                                                                    scale_multival=scale_multival, effect_multival=effect_multival, prev_m_models=prev_m_models)
+        # most recent added model will always be first in list;
+        curr_model = new_m_models[0].models[0]
+        # confirm that model contains img_encoder
+        if curr_model.model.img_encoder is None:
+            raise Exception(f"Motion model '{curr_model.model.mm_info.mm_name}' does not contain an img_encoder; cannot be used with Apply AnimateLCM-I2V Model node.")
+        curr_model.orig_img_latents = ref_latent["samples"]
+        curr_model.orig_ref_drift = ref_drift
+        curr_model.orig_apply_ref_when_disabled = apply_ref_when_disabled
+        return new_m_models
+
+
+
+class LoadAnimateDiffModelWithCameraCtrl:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model_name": (get_available_motion_models(),),
+                "camera_ctrl": (get_available_motion_models(),),
+            },
+            "optional": {
+                "ad_settings": ("AD_SETTINGS",),
+            }
+        }
+
+    RETURN_TYPES = ("MOTION_MODEL_ADE",)
+    RETURN_NAMES = ("MOTION_MODEL",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    FUNCTION = "load_camera_ctrl"
+
+    def load_camera_ctrl(self, model_name: str, camera_ctrl: str, ad_settings: AnimateDiffSettings=None):
+        loaded_motion_model = load_motion_module_gen2(model_name=model_name, motion_model_settings=ad_settings)
+        inject_camera_encoder_into_model(motion_model=loaded_motion_model, camera_ctrl_name=camera_ctrl)
+        return (loaded_motion_model,)
+
+
 class LoadCameraCtrlAdapter:
     @classmethod
     def INPUT_TYPES(s):
@@ -303,13 +371,25 @@ class LoadCameraCtrlAdapter:
         model_path = get_motion_model_path(model_name)
         logger.info(f"Loading CameraCtrl Adapter {model_name}")
         mm_state_dict: dict[str, torch.Tensor] = comfy.utils.load_torch_file(model_path, safe_load=True)
+        # for key in list(mm_state_dict.keys()):
+        #     if key not in ("pose_encoder_state_dict", "attention_processor_state_dict"):
+        #         mm_state_dict.pop(key)
         from pathlib import Path
-        with open(Path(__file__).parent.parent.parent / "cameractrl_keys.txt", "w") as cfile:
+        with open(Path(__file__).parent.parent.parent / "cameractrl_pruned_keys.txt", "w") as cfile:
             for key in mm_state_dict:
-                if type(mm_state_dict[key]) == torch.Tensor:
-                    cfile.write(f"{key}:        {list(mm_state_dict[key].shape)}\n")
-                else:
-                    cfile.write(f"{key}:        {mm_state_dict[key]}\n")
+                cfile.write(f"{key}:        {list(mm_state_dict[key].shape)}\n")
+            # for big_key in mm_state_dict:
+            #     for key in mm_state_dict[big_key]:
+            #         if type(mm_state_dict[big_key][key]) == torch.Tensor:
+            #             cfile.write(f"{key}:        {list(mm_state_dict[big_key][key].shape)}\n")
+            #         else:
+            #             cfile.write(f"{key}:        {mm_state_dict[big_key][key]}\n")
+        # real_state_dict: dict[str, torch.Tensor] = dict()
+        # for big_key in mm_state_dict:
+        #     for key in mm_state_dict[big_key]:
+        #         real_state_dict[key] = mm_state_dict[big_key][key]
+        # import safetensors.torch
+        # safetensors.torch.save_file(real_state_dict, Path(__file__).parent.parent.parent / "CameraCtrl_pruned.safetensors")
         return (None,)
 
 

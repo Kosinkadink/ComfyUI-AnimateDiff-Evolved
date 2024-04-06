@@ -1,5 +1,5 @@
 import math
-from typing import Iterable, Tuple, Union
+from typing import Iterable, Tuple, Union, TYPE_CHECKING
 import re
 
 import torch
@@ -17,6 +17,8 @@ import comfy.model_management
 
 from .context import ContextFuseMethod, ContextOptions, get_context_weights, get_context_windows
 from .adapter_animatelcm_i2v import AdapterEmbed
+if TYPE_CHECKING:  # avoids circular import
+    from .adapter_cameractrl import CameraPoseEncoder
 from .utils_motion import CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, prepare_mask_batch
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
@@ -217,10 +219,15 @@ class AnimateDiffModel(nn.Module):
         self.img_encoder: AdapterEmbed = None
         if has_img_encoder(mm_state_dict):
             self.init_img_encoder()
+        self.camera_encoder: 'CameraPoseEncoder' = None
 
     def init_img_encoder(self):
         del self.img_encoder
         self.img_encoder = AdapterEmbed(cin=4, channels=self.layer_channels, nums_rb=2, ksize=1, sk=True, use_conv=False, ops=self.ops)
+
+    def set_camera_encoder(self, camera_encoder: 'CameraPoseEncoder'):
+        del self.camera_encoder
+        self.camera_encoder = camera_encoder
 
     def get_device_debug(self):
         return self.down_blocks[0].motion_modules[0].temporal_transformer.proj_in.weight.device
@@ -959,11 +966,12 @@ class PositionalEncoding(nn.Module):
         pe[0, :, 1::2] = torch.cos(position * div_term)
         self.register_buffer("pe", pe)
         self.sub_idxs = None
+        self.pe: Tensor
 
     def set_sub_idxs(self, sub_idxs: list[int]):
         self.sub_idxs = sub_idxs
 
-    def forward(self, x):
+    def forward(self, x: Tensor):
         #if self.sub_idxs is not None:
         #    x = x + self.pe[:, self.sub_idxs]
         #else:

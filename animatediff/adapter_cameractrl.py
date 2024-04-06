@@ -59,15 +59,15 @@ class CameraPoseEncoder(nn.Module):
     def __init__(self,
                  downscale_factor=8,
                  channels=[320, 640, 1280, 1280],
-                 nums_rb=3,
-                 cin=64,
-                 ksize=3,
-                 sk=False,
-                 use_conv=True,
+                 nums_rb=2,
+                 cin=384,
+                 ksize=1,
+                 sk=True,
+                 use_conv=False,
                  compression_factor=1,
                  temporal_attention_nhead=8,
                  attention_block_types=("Temporal_Self", ),
-                 temporal_position_encoding=False,
+                 temporal_position_encoding=True,
                  temporal_position_encoding_max_len=16,
                  rescale_output_factor=1.0,
                  ops=comfy.ops.disable_weight_init):
@@ -81,7 +81,7 @@ class CameraPoseEncoder(nn.Module):
         for i in range(len(channels)):
             conv_layers = nn.ModuleList()
             temporal_attention_layers = nn.ModuleList() 
-            for j in range(len(nums_rb)):
+            for j in range(nums_rb):
                 if j == 0 and i != 0:
                     in_dim = channels[i - 1]
                     out_dim = int(channels[i] / compression_factor)
@@ -104,9 +104,8 @@ class CameraPoseEncoder(nn.Module):
                                                                     attention_block_types=attention_block_types,
                                                                     dropout=0.0,
                                                                     cross_attention_dim=None,
-                                                                    temporal_position_encoding=temporal_position_encoding,
-                                                                    temporal_position_encoding_max_len=temporal_position_encoding_max_len,
-                                                                    rescale_output_factor=rescale_output_factor,
+                                                                    temporal_pe=temporal_position_encoding,
+                                                                    temporal_pe_max_len=temporal_position_encoding_max_len,
                                                                     ops=ops)
                 conv_layers.append(conv_layer)
                 temporal_attention_layers.append(temporal_attention_layer)

@@ -12,6 +12,7 @@ from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
 
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
+from .adapter_cameractrl import CameraPoseEncoder
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
@@ -490,6 +491,32 @@ def inject_img_encoder_into_model(motion_model: MotionModelPatcher, w_encoder: M
     motion_model.model.img_encoder.to(comfy.model_management.unet_offload_device())
     motion_model.model.img_encoder.load_state_dict(w_encoder.model.img_encoder.state_dict())
 
+
+def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ctrl_name: str):
+    camera_ctrl_path = get_motion_model_path(camera_ctrl_name)
+    full_state_dict = comfy.utils.load_torch_file(camera_ctrl_path, safe_load=True)
+    camera_state_dict: dict[str, Tensor] = dict()
+    attention_state_dict: dict[str, Tensor] = dict()
+    for key in full_state_dict:
+        if key.startswith("encoder"):
+            camera_state_dict[key] = full_state_dict[key]
+        elif "qkv_merge" in key:
+            attention_state_dict[key] = full_state_dict[key]
+    # verify has necessary keys
+    if len(camera_state_dict) == 0:
+        raise Exception("Provided CameraCtrl model had no Camera Encoder-related keys; not a valid CameraCtrl model!")
+    if len(attention_state_dict) == 0:
+        raise Exception("Provided CameraCtrl model had no qkv_merge keys; not a valid CameraCtrl model!")
+    # initialize CameraPoseEncoder on motion model, and load keys
+    camera_encoder = CameraPoseEncoder(channels=motion_model.model.layer_channels, nums_rb=2, ops=motion_model.model.ops).to(
+        device=comfy.model_management.unet_offload_device(),
+        dtype=comfy.model_management.unet_dtype()
+    )
+    camera_encoder.load_state_dict(camera_state_dict)
+    motion_model.model.set_camera_encoder(camera_encoder=camera_encoder)
+    # initialize qkv_merge on specific attention blocks, and load keys
+    
+    
 
 def validate_model_compatibility_gen2(model: ModelPatcher, motion_model: MotionModelPatcher):
     # check that motion model is compatible with sd model
