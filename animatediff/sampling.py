@@ -343,15 +343,21 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             iter_kwargs = {}
             if iter_opts.need_sampler:
                 # -5 for sampler_name (not custom) and sampler (custom)
-                comfy.model_management.load_model_gpu(model)
                 if is_custom:
                     iter_kwargs[IterationOptions.SAMPLER] = None #args[-5]
                 else:
+                    if SAMPLE_FALLBACK:  # backwards compatibility, for now
+                        # in older comfy, model needs to be loaded to get proper model_sampling to be used for sigmas
+                        comfy.model_management.load_model_gpu(model)
+                        iter_model = model.model
+                    else:
+                        iter_model = model
                     iter_kwargs[IterationOptions.SAMPLER] = comfy.samplers.KSampler(
-                        model.model, steps=999, #steps=args[-7],
+                        iter_model, steps=999, #steps=args[-7],
                         device=model.current_device, sampler=args[-5],
                         scheduler=args[-4], denoise=kwargs.get("denoise", None),
                         model_options=model.model_options)
+                    del iter_model
 
             for curr_i in range(iter_opts.iterations):
                 # handle GLOBALSTATE vars and step tally
