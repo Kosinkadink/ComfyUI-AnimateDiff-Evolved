@@ -5,7 +5,7 @@ from .sampling import motion_sample_factory
 from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext)
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ApplyAnimateLCMI2VModel, ADKeyframeNode,
                          LoadAnimateDiffModelNode, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode,
-                         LoadCameraCtrlAdapter, LoadAnimateDiffModelWithCameraCtrl)
+                         LoadCameraCtrlAdapter, LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, LoadCameraPoses)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
@@ -94,8 +94,10 @@ NODE_CLASS_MAPPINGS = {
     "ADE_UpscaleAndVAEEncode": UpscaleAndVaeEncode,
     "ADE_InjectI2VIntoAnimateDiffModel": LoadAnimateDiffAndInjectI2VNode,
     # CameraCtrl Nodes
+    "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
     "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
     "ADE_LoadCameraCtrlAdapter": LoadCameraCtrlAdapter,
+    "ADE_LoadCameraPoses": LoadCameraPoses,
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": MaskedLoraLoader,
     # Deprecated Nodes
@@ -170,8 +172,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_UpscaleAndVAEEncode": "Scale Ref Image and VAE Encode 🎭🅐🅓②",
     "ADE_InjectI2VIntoAnimateDiffModel": "🧪Inject I2V into AnimateDiff Model 🎭🅐🅓②",
     # CameraCtrl Nodes
+    "ADE_ApplyAnimateDiffModelWithCameraCtrl": "Apply AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
     "ADE_LoadAnimateDiffModelWithCameraCtrl": "Load AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
     "ADE_LoadCameraCtrlAdapter": "Load CameraCtrl Adapter 🎭🅐🅓②",
+    "ADE_LoadCameraPoses": "Load CameraCtrl Poses 🎭🅐🅓②",
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
     # Deprecated Nodes

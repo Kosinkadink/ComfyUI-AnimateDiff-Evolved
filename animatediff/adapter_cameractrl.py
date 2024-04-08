@@ -3,6 +3,7 @@
 # (whose parts were also taken from https://github.com/TencentARC/T2I-Adapter)
 import torch
 import torch.nn as nn
+import numpy as np
 from torch import Tensor
 from collections import OrderedDict
 from einops import rearrange
@@ -53,6 +54,112 @@ def avg_pool_nd(dims, *args, **kwargs):
 #                                encoder_hidden_states,
 #                                pose_embedding_features).sample
 #         return noise_pred
+
+class CameraEntry:
+    # TODO: comment on each value with an explanation
+    def __init__(self, entry):
+        fx, fy, cx, cy = entry[1:5]
+        self.fx = fx
+        self.fy = fy
+        self.cx = cx
+        self.cy = cy
+        w2c_mat = np.array(entry[7:]).reshape(3, 4)
+        w2c_mat_4x4 = np.eye(4)
+        w2c_mat_4x4[:3, :] = w2c_mat
+        self.w2c_mat = w2c_mat_4x4
+        self.c2w_mat = np.linalg.inv(w2c_mat_4x4)
+
+
+def get_parameter_dtype(parameter: torch.nn.Module):
+    params = tuple(parameter.parameters())
+    if len(params) > 0:
+        return params[0].dtype
+
+    buffers = tuple(parameter.buffers())
+    if len(buffers) > 0:
+        return buffers[0].dtype
+
+
+def custom_meshgrid(*args):
+    # ref: https://pytorch.org/docs/stable/generated/torch.meshgrid.html?highlight=meshgrid#torch.meshgrid
+    return torch.meshgrid(*args, indexing='ij')
+
+
+def get_relative_pose(cam_params: list[CameraEntry]):
+    abs_w2cs = [cam_param.w2c_mat for cam_param in cam_params]
+    abs_c2ws = [cam_param.c2w_mat for cam_param in cam_params]
+    cam_to_origin = 0
+    target_cam_c2w = np.array([
+        [1, 0, 0, 0],
+        [0, 1, 0, -cam_to_origin],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+    ])
+    abs2rel = target_cam_c2w @ abs_w2cs[0]
+    ret_poses = [target_cam_c2w, ] + [abs2rel @ abs_c2w for abs_c2w in abs_c2ws[1:]]
+    ret_poses = np.array(ret_poses, dtype=np.float32)
+    return ret_poses
+
+
+def ray_condition(K: Tensor, c2w: Tensor, H, W, device):
+    # c2w: B, V, 4, 4
+    # K: B, V, 4
+
+    B = K.shape[0]
+
+    j, i = custom_meshgrid(
+        torch.linspace(0, H - 1, H, device=device, dtype=c2w.dtype),
+        torch.linspace(0, W - 1, W, device=device, dtype=c2w.dtype),
+    )
+    i = i.reshape([1, 1, H * W]).expand([B, 1, H * W]) + 0.5  # [B, HxW]
+    j = j.reshape([1, 1, H * W]).expand([B, 1, H * W]) + 0.5  # [B, HxW]
+
+    fx, fy, cx, cy = K.chunk(4, dim=-1)  # B,V, 1
+
+    zs = torch.ones_like(i)  # [B, HxW]
+    xs = (i - cx) / fx * zs
+    ys = (j - cy) / fy * zs
+    zs = zs.expand_as(ys)
+
+    directions = torch.stack((xs, ys, zs), dim=-1)  # B, V, HW, 3
+    directions = directions / directions.norm(dim=-1, keepdim=True)  # B, V, HW, 3
+
+    rays_d = directions @ c2w[..., :3, :3].transpose(-1, -2)  # B, V, 3, HW
+    rays_o = c2w[..., :3, 3]  # B, V, 3
+    rays_o = rays_o[:, :, None].expand_as(rays_d)  # B, V, 3, HW
+    # c2w @ dirctions
+    rays_dxo = torch.cross(rays_o, rays_d)
+    plucker = torch.cat([rays_dxo, rays_d], dim=-1)
+    plucker = plucker.reshape(B, c2w.shape[1], H, W, 6)  # B, V, H, W, 6
+    # plucker = plucker.permute(0, 1, 4, 2, 3)
+    return plucker
+
+
+def prepare_pose_embedding(cam_params: list[CameraEntry], image_width, image_height, original_pose_width=1280, original_pose_height=720):
+    sample_wh_ratio = image_width / image_height
+    pose_wh_ratio = original_pose_width / original_pose_height
+    if pose_wh_ratio > sample_wh_ratio:
+        resized_ori_w = image_height * pose_wh_ratio
+        for cam_param in cam_params:
+            cam_param.fx = resized_ori_w * cam_param.fx / image_width
+    else:
+        resized_ori_h = image_width / pose_wh_ratio
+        for cam_param in cam_params:
+            cam_param.fy = resized_ori_h * cam_param.fy / image_height
+    intrinsic = np.asarray([[cam_param.fx * image_width,
+                             cam_param.fy * image_height,
+                             cam_param.cx * image_width,
+                             cam_param.cy * image_height]
+                            for cam_param in cam_params], dtype=np.float32)
+    
+    K = torch.as_tensor(intrinsic)[None]  # [1, 1, 4]
+    c2ws = get_relative_pose(cam_params)
+    c2ws = torch.as_tensor(c2ws)[None]  # [1, n_frame, 4, 4]
+    plucker_embedding = ray_condition(K, c2ws, image_height, image_width, device='cpu')[0].permute(0, 3, 1, 2).contiguous()  # V, 6, H, W
+    #plucker_embedding = plucker_embedding[None]  # B V 6 H W
+    #plucker_embedding = rearrange(plucker_embedding, "b f c h w -> b c f h w")
+    plucker_embedding = rearrange(plucker_embedding, "f c h w -> c f h w")
+    return plucker_embedding
 
 
 class CameraPoseEncoder(nn.Module):
@@ -112,20 +219,22 @@ class CameraPoseEncoder(nn.Module):
             self.encoder_down_conv_blocks.append(conv_layers)
             self.encoder_down_attention_blocks.append(temporal_attention_layers)
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor, video_length: int, batched_number: int=1):
+        # rearrange to match expected format
+        x = rearrange(x, "c f h w -> f c h w")
         # unshuffle
-        x = self.unshuffle
+        x = self.unshuffle(x)
         # extract features
         features = []
-        x = self.encoder_conv_in(x)
+        x = self.encoder_conv_in(x.to(dtype=get_parameter_dtype(self)))
         for res_block, attention_block in zip(self.encoder_down_conv_blocks, self.encoder_down_attention_blocks):
             for res_layer, attention_layer in zip(res_block, attention_block):
                 x = res_layer(x)
                 h, w = x.shape[-2:]
                 x = rearrange(x, 'b c h w -> (h w) b c')
-                x = attention_layer(x)
+                x = attention_layer(x, video_length=video_length)
                 x = rearrange(x, '(h w) b c -> b c h w', h=h, w=w)
-            features.append(x)
+            features.append(torch.cat([x]*batched_number, dim=0))
         return features
 
 

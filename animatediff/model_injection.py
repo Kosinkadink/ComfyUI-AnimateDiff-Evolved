@@ -12,7 +12,7 @@ from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
 
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
-from .adapter_cameractrl import CameraPoseEncoder
+from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, has_mid_block, normalize_ad_state_dict
 from .logger import logger
@@ -121,6 +121,11 @@ class MotionModelPatcher(ModelPatcher):
         self.orig_img_latents: Tensor = None
         self.img_features: list[int, Tensor] = None  # temporary
         self.img_latents_shape: tuple = None
+
+        # CameraCtrl
+        self.orig_camera_entries: list[CameraEntry] = None
+        self.camera_features: list[Tensor] = None  # temporary
+        self.camera_features_shape: tuple = None
 
         # temporary variables
         self.current_used_steps = 0
@@ -231,6 +236,37 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
 
+    def prepare_camera_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str]):
+        # if no camera_encoder, done
+        if self.model.camera_encoder is None:
+            return
+        batched_number = len(cond_or_uncond)
+        full_length = ad_params["full_length"]
+        sub_idxs = ad_params["sub_idxs"]
+        goal_length = x.size(0) // batched_number
+        # calculate camera_features if needed
+        if self.camera_features is None or sub_idxs != self.prev_sub_idxs or batched_number != self.prev_batched_number:
+            if sub_idxs is not None and len(self.orig_camera_entries) >= full_length:
+                camera_poses = [self.orig_camera_entries[idx] for idx in sub_idxs]
+            else:
+                camera_poses = self.orig_camera_entries.copy()
+            # make sure camera_poses matches goal_length
+            if goal_length != len(camera_poses):
+                if len(camera_poses) > goal_length:
+                    camera_poses = camera_poses[:goal_length]
+                elif len(camera_poses) < goal_length:
+                    # pad the camera_poses with the last element to match goal_length
+                    for i in range(goal_length-len(camera_poses)):
+                        camera_poses.append(camera_poses[-1])
+            # create encoded embeddings
+            b, c, h, w = x.shape
+            plucker_embedding = prepare_pose_embedding(camera_poses, image_width=w*8, image_height=h*8).to(dtype=x.dtype, device=x.device)
+            camera_embedding = self.model.camera_encoder(plucker_embedding, video_length=goal_length, batched_number=batched_number)
+            # TODO: apply this to motion model
+            #self.camera_features = 
+        self.prev_sub_idxs = sub_idxs
+        self.prev_batched_number = batched_number
+
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
@@ -238,6 +274,9 @@ class MotionModelPatcher(ModelPatcher):
         del self.img_features
         self.img_features = None
         self.img_latents_shape = None
+        # CameraCtrl
+        del self.camera_features
+        self.camera_features = None
         # Default
         self.current_used_steps = 0
         self.current_keyframe = None
@@ -272,10 +311,13 @@ class MotionModelPatcher(ModelPatcher):
         n.keyframes = self.keyframes.clone()
         n.scale_multival = self.scale_multival
         n.effect_multival = self.effect_multival
+        # AnimateLCM-I2V
         n.orig_img_latents = self.orig_img_latents
         n.orig_ref_drift = self.orig_ref_drift
         n.orig_insertion_weights = self.orig_insertion_weights.copy() if self.orig_insertion_weights is not None else self.orig_insertion_weights
         n.orig_apply_ref_when_disabled = self.orig_apply_ref_when_disabled
+        # CameraCtrl
+        n.orig_camera_entries = self.orig_camera_entries
         return n
 
 
@@ -508,10 +550,11 @@ def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ct
     if len(attention_state_dict) == 0:
         raise Exception("Provided CameraCtrl model had no qkv_merge keys; not a valid CameraCtrl model!")
     # initialize CameraPoseEncoder on motion model, and load keys
-    camera_encoder = CameraPoseEncoder(channels=motion_model.model.layer_channels, nums_rb=2, ops=motion_model.model.ops).to(
-        device=comfy.model_management.unet_offload_device(),
-        dtype=comfy.model_management.unet_dtype()
-    )
+    camera_encoder = CameraPoseEncoder(channels=motion_model.model.layer_channels, nums_rb=2, ops=motion_model.model.ops)
+    # .to(
+    #     device=comfy.model_management.unet_offload_device(),
+    #     dtype=comfy.model_management.unet_dtype()
+    # )
     camera_encoder.load_state_dict(camera_state_dict)
     motion_model.model.set_camera_encoder(camera_encoder=camera_encoder)
     # initialize qkv_merge on specific attention blocks, and load keys

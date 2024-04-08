@@ -161,6 +161,7 @@ def apply_model_factory(orig_apply_model: Callable):
         if ADGS.motion_models is not None:
             for motion_model in ADGS.motion_models.models:
                 motion_model.prepare_img_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=self.latent_format)
+                motion_model.prepare_camera_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
         del x
         return orig_apply_model(*args, **kwargs)
     return apply_model_ade_wrapper
@@ -241,9 +242,9 @@ class FunctionInjectionHolder:
                         model.model.memory_required = unlimited_memory_required
                 except Exception:
                     pass
-            # if img_encoder present, inject apply_model to handle img_latents correctly
+            # if img_encoder or camera_encoder present, inject apply_model to handle correctly
             for motion_model in model.motion_models:
-                if motion_model.model.img_encoder != None:
+                if (motion_model.model.img_encoder is not None) or (motion_model.model.camera_encoder is not None):
                     model.model.apply_model = apply_model_factory(self.orig_apply_model).__get__(model.model, type(model.model))
                     break
             del info

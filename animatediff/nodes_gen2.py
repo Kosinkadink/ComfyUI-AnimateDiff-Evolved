@@ -1,13 +1,16 @@
 from pathlib import Path
 from typing import Union
 import torch
+import os
 
+import folder_paths
 from nodes import VAEEncode
 import comfy.utils
 from comfy.model_patcher import ModelPatcher
 from comfy.sd import VAE
 
 from .ad_settings import AnimateDiffSettings
+from .adapter_cameractrl import CameraEntry, prepare_pose_embedding
 from .context import ContextOptionsGroup
 from .logger import logger
 from .utils_model import BIGMAX, BetaSchedules, ScaleMethods, CropMethods, get_available_motion_models, get_motion_model_path
@@ -292,9 +295,7 @@ class ApplyAnimateDiffWithCameraCtrl:
         return {
             "required": {
                 "motion_model": ("MOTION_MODEL_ADE",),
-                "ref_latent": ("LATENT",),
-                "ref_drift": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.001}),
-                "apply_ref_when_disabled": ("BOOLEAN", {"default": False}),
+                "cameractrl_poses": ("CAMERACTRL_POSES",),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
             },
@@ -311,7 +312,7 @@ class ApplyAnimateDiffWithCameraCtrl:
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
     FUNCTION = "apply_motion_model"
 
-    def apply_motion_model(self, motion_model: MotionModelPatcher, ref_latent: dict, ref_drift: float=0.0, apply_ref_when_disabled=False, start_percent: float=0.0, end_percent: float=1.0,
+    def apply_motion_model(self, motion_model: MotionModelPatcher, cameractrl_poses: list[list[float]], start_percent: float=0.0, end_percent: float=1.0,
                            motion_lora: MotionLoraList=None, ad_keyframes: ADKeyframeGroup=None,
                            scale_multival=None, effect_multival=None,
                            prev_m_models: MotionModelGroup=None,):
@@ -320,14 +321,12 @@ class ApplyAnimateDiffWithCameraCtrl:
                                                                     scale_multival=scale_multival, effect_multival=effect_multival, prev_m_models=prev_m_models)
         # most recent added model will always be first in list;
         curr_model = new_m_models[0].models[0]
-        # confirm that model contains img_encoder
-        if curr_model.model.img_encoder is None:
-            raise Exception(f"Motion model '{curr_model.model.mm_info.mm_name}' does not contain an img_encoder; cannot be used with Apply AnimateLCM-I2V Model node.")
-        curr_model.orig_img_latents = ref_latent["samples"]
-        curr_model.orig_ref_drift = ref_drift
-        curr_model.orig_apply_ref_when_disabled = apply_ref_when_disabled
+        # confirm that model contains camera_encoder
+        if curr_model.model.camera_encoder is None:
+            raise Exception(f"Motion model '{curr_model.model.mm_info.mm_name}' does not contain a camera_encoder; cannot be used with Apply AnimateDiff-CameraCtrl Model node.")
+        camera_entries = [CameraEntry(entry) for entry in cameractrl_poses]
+        curr_model.orig_camera_entries = camera_entries
         return new_m_models
-
 
 
 class LoadAnimateDiffModelWithCameraCtrl:
@@ -391,6 +390,33 @@ class LoadCameraCtrlAdapter:
         # import safetensors.torch
         # safetensors.torch.save_file(real_state_dict, Path(__file__).parent.parent.parent / "CameraCtrl_pruned.safetensors")
         return (None,)
+
+
+class LoadCameraPoses:
+    @classmethod
+    def INPUT_TYPES(s):
+        input_dir = folder_paths.get_input_directory()
+        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+        files = [f for f in files if f.endswith(".txt")]
+        return {
+            "required": {
+                "pose_filename": (sorted(files),),
+            }
+        }
+
+    RETURN_TYPES = ("CAMERACTRL_POSES",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    FUNCTION = "load_camera_poses"
+
+    def load_camera_poses(self, pose_filename):
+        file_path = folder_paths.get_annotated_filepath(pose_filename)
+        with open(file_path, 'r') as f:
+            poses = f.readlines()
+        # first line of file is the link to source, so can be skipped,
+        # and the rest is a header-less CSV file separated by single spaces
+        poses = [pose.strip().split(' ') for pose in poses[1:]]
+        poses = [[float(x) for x in pose] for pose in poses]
+        return (poses,)
 
 
 class ADKeyframeNode:
