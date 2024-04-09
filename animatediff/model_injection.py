@@ -14,7 +14,7 @@ from comfy.model_base import BaseModel
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, has_mid_block, normalize_ad_state_dict
+from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention, has_mid_block, normalize_ad_state_dict
 from .logger import logger
 from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
@@ -245,7 +245,7 @@ class MotionModelPatcher(ModelPatcher):
         sub_idxs = ad_params["sub_idxs"]
         goal_length = x.size(0) // batched_number
         # calculate camera_features if needed
-        if self.camera_features is None or sub_idxs != self.prev_sub_idxs or batched_number != self.prev_batched_number:
+        if self.camera_features_shape is None or sub_idxs != self.prev_sub_idxs or batched_number != self.prev_batched_number:
             if sub_idxs is not None and len(self.orig_camera_entries) >= full_length:
                 camera_poses = [self.orig_camera_entries[idx] for idx in sub_idxs]
             else:
@@ -262,8 +262,8 @@ class MotionModelPatcher(ModelPatcher):
             b, c, h, w = x.shape
             plucker_embedding = prepare_pose_embedding(camera_poses, image_width=w*8, image_height=h*8).to(dtype=x.dtype, device=x.device)
             camera_embedding = self.model.camera_encoder(plucker_embedding, video_length=goal_length, batched_number=batched_number)
-            # TODO: apply this to motion model
-            #self.camera_features = 
+            self.model.set_camera_features(camera_features=camera_embedding)
+            self.camera_features_shape = len(camera_embedding)
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
 
@@ -277,6 +277,7 @@ class MotionModelPatcher(ModelPatcher):
         # CameraCtrl
         del self.camera_features
         self.camera_features = None
+        self.camera_features_shape = None
         # Default
         self.current_used_steps = 0
         self.current_keyframe = None
@@ -558,7 +559,22 @@ def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ct
     camera_encoder.load_state_dict(camera_state_dict)
     motion_model.model.set_camera_encoder(camera_encoder=camera_encoder)
     # initialize qkv_merge on specific attention blocks, and load keys
-    
+    for key in attention_state_dict:
+        key = key.strip()
+        # to avoid handling the same qkv_merge twice, only pay attention to the bias keys (bias+weight handled together)
+        if key.endswith("weight"):
+            continue
+        attr_path = key.split(".processor.qkv_merge")[0]
+        base_key = key.split(".bias")[0]
+        # first, initialize qkv_merge on model
+        attention_obj: VersatileAttention  = comfy.utils.get_attr(motion_model.model, attr_path)
+        logger.info(f"Setting qkv_merge for: {attr_path}")
+        attention_obj.init_qkv_merge(ops=motion_model.model.ops)
+        # then, apply weights to qkv_merge
+        qkv_merge_state_dict = {}
+        qkv_merge_state_dict["weight"] = attention_state_dict[f"{base_key}.weight"]
+        qkv_merge_state_dict["bias"] = attention_state_dict[f"{base_key}.bias"]
+        attention_obj.qkv_merge.load_state_dict(qkv_merge_state_dict)
     
 
 def validate_model_compatibility_gen2(model: ModelPatcher, motion_model: MotionModelPatcher):

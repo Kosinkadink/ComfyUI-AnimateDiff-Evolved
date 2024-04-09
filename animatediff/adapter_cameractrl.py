@@ -234,7 +234,11 @@ class CameraPoseEncoder(nn.Module):
                 x = rearrange(x, 'b c h w -> (h w) b c')
                 x = attention_layer(x, video_length=video_length)
                 x = rearrange(x, '(h w) b c -> b c h w', h=h, w=w)
-            features.append(torch.cat([x]*batched_number, dim=0))
+            features.append(x)
+        for idx, x in enumerate(features):
+            x = rearrange(x, 'b c h w -> (h w) b c')
+            x = torch.cat([x] * batched_number, dim=0)
+            features[idx] = x
         return features
 
 

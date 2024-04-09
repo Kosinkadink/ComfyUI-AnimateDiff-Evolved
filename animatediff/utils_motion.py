@@ -45,9 +45,6 @@ class CrossAttentionMM(nn.Module):
 
         self.to_out = nn.Sequential(operations.Linear(inner_dim, query_dim, dtype=dtype, device=device), nn.Dropout(dropout))
 
-    def init_qkv_merge(self):
-        pass
-
     def forward(self, x, context=None, value=None, mask=None, scale_mask=None):
         q = self.to_q(x)
         context = default(context, x)
