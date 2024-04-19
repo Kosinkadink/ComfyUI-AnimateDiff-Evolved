@@ -219,13 +219,13 @@ class CameraPoseEncoder(nn.Module):
     def forward(self, x: Tensor, video_length: int, batched_number: int=1):
         # rearrange to match expected format
         x = rearrange(x, "c f h w -> f c h w")
-        logger.info(f"x: {x.shape}, {float(x[0][0][0][-1])}")
+        # logger.info(f"x: {x.shape}, {float(x[0][0][0][-1])}")
         # unshuffle
         x = self.unshuffle(x)
         # extract features
         features = []
-        logger.warn(f"x dtype: {x.dtype}, device: {x.device}")
-        logger.warn(f"dtype: {get_parameter_dtype(self)}, device: {get_parameter_device(self)}")
+        # logger.warn(f"x dtype: {x.dtype}, device: {x.device}")
+        # logger.warn(f"dtype: {get_parameter_dtype(self)}, device: {get_parameter_device(self)}")
         x = self.encoder_conv_in(x.to(dtype=get_parameter_dtype(self), device=get_parameter_device(self)))
         for res_block, attention_block in zip(self.encoder_down_conv_blocks, self.encoder_down_attention_blocks):
             for res_layer, attention_layer in zip(res_block, attention_block):
@@ -235,8 +235,8 @@ class CameraPoseEncoder(nn.Module):
                 x = attention_layer(x, video_length=video_length)
                 x = rearrange(x, '(h w) b c -> b c h w', h=h, w=w)
             features.append(x)
-        for idx, feature in enumerate(features):
-            logger.info(f"{idx}: {feature.shape}, {float(feature[0][0][0][0])}")
+        # for idx, feature in enumerate(features):
+        #     logger.info(f"{idx}: {feature.shape}, {float(feature[0][0][0][0])}")
         for idx, x1 in enumerate(features):
             x1 = x1.to(x.dtype).to(x.device)
             x1 = rearrange(x1, 'b c h w -> (h w) b c')
