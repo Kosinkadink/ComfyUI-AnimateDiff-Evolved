@@ -1,17 +1,15 @@
-
 # Modified from https://github.com/hehao13/CameraCtrl/blob/main/cameractrl/models/pose_adaptor.py
 # (whose parts were also taken from https://github.com/TencentARC/T2I-Adapter)
 import torch
 import torch.nn as nn
 import numpy as np
 from torch import Tensor
-from collections import OrderedDict
 from einops import rearrange
 
 import comfy.ops
 
 from .motion_module_ad import TemporalTransformerBlock
-
+from .logger import logger
 
 def conv_nd(dims, *args, **kwargs):
     """
@@ -39,25 +37,10 @@ def avg_pool_nd(dims, *args, **kwargs):
     raise ValueError(f"unsupported dimensions: {dims}")
 
 
-# class PoseAdapter(nn.Module):
-#     def __init__(self, unet, pose_encoder):
-#         super().__init__()
-#         self.unet = unet
-#         self.pose_encoder = pose_encoder
-    
-#     def forward(self, noisy_latents: Tensor, timesteps, encoder_hidden_states: Tensor, pose_embedding):
-#         # original code needed to convert from 4 dims (bf c h w) to 5 dims (b c f h w),
-#         # but ComfyUI already deals with everything in 4 dims
-#         pose_embedding_features = self.pose_encoder(pose_embedding)
-#         noise_pred = self.unet(noisy_latents,
-#                                timesteps,
-#                                encoder_hidden_states,
-#                                pose_embedding_features).sample
-#         return noise_pred
-
 class CameraEntry:
     # TODO: comment on each value with an explanation
-    def __init__(self, entry):
+    def __init__(self, entry: list[Tensor]):
+        self.entry = entry.copy()
         fx, fy, cx, cy = entry[1:5]
         self.fx = fx
         self.fy = fy
@@ -68,6 +51,9 @@ class CameraEntry:
         w2c_mat_4x4[:3, :] = w2c_mat
         self.w2c_mat = w2c_mat_4x4
         self.c2w_mat = np.linalg.inv(w2c_mat_4x4)
+    
+    def clone(self):
+        return CameraEntry(entry=self.entry)
 
 
 def get_parameter_dtype(parameter: torch.nn.Module):
@@ -78,6 +64,16 @@ def get_parameter_dtype(parameter: torch.nn.Module):
     buffers = tuple(parameter.buffers())
     if len(buffers) > 0:
         return buffers[0].dtype
+
+
+def get_parameter_device(parameter: torch.nn.Module):
+    params = tuple(parameter.parameters())
+    if len(params) > 0:
+        return params[0].device
+
+    buffers = tuple(parameter.buffers())
+    if len(buffers) > 0:
+        return buffers[0].device
 
 
 def custom_meshgrid(*args):
@@ -136,6 +132,8 @@ def ray_condition(K: Tensor, c2w: Tensor, H, W, device):
 
 
 def prepare_pose_embedding(cam_params: list[CameraEntry], image_width, image_height, original_pose_width=1280, original_pose_height=720):
+    # clone each CameraEntry in list so that CameraEntries don't get spoiled after a single run
+    cam_params = [entry.clone() for entry in cam_params]
     sample_wh_ratio = image_width / image_height
     pose_wh_ratio = original_pose_width / original_pose_height
     if pose_wh_ratio > sample_wh_ratio:
@@ -156,8 +154,6 @@ def prepare_pose_embedding(cam_params: list[CameraEntry], image_width, image_hei
     c2ws = get_relative_pose(cam_params)
     c2ws = torch.as_tensor(c2ws)[None]  # [1, n_frame, 4, 4]
     plucker_embedding = ray_condition(K, c2ws, image_height, image_width, device='cpu')[0].permute(0, 3, 1, 2).contiguous()  # V, 6, H, W
-    #plucker_embedding = plucker_embedding[None]  # B V 6 H W
-    #plucker_embedding = rearrange(plucker_embedding, "b f c h w -> b c f h w")
     plucker_embedding = rearrange(plucker_embedding, "f c h w -> c f h w")
     return plucker_embedding
 
@@ -192,19 +188,19 @@ class CameraPoseEncoder(nn.Module):
                 if j == 0 and i != 0:
                     in_dim = channels[i - 1]
                     out_dim = int(channels[i] / compression_factor)
-                    conv_layer = ResnetBlock(in_dim, out_dim, down=True, ksize=ksize, sk=sk, use_conv=use_conv, ops=ops)
+                    conv_layer = ResnetBlockCameraCtrl(in_dim, out_dim, down=True, ksize=ksize, sk=sk, use_conv=use_conv, ops=ops)
                 elif j == 0:
                     in_dim = channels[0]
                     out_dim = int(channels[i] / compression_factor)
-                    conv_layer = ResnetBlock(in_dim, out_dim, down=False, ksize=ksize, sk=sk, use_conv=use_conv, ops=ops)
+                    conv_layer = ResnetBlockCameraCtrl(in_dim, out_dim, down=False, ksize=ksize, sk=sk, use_conv=use_conv, ops=ops)
                 elif j == nums_rb - 1:
                     in_dim = channels[i] / compression_factor
                     out_dim = channels[i]
-                    conv_layer = ResnetBlock(in_dim, out_dim, down=False, ksize=ksize, sk=sk, use_conv=use_conv, ops=ops)
+                    conv_layer = ResnetBlockCameraCtrl(in_dim, out_dim, down=False, ksize=ksize, sk=sk, use_conv=use_conv, ops=ops)
                 else:
                     in_dim = int(channels[i] / compression_factor)
                     out_dim = int(channels[i] / compression_factor)
-                    conv_layer = ResnetBlock(in_dim, out_dim, down=False, ksize=ksize, sk=sk, use_conv=use_conv, ops=ops)
+                    conv_layer = ResnetBlockCameraCtrl(in_dim, out_dim, down=False, ksize=ksize, sk=sk, use_conv=use_conv, ops=ops)
                 temporal_attention_layer = TemporalTransformerBlock(dim=out_dim,
                                                                     num_attention_heads=temporal_attention_nhead,
                                                                     attention_head_dim=int(out_dim / temporal_attention_nhead),
@@ -213,6 +209,7 @@ class CameraPoseEncoder(nn.Module):
                                                                     cross_attention_dim=None,
                                                                     temporal_pe=temporal_position_encoding,
                                                                     temporal_pe_max_len=temporal_position_encoding_max_len,
+                                                                    rearrange_hidden_shapes=False, # different from AD
                                                                     ops=ops)
                 conv_layers.append(conv_layer)
                 temporal_attention_layers.append(temporal_attention_layer)
@@ -222,11 +219,14 @@ class CameraPoseEncoder(nn.Module):
     def forward(self, x: Tensor, video_length: int, batched_number: int=1):
         # rearrange to match expected format
         x = rearrange(x, "c f h w -> f c h w")
+        logger.info(f"x: {x.shape}, {float(x[0][0][0][-1])}")
         # unshuffle
         x = self.unshuffle(x)
         # extract features
         features = []
-        x = self.encoder_conv_in(x.to(dtype=get_parameter_dtype(self)))
+        logger.warn(f"x dtype: {x.dtype}, device: {x.device}")
+        logger.warn(f"dtype: {get_parameter_dtype(self)}, device: {get_parameter_device(self)}")
+        x = self.encoder_conv_in(x.to(dtype=get_parameter_dtype(self), device=get_parameter_device(self)))
         for res_block, attention_block in zip(self.encoder_down_conv_blocks, self.encoder_down_attention_blocks):
             for res_layer, attention_layer in zip(res_block, attention_block):
                 x = res_layer(x)
@@ -235,14 +235,17 @@ class CameraPoseEncoder(nn.Module):
                 x = attention_layer(x, video_length=video_length)
                 x = rearrange(x, '(h w) b c -> b c h w', h=h, w=w)
             features.append(x)
-        for idx, x in enumerate(features):
-            x = rearrange(x, 'b c h w -> (h w) b c')
-            x = torch.cat([x] * batched_number, dim=0)
-            features[idx] = x
+        for idx, feature in enumerate(features):
+            logger.info(f"{idx}: {feature.shape}, {float(feature[0][0][0][0])}")
+        for idx, x1 in enumerate(features):
+            x1 = x1.to(x.dtype).to(x.device)
+            x1 = rearrange(x1, 'b c h w -> (h w) b c')
+            x1 = torch.cat([x1] * batched_number, dim=0)
+            features[idx] = x1
         return features
 
 
-class ResnetBlock(nn.Module):
+class ResnetBlockCameraCtrl(nn.Module):
     def __init__(self, in_c, out_c, down: bool, ksize=3, sk=False, use_conv=True,
                  ops=comfy.ops.disable_weight_init):
         super().__init__()
@@ -261,7 +264,7 @@ class ResnetBlock(nn.Module):
 
         self.down = down
         if self.down == True:
-            self.down_opt = Downsample(in_c, use_conv=use_conv)
+            self.down_opt = DownsampleCameraCtrl(in_c, use_conv=use_conv)
 
     def forward(self, x: Tensor):
         if self.down == True:
@@ -278,7 +281,7 @@ class ResnetBlock(nn.Module):
             return h + x
 
 
-class Downsample(nn.Module):
+class DownsampleCameraCtrl(nn.Module):
     """
     A downsampling layer with an optional convolution.
     :param channels: channels in the inputs and outputs.

@@ -685,6 +685,7 @@ class TemporalTransformer3DModel(nn.Module):
         cross_frame_attention_mode=None,
         temporal_pe=False,
         temporal_pe_max_len=24,
+        rearrange_hidden_shapes=True,
         ops=comfy.ops.disable_weight_init,
     ):
         super().__init__()
@@ -719,6 +720,7 @@ class TemporalTransformer3DModel(nn.Module):
                     cross_frame_attention_mode=cross_frame_attention_mode,
                     temporal_pe=temporal_pe,
                     temporal_pe_max_len=temporal_pe_max_len,
+                    rearrange_hidden_shapes=rearrange_hidden_shapes,
                     ops=ops,
                 )
                 for d in range(num_layers)
@@ -847,6 +849,7 @@ class TemporalTransformerBlock(nn.Module):
         cross_frame_attention_mode=None,
         temporal_pe=False,
         temporal_pe_max_len=24,
+        rearrange_hidden_shapes=True,
         ops=comfy.ops.disable_weight_init,
     ):
         super().__init__()
@@ -870,6 +873,7 @@ class TemporalTransformerBlock(nn.Module):
                     cross_frame_attention_mode=cross_frame_attention_mode,
                     temporal_pe=temporal_pe,
                     temporal_pe_max_len=temporal_pe_max_len,
+                    rearrange_hidden_shapes=rearrange_hidden_shapes,
                     ops=ops,
                 )
             )
@@ -1018,6 +1022,7 @@ class VersatileAttention(CrossAttentionMM):
         cross_frame_attention_mode=None,
         temporal_pe=False,
         temporal_pe_max_len=24,
+        rearrange_hidden_shapes=True,
         ops=comfy.ops.disable_weight_init,
         *args,
         **kwargs,
@@ -1031,6 +1036,7 @@ class VersatileAttention(CrossAttentionMM):
         self.query_dim: int = kwargs["query_dim"]
         self.qkv_merge: comfy.ops.disable_weight_init.Linear = None
         self.camera_feature_enabled = False
+        self.rearrange_hidden_shapes = rearrange_hidden_shapes
 
         self.pos_encoder = (
             PositionalEncoding(
@@ -1070,10 +1076,11 @@ class VersatileAttention(CrossAttentionMM):
         if self.attention_mode != "Temporal":
             raise NotImplementedError
 
-        d = hidden_states.shape[1]
-        hidden_states = rearrange(
-            hidden_states, "(b f) d c -> (b d) f c", f=video_length
-        )
+        if self.rearrange_hidden_shapes:
+            d = hidden_states.shape[1]
+            hidden_states = rearrange(
+                hidden_states, "(b f) d c -> (b d) f c", f=video_length
+            )
 
         if self.pos_encoder is not None:
            hidden_states = self.pos_encoder(hidden_states).to(hidden_states.dtype)
@@ -1085,13 +1092,9 @@ class VersatileAttention(CrossAttentionMM):
         )
 
         if self.camera_feature_enabled and self.qkv_merge is not None and mm_kwargs is not None and "camera_feature" in mm_kwargs:
-            logger.info("performing camera_feature")
-            camera_feature = mm_kwargs["camera_feature"]
-            #camera_feature = rearrange(camera_feature, "b c h w -> (h w) b c")
-            #camera_feature = torch.cat([camera_feature] * (camera_feature.shape[1] // video_length), dim=0)
-            #camera_feature = rearrange(camera_feature, "d (b f) c -> (b d) f c", f=video_length)
-            #camera_feature = rearrange(camera_feature, "d (b f) c -> (d b) f c", f=video_length)
-            hidden_states = self.qkv_merge(hidden_states + camera_feature) + hidden_states
+            camera_feature: Tensor = mm_kwargs["camera_feature"]
+            cameractrl_effect = 1.0
+            hidden_states = (self.qkv_merge(hidden_states + camera_feature) + hidden_states) * cameractrl_effect + hidden_states * (1. - cameractrl_effect)
 
         hidden_states = super().forward(
             hidden_states,
@@ -1101,7 +1104,8 @@ class VersatileAttention(CrossAttentionMM):
             scale_mask=scale_mask,
         )
 
-        hidden_states = rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
+        if self.rearrange_hidden_shapes:
+            hidden_states = rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
 
         return hidden_states
 

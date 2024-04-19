@@ -50,12 +50,6 @@ class ModelPatcherAndInjector(ModelPatcher):
     
     def model_patches_to(self, device):
         super().model_patches_to(device)
-        if self.motion_models is not None:
-            for motion_model in self.motion_models.models:
-                try:
-                    motion_model.model.to(device)
-                except Exception:
-                    pass
 
     def patch_model(self, device_to=None, patch_weights=True):
         # first, perform model patching
@@ -80,19 +74,11 @@ class ModelPatcherAndInjector(ModelPatcher):
         if self.motion_models is not None:
             for motion_model in self.motion_models.models:
                 motion_model.model.inject(self)
-                try:
-                    motion_model.model.to(device_to)
-                except Exception:
-                    pass
 
     def eject_model(self, device_to=None):
         if self.motion_models is not None:
             for motion_model in self.motion_models.models:
                 motion_model.model.eject(self)
-                try:
-                    motion_model.model.to(device_to)
-                except Exception:
-                    pass
 
     def clone(self):
         cloned = ModelPatcherAndInjector(self)
@@ -246,10 +232,13 @@ class MotionModelPatcher(ModelPatcher):
         goal_length = x.size(0) // batched_number
         # calculate camera_features if needed
         if self.camera_features_shape is None or sub_idxs != self.prev_sub_idxs or batched_number != self.prev_batched_number:
-            if sub_idxs is not None and len(self.orig_camera_entries) >= full_length:
-                camera_poses = [self.orig_camera_entries[idx] for idx in sub_idxs]
-            else:
-                camera_poses = self.orig_camera_entries.copy()
+            # make sure there are enough camera_poses to match full_length
+            camera_poses = self.orig_camera_entries.copy()
+            if len(camera_poses) < full_length:
+                for i in range(full_length-len(camera_poses)):
+                    camera_poses.append(camera_poses[-1])
+            if sub_idxs is not None and len(self.orig_camera_entries) < full_length:
+                camera_poses = [camera_poses[idx] for idx in sub_idxs]
             # make sure camera_poses matches goal_length
             if goal_length != len(camera_poses):
                 if len(camera_poses) > goal_length:
@@ -551,11 +540,10 @@ def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ct
     if len(attention_state_dict) == 0:
         raise Exception("Provided CameraCtrl model had no qkv_merge keys; not a valid CameraCtrl model!")
     # initialize CameraPoseEncoder on motion model, and load keys
-    camera_encoder = CameraPoseEncoder(channels=motion_model.model.layer_channels, nums_rb=2, ops=motion_model.model.ops)
-    # .to(
-    #     device=comfy.model_management.unet_offload_device(),
-    #     dtype=comfy.model_management.unet_dtype()
-    # )
+    camera_encoder = CameraPoseEncoder(channels=motion_model.model.layer_channels, nums_rb=2, ops=motion_model.model.ops).to(
+        device=comfy.model_management.unet_offload_device(),
+        dtype=comfy.model_management.unet_dtype()
+    )
     camera_encoder.load_state_dict(camera_state_dict)
     motion_model.model.set_camera_encoder(camera_encoder=camera_encoder)
     # initialize qkv_merge on specific attention blocks, and load keys
@@ -575,6 +563,10 @@ def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ct
         qkv_merge_state_dict["weight"] = attention_state_dict[f"{base_key}.weight"]
         qkv_merge_state_dict["bias"] = attention_state_dict[f"{base_key}.bias"]
         attention_obj.qkv_merge.load_state_dict(qkv_merge_state_dict)
+        attention_obj.qkv_merge = attention_obj.qkv_merge.to(
+            device=comfy.model_management.unet_offload_device(),
+            dtype=comfy.model_management.unet_dtype()
+        )
     
 
 def validate_model_compatibility_gen2(model: ModelPatcher, motion_model: MotionModelPatcher):
