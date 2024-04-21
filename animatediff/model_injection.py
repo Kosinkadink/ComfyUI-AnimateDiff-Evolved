@@ -112,6 +112,7 @@ class MotionModelPatcher(ModelPatcher):
         self.orig_camera_entries: list[CameraEntry] = None
         self.camera_features: list[Tensor] = None  # temporary
         self.camera_features_shape: tuple = None
+        self.cameractrl_multival = None
 
         # temporary variables
         self.current_used_steps = 0
@@ -119,8 +120,10 @@ class MotionModelPatcher(ModelPatcher):
         self.current_index = -1
         self.current_scale: Union[float, Tensor] = None
         self.current_effect: Union[float, Tensor] = None
+        self.current_cameractrl_effect: Union[float, Tensor] = None
         self.combined_scale: Union[float, Tensor] = None
         self.combined_effect: Union[float, Tensor] = None
+        self.combined_cameractrl_effect: Union[float, Tensor] = None
         self.was_within_range = False
         self.prev_sub_idxs = None
         self.prev_batched_number = None
@@ -135,6 +138,7 @@ class MotionModelPatcher(ModelPatcher):
         self.cleanup()
         self.model.set_scale(self.scale_multival)
         self.model.set_effect(self.effect_multival)
+        self.model.set_cameractrl_effect(self.cameractrl_multival)
         if self.model.img_encoder is not None:
             self.model.img_encoder.set_ref_drift(self.orig_ref_drift)
             self.model.img_encoder.set_insertion_weights(self.orig_insertion_weights)
@@ -170,6 +174,10 @@ class MotionModelPatcher(ModelPatcher):
                             self.current_effect = self.current_keyframe.effect_multival
                         elif not self.current_keyframe.inherit_missing:
                             self.current_effect = None
+                        if self.current_keyframe.has_cameractrl_effect():
+                            self.current_cameractrl_effect = self.current_keyframe.cameractrl_multival
+                        elif not self.current_keyframe.inherit_missing:
+                            self.current_cameractrl_effect = None
                         # if guarantee_steps greater than zero, stop searching for other keyframes
                         if self.current_keyframe.guarantee_steps > 0:
                             break
@@ -181,9 +189,11 @@ class MotionModelPatcher(ModelPatcher):
             # combine model's scale and effect with keyframe's scale and effect
             self.combined_scale = get_combined_multival(self.scale_multival, self.current_scale)
             self.combined_effect = get_combined_multival(self.effect_multival, self.current_effect)
+            self.combined_cameractrl_effect = get_combined_multival(self.cameractrl_multival, self.current_cameractrl_effect)
             # apply scale and effect
             self.model.set_scale(self.combined_scale)
             self.model.set_effect(self.combined_effect)
+            self.model.set_cameractrl_effect(self.combined_cameractrl_effect)
         # apply effect - if not within range, set effect to 0, effectively turning model off
         if curr_t > self.timestep_range[0] or curr_t < self.timestep_range[1]:
             self.model.set_effect(0.0)
@@ -307,6 +317,7 @@ class MotionModelPatcher(ModelPatcher):
         n.orig_apply_ref_when_disabled = self.orig_apply_ref_when_disabled
         # CameraCtrl
         n.orig_camera_entries = self.orig_camera_entries
+        n.cameractrl_multival = self.cameractrl_multival
         return n
 
 

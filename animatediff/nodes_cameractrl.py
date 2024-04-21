@@ -1,16 +1,17 @@
 from typing import Union
 import os
+import torch
 
 import folder_paths
 
 from .ad_settings import AnimateDiffSettings
 from .adapter_cameractrl import CameraEntry
 from .logger import logger
-from .utils_model import get_available_motion_models
+from .utils_model import get_available_motion_models, BIGMAX
 from .utils_motion import ADKeyframeGroup
 from .motion_lora import MotionLoraList
 from .model_injection import (MotionModelGroup, MotionModelPatcher, load_motion_module_gen2, inject_camera_encoder_into_model)
-from .nodes_gen2 import ApplyAnimateDiffModelNode
+from .nodes_gen2 import ApplyAnimateDiffModelNode, ADKeyframeNode
 
 
 class ApplyAnimateDiffWithCameraCtrl:
@@ -27,6 +28,7 @@ class ApplyAnimateDiffWithCameraCtrl:
                 "motion_lora": ("MOTION_LORA",),
                 "scale_multival": ("MULTIVAL",),
                 "effect_multival": ("MULTIVAL",),
+                "cameractrl_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
             }
@@ -38,7 +40,7 @@ class ApplyAnimateDiffWithCameraCtrl:
 
     def apply_motion_model(self, motion_model: MotionModelPatcher, cameractrl_poses: list[list[float]], start_percent: float=0.0, end_percent: float=1.0,
                            motion_lora: MotionLoraList=None, ad_keyframes: ADKeyframeGroup=None,
-                           scale_multival=None, effect_multival=None,
+                           scale_multival=None, effect_multival=None, cameractrl_multival=None,
                            prev_m_models: MotionModelGroup=None,):
         new_m_models = ApplyAnimateDiffModelNode.apply_motion_model(self, motion_model, start_percent=start_percent, end_percent=end_percent,
                                                                     motion_lora=motion_lora, ad_keyframes=ad_keyframes,
@@ -50,6 +52,7 @@ class ApplyAnimateDiffWithCameraCtrl:
             raise Exception(f"Motion model '{curr_model.model.mm_info.mm_name}' does not contain a camera_encoder; cannot be used with Apply AnimateDiff-CameraCtrl Model node.")
         camera_entries = [CameraEntry(entry) for entry in cameractrl_poses]
         curr_model.orig_camera_entries = camera_entries
+        curr_model.cameractrl_multival = cameractrl_multival
         return new_m_models
 
 
@@ -102,3 +105,38 @@ class LoadCameraPoses:
         poses = [pose.strip().split(' ') for pose in poses[1:]]
         poses = [[float(x) for x in pose] for pose in poses]
         return (poses,)
+
+
+class CameraCtrlADKeyframeNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}, ),
+            },
+            "optional": {
+                "prev_ad_keyframes": ("AD_KEYFRAMES", ),
+                "scale_multival": ("MULTIVAL",),
+                "effect_multival": ("MULTIVAL",),
+                "inherit_missing": ("BOOLEAN", {"default": True}, ),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            }
+        }
+    
+    RETURN_TYPES = ("AD_KEYFRAMES", )
+    FUNCTION = "load_keyframe"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓"
+
+    def load_keyframe(self,
+                      start_percent: float, prev_ad_keyframes=None,
+                      scale_multival: Union[float, torch.Tensor]=None, effect_multival: Union[float, torch.Tensor]=None,
+                      cameractrl_multival: Union[float, torch.Tensor]=None,
+                      inherit_missing: bool=True, guarantee_steps: int=1):
+        return (
+            ADKeyframeNode.load_keyframe(
+                start_percent=start_percent, prev_ad_keyframes=prev_ad_keyframes,
+                scale_multival=scale_multival, effect_multival=effect_multival, cameractrl_multival=cameractrl_multival,
+                inherit_missing=inherit_missing, guarantee_steps=guarantee_steps
+                ),
+            )

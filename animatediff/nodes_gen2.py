@@ -203,11 +203,13 @@ class ADKeyframeNode:
     def load_keyframe(self,
                       start_percent: float, prev_ad_keyframes=None,
                       scale_multival: Union[float, torch.Tensor]=None, effect_multival: Union[float, torch.Tensor]=None,
+                      cameractrl_multival: Union[float, torch.Tensor]=None,
                       inherit_missing: bool=True, guarantee_steps: int=1):
         if not prev_ad_keyframes:
             prev_ad_keyframes = ADKeyframeGroup()
         prev_ad_keyframes = prev_ad_keyframes.clone()
-        keyframe = ADKeyframe(start_percent=start_percent, scale_multival=scale_multival, effect_multival=effect_multival,
+        keyframe = ADKeyframe(start_percent=start_percent,
+                              scale_multival=scale_multival, effect_multival=effect_multival, cameractrl_multival=cameractrl_multival,
                               inherit_missing=inherit_missing, guarantee_steps=guarantee_steps)
         prev_ad_keyframes.add(keyframe)
         return (prev_ad_keyframes,)

@@ -188,6 +188,7 @@ class ADKeyframe:
                  start_percent: float = 0.0,
                  scale_multival: Union[float, Tensor]=None,
                  effect_multival: Union[float, Tensor]=None,
+                 cameractrl_multival: Union[float, Tensor]=None,
                  inherit_missing: bool=True,
                  guarantee_steps: int=1,
                  default: bool=False,
@@ -196,6 +197,7 @@ class ADKeyframe:
         self.start_t = 999999999.9
         self.scale_multival = scale_multival
         self.effect_multival = effect_multival
+        self.cameractrl_multival = cameractrl_multival
         self.inherit_missing = inherit_missing
         self.guarantee_steps = guarantee_steps
         self.default = default
@@ -205,6 +207,9 @@ class ADKeyframe:
     
     def has_effect(self):
         return self.effect_multival is not None
+
+    def has_cameractrl_effect(self):
+        return self.cameractrl_multival is not None
 
 
 class ADKeyframeGroup:
