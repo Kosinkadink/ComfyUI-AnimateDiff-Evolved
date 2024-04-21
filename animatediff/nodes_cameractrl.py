@@ -144,6 +144,40 @@ class LoadAnimateDiffModelWithCameraCtrl:
         return (loaded_motion_model,)
 
 
+class CameraCtrlADKeyframeNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}, ),
+            },
+            "optional": {
+                "prev_ad_keyframes": ("AD_KEYFRAMES", ),
+                "scale_multival": ("MULTIVAL",),
+                "effect_multival": ("MULTIVAL",),
+                "cameractrl_multival": ("MULTIVAL",),
+                "inherit_missing": ("BOOLEAN", {"default": True}, ),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            }
+        }
+    
+    RETURN_TYPES = ("AD_KEYFRAMES", )
+    FUNCTION = "load_keyframe"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+
+    def load_keyframe(self,
+                      start_percent: float, prev_ad_keyframes=None,
+                      scale_multival: Union[float, torch.Tensor]=None, effect_multival: Union[float, torch.Tensor]=None,
+                      cameractrl_multival: Union[float, torch.Tensor]=None,
+                      inherit_missing: bool=True, guarantee_steps: int=1):
+        return ADKeyframeNode.load_keyframe(self,
+                    start_percent=start_percent, prev_ad_keyframes=prev_ad_keyframes,
+                    scale_multival=scale_multival, effect_multival=effect_multival, cameractrl_multival=cameractrl_multival,
+                    inherit_missing=inherit_missing, guarantee_steps=guarantee_steps
+                )
+
+
 class LoadCameraPoses:
     @classmethod
     def INPUT_TYPES(s):
@@ -157,7 +191,7 @@ class LoadCameraPoses:
         }
 
     RETURN_TYPES = ("CAMERACTRL_POSES",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
     FUNCTION = "load_camera_poses"
 
     def load_camera_poses(self, pose_filename):
@@ -169,41 +203,6 @@ class LoadCameraPoses:
         poses = [pose.strip().split(' ') for pose in poses[1:]]
         poses = [[float(x) for x in pose] for pose in poses]
         return (poses,)
-
-
-class CameraCtrlADKeyframeNode:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}, ),
-            },
-            "optional": {
-                "prev_ad_keyframes": ("AD_KEYFRAMES", ),
-                "scale_multival": ("MULTIVAL",),
-                "effect_multival": ("MULTIVAL",),
-                "inherit_missing": ("BOOLEAN", {"default": True}, ),
-                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
-            }
-        }
-    
-    RETURN_TYPES = ("AD_KEYFRAMES", )
-    FUNCTION = "load_keyframe"
-
-    CATEGORY = "Animate Diff 🎭🅐🅓"
-
-    def load_keyframe(self,
-                      start_percent: float, prev_ad_keyframes=None,
-                      scale_multival: Union[float, torch.Tensor]=None, effect_multival: Union[float, torch.Tensor]=None,
-                      cameractrl_multival: Union[float, torch.Tensor]=None,
-                      inherit_missing: bool=True, guarantee_steps: int=1):
-        return (
-            ADKeyframeNode.load_keyframe(
-                start_percent=start_percent, prev_ad_keyframes=prev_ad_keyframes,
-                scale_multival=scale_multival, effect_multival=effect_multival, cameractrl_multival=cameractrl_multival,
-                inherit_missing=inherit_missing, guarantee_steps=guarantee_steps
-                ),
-            )
 
 
 class CameraPoseBasic:
@@ -219,7 +218,7 @@ class CameraPoseBasic:
 
     RETURN_TYPES = ("CameraPose",)
     FUNCTION = "camera_pose_basic"
-    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
     def camera_pose_basic(self,camera_pose,speed,video_length):
         motion_list = [camera_pose]
@@ -242,7 +241,7 @@ class CameraPoseJoin:
 
     RETURN_TYPES = ("CameraPose",)
     FUNCTION = "camera_pose_join"
-    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
     def camera_pose_join(self,camera_pose1,camera_pose2):
         RT = combine_camera_motion(camera_pose1, camera_pose2)
@@ -265,7 +264,7 @@ class CameraPoseCombine:
 
     RETURN_TYPES = ("CameraPose",)
     FUNCTION = "camera_pose_combine"
-    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
     def camera_pose_combine(self,camera_pose1,camera_pose2,camera_pose3,camera_pose4,speed,video_length):
         angle = np.array(CAMERA[camera_pose1]["angle"]) + np.array(CAMERA[camera_pose2]["angle"]) + np.array(CAMERA[camera_pose3]["angle"]) + np.array(CAMERA[camera_pose4]["angle"])
@@ -290,7 +289,7 @@ class CameraCtrlPose:
     RETURN_TYPES = ("CAMERACTRL_POSES","INT",)
     RETURN_NAMES = ("cameractrl_poses","video_length",)
     FUNCTION = "camera_ctrl_pose"
-    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
     def camera_ctrl_pose(self,camera_pose,fx,fy,cx,cy):
         camera_pose_list=camera_pose.tolist()

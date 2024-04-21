@@ -6,7 +6,7 @@ from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithConte
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ADKeyframeNode,
                          LoadAnimateDiffModelNode)
 from .nodes_animatelcmi2v import (ApplyAnimateLCMI2VModel, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
-from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, LoadCameraPoses, CameraPoseBasic, CameraPoseJoin, CameraPoseCombine, CameraCtrlPose)
+from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, CameraCtrlADKeyframeNode, LoadCameraPoses, CameraPoseBasic, CameraPoseJoin, CameraPoseCombine, CameraCtrlPose)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
@@ -97,6 +97,7 @@ NODE_CLASS_MAPPINGS = {
     # CameraCtrl Nodes
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
     "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
+    "ADE_CameraCtrlAnimateDiffKeyframe": CameraCtrlADKeyframeNode,
     "ADE_LoadCameraPoses": LoadCameraPoses,
     "ADE_CameraPoseBasic": CameraPoseBasic,
     "ADE_CameraPoseJoin": CameraPoseJoin,
@@ -178,7 +179,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # CameraCtrl Nodes
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": "Apply AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
     "ADE_LoadAnimateDiffModelWithCameraCtrl": "Load AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
-    "ADE_LoadCameraPoses": "Load CameraCtrl Poses 🎭🅐🅓②",
+    "ADE_CameraCtrlAnimateDiffKeyframe": "AnimateDiff+CameraCtrl Keyframe 🎭🅐🅓",
+    "ADE_LoadCameraPoses": "Load CameraCtrl Poses (File) 🎭🅐🅓②",
     "ADE_CameraPoseBasic": "CameraCtrl Basic Poses 🎭🅐🅓②",
     "ADE_CameraPoseJoin": "CameraCtrl Join Poses 🎭🅐🅓②",
     "ADE_CameraPoseCombine": "CameraCtrl Combine Poses 🎭🅐🅓②",
