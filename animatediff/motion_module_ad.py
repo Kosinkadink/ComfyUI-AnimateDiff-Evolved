@@ -708,7 +708,6 @@ class TemporalTransformer3DModel(nn.Module):
         cross_frame_attention_mode=None,
         temporal_pe=False,
         temporal_pe_max_len=24,
-        rearrange_hidden_shapes=True,
         ops=comfy.ops.disable_weight_init,
     ):
         super().__init__()
@@ -747,7 +746,6 @@ class TemporalTransformer3DModel(nn.Module):
                     cross_frame_attention_mode=cross_frame_attention_mode,
                     temporal_pe=temporal_pe,
                     temporal_pe_max_len=temporal_pe_max_len,
-                    rearrange_hidden_shapes=rearrange_hidden_shapes,
                     ops=ops,
                 )
                 for d in range(num_layers)
@@ -931,7 +929,6 @@ class TemporalTransformerBlock(nn.Module):
         cross_frame_attention_mode=None,
         temporal_pe=False,
         temporal_pe_max_len=24,
-        rearrange_hidden_shapes=True,
         ops=comfy.ops.disable_weight_init,
     ):
         super().__init__()
@@ -955,7 +952,6 @@ class TemporalTransformerBlock(nn.Module):
                     cross_frame_attention_mode=cross_frame_attention_mode,
                     temporal_pe=temporal_pe,
                     temporal_pe_max_len=temporal_pe_max_len,
-                    rearrange_hidden_shapes=rearrange_hidden_shapes,
                     ops=ops,
                 )
             )
@@ -1019,8 +1015,16 @@ class TemporalTransformerBlock(nn.Module):
             count_final = torch.zeros_like(hidden_states)
             # bias_final = [0.0] * video_length
             batched_conds = hidden_states.size(1) // video_length
+            # store original camera_feature, if present
+            has_camera_feature = False
+            if mm_kwargs is not None:
+                has_camera_feature = True
+                orig_camera_feature = mm_kwargs["camera_feature"]
+            # perform view options
             for sub_idxs in views:
                 sub_hidden_states = rearrange(hidden_states[:, sub_idxs], "b f d c -> (b f) d c")
+                if has_camera_feature:
+                    mm_kwargs["camera_feature"] = orig_camera_feature[:, sub_idxs, :]
                 for attention_block, norm in zip(self.attention_blocks, self.norms):
                     norm_hidden_states = norm(sub_hidden_states).to(sub_hidden_states.dtype)
                     sub_hidden_states = (
@@ -1059,7 +1063,10 @@ class TemporalTransformerBlock(nn.Module):
                 weights_tensor = torch.Tensor(weights).to(device=hidden_states.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
                 value_final[:, sub_idxs] += sub_hidden_states * weights_tensor
                 count_final[:, sub_idxs] += weights_tensor
-            
+            # restore original camera_feature
+            if has_camera_feature:
+                mm_kwargs["camera_feature"] = orig_camera_feature
+                del orig_camera_feature
             # get weighted average of sub_hidden_states, if fuse method requires it
             # if view_options.fuse_method != ContextFuseMethod.RELATIVE:
             hidden_states = value_final / count_final
@@ -1107,7 +1114,6 @@ class VersatileAttention(CrossAttentionMM):
         cross_frame_attention_mode=None,
         temporal_pe=False,
         temporal_pe_max_len=24,
-        rearrange_hidden_shapes=True,
         ops=comfy.ops.disable_weight_init,
         *args,
         **kwargs,
@@ -1121,7 +1127,6 @@ class VersatileAttention(CrossAttentionMM):
         self.query_dim: int = kwargs["query_dim"]
         self.qkv_merge: comfy.ops.disable_weight_init.Linear = None
         self.camera_feature_enabled = False
-        self.rearrange_hidden_shapes = rearrange_hidden_shapes
 
         self.pos_encoder = (
             PositionalEncoding(
@@ -1162,11 +1167,10 @@ class VersatileAttention(CrossAttentionMM):
         if self.attention_mode != "Temporal":
             raise NotImplementedError
 
-        if self.rearrange_hidden_shapes:
-            d = hidden_states.shape[1]
-            hidden_states = rearrange(
-                hidden_states, "(b f) d c -> (b d) f c", f=video_length
-            )
+        d = hidden_states.shape[1]
+        hidden_states = rearrange(
+            hidden_states, "(b f) d c -> (b d) f c", f=video_length
+        )
 
         if self.pos_encoder is not None:
            hidden_states = self.pos_encoder(hidden_states).to(hidden_states.dtype)
@@ -1189,8 +1193,7 @@ class VersatileAttention(CrossAttentionMM):
             scale_mask=scale_mask,
         )
 
-        if self.rearrange_hidden_shapes:
-            hidden_states = rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
+        hidden_states = rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
 
         return hidden_states
 

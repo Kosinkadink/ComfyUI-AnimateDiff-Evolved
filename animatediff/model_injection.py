@@ -14,7 +14,8 @@ from comfy.model_base import BaseModel
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention, has_mid_block, normalize_ad_state_dict
+from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention,
+                               has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max
 from .motion_lora import MotionLoraInfo, MotionLoraList
@@ -555,6 +556,7 @@ def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ct
         dtype=comfy.model_management.unet_dtype()
     )
     camera_encoder.load_state_dict(camera_state_dict)
+    camera_encoder.temporal_pe_max_len = get_position_encoding_max_len(camera_state_dict, mm_name=camera_ctrl_name, mm_format=AnimateDiffFormat.ANIMATEDIFF)
     motion_model.model.set_camera_encoder(camera_encoder=camera_encoder)
     # initialize qkv_merge on specific attention blocks, and load keys
     for key in attention_state_dict:

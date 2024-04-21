@@ -8,8 +8,10 @@ from einops import rearrange
 
 import comfy.ops
 
-from .motion_module_ad import TemporalTransformerBlock
+from .context import ContextOptions, ContextFuseMethod, ContextSchedules
+from .motion_module_ad import TemporalTransformerBlock, get_position_encoding_max_len
 from .logger import logger
+
 
 def conv_nd(dims, *args, **kwargs):
     """
@@ -209,12 +211,12 @@ class CameraPoseEncoder(nn.Module):
                                                                     cross_attention_dim=None,
                                                                     temporal_pe=temporal_position_encoding,
                                                                     temporal_pe_max_len=temporal_position_encoding_max_len,
-                                                                    rearrange_hidden_shapes=False, # different from AD
                                                                     ops=ops)
                 conv_layers.append(conv_layer)
                 temporal_attention_layers.append(temporal_attention_layer)
             self.encoder_down_conv_blocks.append(conv_layers)
             self.encoder_down_attention_blocks.append(temporal_attention_layers)
+            self.temporal_pe_max_len = 16
 
     def forward(self, x: Tensor, video_length: int, batched_number: int=1):
         # rearrange to match expected format
@@ -224,6 +226,13 @@ class CameraPoseEncoder(nn.Module):
         x = self.unshuffle(x)
         # extract features
         features = []
+        # prepare view_options, if needed
+        view_options = ContextOptions(
+            context_length=self.temporal_pe_max_len,
+            context_overlap=self.temporal_pe_max_len//2, # at 16 max_len, context_overlap will be 8
+            context_schedule=ContextSchedules.STATIC_STANDARD,
+            fuse_method=ContextFuseMethod.PYRAMID,
+        )
         # logger.warn(f"x dtype: {x.dtype}, device: {x.device}")
         # logger.warn(f"dtype: {get_parameter_dtype(self)}, device: {get_parameter_device(self)}")
         x = self.encoder_conv_in(x.to(dtype=get_parameter_dtype(self), device=get_parameter_device(self)))
@@ -231,9 +240,9 @@ class CameraPoseEncoder(nn.Module):
             for res_layer, attention_layer in zip(res_block, attention_block):
                 x = res_layer(x)
                 h, w = x.shape[-2:]
-                x = rearrange(x, 'b c h w -> (h w) b c')
-                x = attention_layer(x, video_length=video_length)
-                x = rearrange(x, '(h w) b c -> b c h w', h=h, w=w)
+                x = rearrange(x, 'b c h w -> b (h w) c')  # h w are in middle instead of beginning like in diffusers
+                x = attention_layer(x, video_length=video_length, view_options=view_options)
+                x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)  # h w are in middle instead of beginning like in diffusers
             features.append(x)
         # for idx, feature in enumerate(features):
         #     logger.info(f"{idx}: {feature.shape}, {float(feature[0][0][0][0])}")
