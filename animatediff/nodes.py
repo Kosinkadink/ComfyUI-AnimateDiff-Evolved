@@ -6,7 +6,7 @@ from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithConte
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ADKeyframeNode,
                          LoadAnimateDiffModelNode)
 from .nodes_animatelcmi2v import (ApplyAnimateLCMI2VModel, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
-from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, LoadCameraPoses)
+from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, LoadCameraPoses, CameraPoseBasic, CameraPoseJoin, CameraPoseCombine, CameraCtrlPose)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
@@ -98,6 +98,10 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
     "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
     "ADE_LoadCameraPoses": LoadCameraPoses,
+    "ADE_CameraPoseBasic": CameraPoseBasic,
+    "ADE_CameraPoseJoin": CameraPoseJoin,
+    "ADE_CameraPoseCombine": CameraPoseCombine,
+    "ADE_CameraCtrlPose": CameraCtrlPose,
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": MaskedLoraLoader,
     # Deprecated Nodes
@@ -175,6 +179,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": "Apply AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
     "ADE_LoadAnimateDiffModelWithCameraCtrl": "Load AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
     "ADE_LoadCameraPoses": "Load CameraCtrl Poses 🎭🅐🅓②",
+    "ADE_CameraPoseBasic": "CameraCtrl Basic Poses 🎭🅐🅓②",
+    "ADE_CameraPoseJoin": "CameraCtrl Join Poses 🎭🅐🅓②",
+    "ADE_CameraPoseCombine": "CameraCtrl Combine Poses 🎭🅐🅓②",
+    "ADE_CameraCtrlPose": "Generate CameraCtrl Poses 🎭🅐🅓②",
     # MaskedLoraLoader
     #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
     # Deprecated Nodes
