@@ -237,16 +237,8 @@ class MotionModelPatcher(ModelPatcher):
             if len(camera_poses) < full_length:
                 for i in range(full_length-len(camera_poses)):
                     camera_poses.append(camera_poses[-1])
-            if sub_idxs is not None and len(self.orig_camera_entries) < full_length:
+            if sub_idxs is not None and len(self.orig_camera_entries) > goal_length:
                 camera_poses = [camera_poses[idx] for idx in sub_idxs]
-            # make sure camera_poses matches goal_length
-            if goal_length != len(camera_poses):
-                if len(camera_poses) > goal_length:
-                    camera_poses = camera_poses[:goal_length]
-                elif len(camera_poses) < goal_length:
-                    # pad the camera_poses with the last element to match goal_length
-                    for i in range(goal_length-len(camera_poses)):
-                        camera_poses.append(camera_poses[-1])
             # create encoded embeddings
             b, c, h, w = x.shape
             plucker_embedding = prepare_pose_embedding(camera_poses, image_width=w*8, image_height=h*8).to(dtype=x.dtype, device=x.device)
