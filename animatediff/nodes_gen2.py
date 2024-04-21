@@ -21,6 +21,7 @@ from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionMo
 from .motion_module_ad import AnimateDiffFormat
 from .sample_settings import SampleSettings
 
+from .camera_utils import *
 
 class UseEvolvedSamplingNode:
     @classmethod
@@ -288,6 +289,107 @@ class LoadAnimateDiffAndInjectI2VNode:
         inject_img_encoder_into_model(motion_model=loaded_motion_model, w_encoder=motion_model)
         return (loaded_motion_model,)
 
+class CameraPoseBasic:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "camera_pose":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
+                "speed":("FLOAT",{"default":1.0}),
+                "video_length":("INT",{"default":16}),
+            },
+        }
+
+    RETURN_TYPES = ("CameraPose",)
+    FUNCTION = "run"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+
+    def run(self,camera_pose,speed,video_length):
+        camera_dict = {
+                "motion":[camera_pose],
+                "mode": "Basic Camera Poses",  # "First A then B", "Both A and B", "Custom"
+                "speed": speed,
+                "complex": None
+                } 
+        motion_list = camera_dict['motion']
+        mode = camera_dict['mode']
+        speed = camera_dict['speed'] 
+        angle = np.array(CAMERA[motion_list[0]]["angle"])
+        T = np.array(CAMERA[motion_list[0]]["T"])
+        RT = get_camera_motion(angle, T, speed, video_length)
+        return (RT,)
+
+class CameraPoseJoin:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "camera_pose1":("CameraPose",),
+                "camera_pose2":("CameraPose",),
+            },
+        }
+
+    RETURN_TYPES = ("CameraPose",)
+    FUNCTION = "run"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+
+    def run(self,camera_pose1,camera_pose2):
+        RT = combine_camera_motion(camera_pose1, camera_pose2)
+        return (RT,)
+
+class CameraPoseCombine:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "camera_pose1":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
+                "camera_pose2":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
+                "camera_pose3":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
+                "camera_pose4":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
+                "speed":("FLOAT",{"default":1.0}),
+                "video_length":("INT",{"default":16}),
+            },
+        }
+
+    RETURN_TYPES = ("CameraPose",)
+    FUNCTION = "run"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+
+    def run(self,camera_pose1,camera_pose2,camera_pose3,camera_pose4,speed,video_length):
+        angle = np.array(CAMERA[camera_pose1]["angle"]) + np.array(CAMERA[camera_pose2]["angle"]) + np.array(CAMERA[camera_pose3]["angle"]) + np.array(CAMERA[camera_pose4]["angle"])
+        T = np.array(CAMERA[camera_pose1]["T"]) + np.array(CAMERA[camera_pose2]["T"]) + np.array(CAMERA[camera_pose3]["T"]) + np.array(CAMERA[camera_pose4]["T"])
+        RT = get_camera_motion(angle, T, speed, video_length)
+        return (RT,)
+
+class CameraCtrlPose:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "camera_pose":("CameraPose",),
+                "fx":("FLOAT",{"default":0.474812461, "min": 0, "max": 1, "step": 0.000000001}),
+                "fy":("FLOAT",{"default":0.844111024, "min": 0, "max": 1, "step": 0.000000001}),
+                "cx":("FLOAT",{"default":0.5, "min": 0, "max": 1, "step": 0.01}),
+                "cy":("FLOAT",{"default":0.5, "min": 0, "max": 1, "step": 0.01}),
+            },
+        }
+
+    RETURN_TYPES = ("CAMERACTRL_POSES","INT",)
+    RETURN_NAMES = ("cameractrl_poses","video_length",)
+    FUNCTION = "run"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+
+    def run(self,camera_pose,fx,fy,cx,cy):
+        camera_pose_list=camera_pose.tolist()
+        trajs=[]
+        for cp in camera_pose_list:
+            traj=[0,fx,fy,cx,cy,0,0]
+            traj.extend(cp[0])
+            traj.extend(cp[1])
+            traj.extend(cp[2])
+            trajs.append(traj)
+        
+        return (trajs,len(trajs),)
 
 class ApplyAnimateDiffWithCameraCtrl:
     @classmethod

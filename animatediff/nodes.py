@@ -5,7 +5,7 @@ from .sampling import motion_sample_factory
 from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext)
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ApplyAnimateLCMI2VModel, ADKeyframeNode,
                          LoadAnimateDiffModelNode, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode,
-                         LoadCameraCtrlAdapter, LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, LoadCameraPoses)
+                         LoadCameraCtrlAdapter, LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, LoadCameraPoses,CameraPoseBasic,CameraPoseJoin,CameraPoseCombine,CameraCtrlPose)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
@@ -95,6 +95,10 @@ NODE_CLASS_MAPPINGS = {
     "ADE_InjectI2VIntoAnimateDiffModel": LoadAnimateDiffAndInjectI2VNode,
     # CameraCtrl Nodes
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
+    "ADE_CameraPoseBasic": CameraPoseBasic,
+    "ADE_CameraPoseJoin": CameraPoseJoin,
+    "ADE_CameraPoseCombine": CameraPoseCombine,
+    "ADE_CameraCtrlPose": CameraCtrlPose,
     "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
     "ADE_LoadCameraCtrlAdapter": LoadCameraCtrlAdapter,
     "ADE_LoadCameraPoses": LoadCameraPoses,
