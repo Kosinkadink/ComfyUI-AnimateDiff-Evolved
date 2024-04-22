@@ -2,10 +2,12 @@ from typing import Union
 import os
 import torch
 
+import math
 import folder_paths
 import copy
 import json
 import numpy as np
+from collections import OrderedDict
 
 from .ad_settings import AnimateDiffSettings
 from .adapter_cameractrl import CameraEntry
@@ -16,23 +18,83 @@ from .motion_lora import MotionLoraList
 from .model_injection import (MotionModelGroup, MotionModelPatcher, load_motion_module_gen2, inject_camera_encoder_into_model)
 from .nodes_gen2 import ApplyAnimateDiffModelNode, ADKeyframeNode
 
-CAMERA = {
-    # T
-    "base_T_norm": 1.5,
-    "base_angle": np.pi/3,
 
-    "Static": {     "angle":[0., 0., 0.],   "T":[0., 0., 0.]},
-    "Pan Up": {     "angle":[0., 0., 0.],   "T":[0., 1., 0.]},
-    "Pan Down": {   "angle":[0., 0., 0.],   "T":[0.,-1.,0.]},
-    "Pan Left": {   "angle":[0., 0., 0.],   "T":[1.,0.,0.]},
-    "Pan Right": {  "angle":[0., 0., 0.],   "T": [-1.,0.,0.]},
-    "Zoom In": {    "angle":[0., 0., 0.],   "T": [0.,0.,-2.]},
-    "Zoom Out": {   "angle":[0., 0., 0.],   "T": [0.,0.,2.]},
-    "ACW": {        "angle": [0., 0., 1.],  "T":[0., 0., 0.]},
-    "CW": {         "angle": [0., 0., -1.], "T":[0., 0., 0.]},
-}
+class CameraMotion:
+    def __init__(self, rotate: tuple[float], translate: tuple[float]):
+        assert len(rotate) == 3
+        assert len(translate) == 3
+        self.rotate = np.array(rotate)
+        self.translate = np.array(translate)
 
-def compute_R_form_rad_angle(angles):
+    def multiply(self, mult: float):
+        if math.isclose(mult, 1.0):
+            return self.clone()
+        new_rotate = self.rotate.copy()
+        new_translate = self.translate.copy()
+        new_rotate *= mult
+        new_translate *= mult
+        return CameraMotion(rotate=new_rotate, translate=new_translate)
+
+    def clone(self):
+        return CameraMotion(rotate=self.rotate.copy(), translate=self.translate.copy())
+
+    @staticmethod
+    def combine(deltas: list['CameraMotion']) -> 'CameraMotion':
+        new_rotate = np.array([0., 0., 0.])
+        new_translate = np.array([0., 0., 0.])
+        for delta in deltas:
+            new_rotate += delta.rotate
+            new_translate += delta.translate
+        return CameraMotion(rotate=new_rotate, translate=new_translate)
+
+
+class CAM:
+    BASE_T_NORM = 1.5
+    BASE_ANGLE = np.pi/3
+
+    DEFAULT_FX = 0.474812461
+    DEFAULT_FY = 0.844111024
+    DEFAULT_CX = 0.5
+    DEFAULT_CY = 0.5
+
+    STATIC = "Static"
+    PAN_UP = "Pan Up"
+    PAN_DOWN = "Pan Down"
+    PAN_LEFT = "Pan Left"
+    PAN_RIGHT = "Pan Right"
+    ZOOM_IN = "Zoom In"
+    ZOOM_OUT = "Zoom Out"
+    ROLL_CLOCKWISE = "Roll Clockwise"
+    ROLL_ANTICLOCKWISE = "Roll Anticlockwise"
+    TILT_UP = "Tilt Up"
+    TILT_DOWN = "Tilt Down"
+    TILT_LEFT = "Tilt Left"
+    TILT_RIGHT = "Tilt Right"
+    
+    _PAIRS = [
+        (STATIC,        CameraMotion(rotate=(0., 0., 0.), translate=(0., 0., 0.))),
+        (PAN_UP,        CameraMotion(rotate=(0., 0., 0.), translate=(0., 1., 0.))),
+        (PAN_DOWN,      CameraMotion(rotate=(0., 0., 0.), translate=(0., -1., 0.))),
+        (PAN_LEFT,      CameraMotion(rotate=(0., 0., 0.), translate=(1., 0., 0.))),
+        (PAN_RIGHT,     CameraMotion(rotate=(0., 0., 0.), translate=(-1., 0., 0.))),
+        (ZOOM_IN,       CameraMotion(rotate=(0., 0., 0.), translate=(0., 0., -2.))),
+        (ZOOM_OUT,      CameraMotion(rotate=(0., 0., 0.), translate=(0., 0., 2.))),
+        (ROLL_CLOCKWISE,     CameraMotion(rotate=(0., 0., -1.), translate=(0., 0., 0.))),
+        (ROLL_ANTICLOCKWISE, CameraMotion(rotate=(0., 0., 1.), translate=(0., 0., 0.))),
+        (TILT_DOWN,     CameraMotion(rotate=(1., 0., 0.), translate=(0., 0., 0.))),
+        (TILT_UP,    CameraMotion(rotate=(-1., 0., 0.), translate=(0., 0., 0.))),
+        (TILT_LEFT,       CameraMotion(rotate=(0., 1., 0.), translate=(0., 0., 0.))),
+        (TILT_RIGHT,     CameraMotion(rotate=(0., -1., 0.), translate=(0., 0., 0.))),
+    ]
+    _DICT: dict[str, CameraMotion] = OrderedDict(_PAIRS)
+    _LIST = list(_DICT.keys())
+
+    @staticmethod
+    def get(motion: str):
+        return CAM._DICT[motion]
+
+
+def compute_R_from_rad_angle(angles: np.ndarray):
     theta_x, theta_y, theta_z = angles
     Rx = np.array([[1, 0, 0],
                    [0, np.cos(theta_x), -np.sin(theta_x)],
@@ -49,19 +111,19 @@ def compute_R_form_rad_angle(angles):
     R = np.dot(Rz, np.dot(Ry, Rx))
     return R
 
-def get_camera_motion(angle, T, speed, n=16):
+def get_camera_motion(angle: np.ndarray, T: np.ndarray, speed: float, n=16):
     RT = []
     for i in range(n):
-        _angle = (i/n)*speed*(CAMERA["base_angle"])*angle
-        R = compute_R_form_rad_angle(_angle) 
+        _angle = (i/n)*speed*(CAM.BASE_ANGLE)*angle
+        R = compute_R_from_rad_angle(_angle) 
         # _T = (i/n)*speed*(T.reshape(3,1))
-        _T=(i/n)*speed*(CAMERA["base_T_norm"])*(T.reshape(3,1))
+        _T=(i/n)*speed*(CAM.BASE_T_NORM)*(T.reshape(3,1))
         _RT = np.concatenate([R,_T], axis=1)
         RT.append(_RT)
     RT = np.stack(RT)
     return RT
     
-def combine_camera_motion(RT_0, RT_1):
+def combine_RTs(RT_0: np.ndarray, RT_1: np.ndarray):
     RT = copy.deepcopy(RT_0[-1])
     R = RT[:,:3]
     R_inv = RT[:,:3].T
@@ -76,6 +138,47 @@ def combine_camera_motion(RT_0, RT_1):
     RT_1 = np.stack(temp)
 
     return np.concatenate([RT_0, RT_1], axis=0)
+
+
+def combine_poses(poses0: list[list[float]], poses1: list[list[float]]):
+    new_poses = copy.deepcopy(poses0) + copy.deepcopy(poses1)
+    new_RT = combine_RTs(poses_to_ndarray(poses0), poses_to_ndarray(poses1))
+    inter_poses = ndarray_to_poses(new_RT)
+    # maintain fx, fy, cx, and cy values by pasting only the movement portion of poses
+    for i in range(len(new_poses)):
+        new_poses[7:] = inter_poses[7:]
+    return new_poses
+
+
+def combine_poses_with_ndarray(poses: list[list[float]], RT: np.ndarray):
+    return combine_poses(poses0=poses, poses1=ndarray_to_poses(RT))
+
+
+def ndarray_to_poses(RT: np.ndarray, fx=CAM.DEFAULT_FX, fy=CAM.DEFAULT_FY, cx=CAM.DEFAULT_CX, cy=CAM.DEFAULT_CY) -> list[list[float]]:
+    '''
+    Converts ndarray (motion) to cameractrl_poses.
+    '''
+    motion_list=RT.tolist()
+    poses = []
+    for motion in motion_list:
+        traj = [0, fx, fy, cx, cy, 0, 0]
+        traj.extend(motion[0])
+        traj.extend(motion[1])
+        traj.extend(motion[2])
+        poses.append(traj)
+    return poses
+
+def poses_to_ndarray(poses: list[list[float]]) -> np.ndarray:
+    '''
+    Converts cameractrl_poses (list) to ndarray (motion) to be used for math stuff.
+    '''
+    motion_list = []
+    for pose in poses:
+        # pose will have 19 components;
+        # idx 7-10 have first column, idx 11-14 have second column, idx 15-18 have third column
+        motion_list.append(np.array(pose[7:]).reshape(3, 4))
+    RT = np.array(motion_list)
+    return RT
 
 
 class ApplyAnimateDiffWithCameraCtrl:
@@ -194,7 +297,7 @@ class LoadCameraPoses:
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
     FUNCTION = "load_camera_poses"
 
-    def load_camera_poses(self, pose_filename):
+    def load_camera_poses(self, pose_filename: str):
         file_path = folder_paths.get_annotated_filepath(pose_filename)
         with open(file_path, 'r') as f:
             poses = f.readlines()
@@ -205,100 +308,157 @@ class LoadCameraPoses:
         return (poses,)
 
 
-class CameraPoseBasic:
+class CameraCtrlPoseBasic:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "camera_pose":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
-                "speed":("FLOAT",{"default":1.0}),
-                "video_length":("INT",{"default":16}),
+                "motion_type": (CAM._LIST,),
+                "speed": ("FLOAT", {"default": 1.0, "min": -100.0, "max": 100.0, "step": 0.01}),
+                "frame_length": ("INT", {"default": 16}),
             },
+            "optional": {
+                "prev_poses": ("CAMERACTRL_POSES",),
+            }
         }
 
-    RETURN_TYPES = ("CameraPose",)
+    RETURN_TYPES = ("CAMERACTRL_POSES",)
     FUNCTION = "camera_pose_basic"
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
-    def camera_pose_basic(self,camera_pose,speed,video_length):
-        motion_list = [camera_pose]
-        mode = "Basic Camera Poses" 
-        angle = np.array(CAMERA[motion_list[0]]["angle"])
-        T = np.array(CAMERA[motion_list[0]]["T"])
-        RT = get_camera_motion(angle, T, speed, video_length)
-        return (RT,)
+    def camera_pose_basic(self, motion_type: str, speed: float, frame_length: int, prev_poses: list[list[float]]=None):
+        motion = CAM.get(motion_type)
+        RT = get_camera_motion(motion.rotate, motion.translate, speed, frame_length)
+        new_motion = ndarray_to_poses(RT=RT)
+        if prev_poses is not None:
+            new_motion = combine_poses(prev_poses, new_motion)
+        return (new_motion,)
 
 
-class CameraPoseJoin:
+class CameraCtrlPoseCombo:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "camera_pose1":("CameraPose",),
-                "camera_pose2":("CameraPose",),
+                "motion_type1": (CAM._LIST,),
+                "motion_type2": (CAM._LIST,),
+                "motion_type3": (CAM._LIST,),
+                "motion_type4": (CAM._LIST,),
+                "motion_type5": (CAM._LIST,),
+                "motion_type6": (CAM._LIST,),
+                "speed": ("FLOAT", {"default": 1.0, "min": -100.0, "max": 100.0, "step": 0.01}),
+                "frame_length": ("INT", {"default": 16}),
             },
+            "optional": {
+                "prev_poses": ("CAMERACTRL_POSES",),
+            }
         }
 
-    RETURN_TYPES = ("CameraPose",)
-    FUNCTION = "camera_pose_join"
+    RETURN_TYPES = ("CAMERACTRL_POSES",)
+    FUNCTION = "camera_pose_combo"
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
-    def camera_pose_join(self,camera_pose1,camera_pose2):
-        RT = combine_camera_motion(camera_pose1, camera_pose2)
-        return (RT,)
+    def camera_pose_combo(self,
+                          motion_type1: str, motion_type2: str, motion_type3: str,
+                          motion_type4: str, motion_type5: str, motion_type6: str,
+                          speed: float, frame_length: int,
+                          prev_poses: list[list[float]]=None,
+                          strength1=1.0, strength2=1.0, strength3=1.0, strength4=1.0, strength5=1.0, strength6=1.0):
+        combined_motion = CameraMotion.combine([
+            CAM.get(motion_type1).multiply(strength1), CAM.get(motion_type2).multiply(strength2), CAM.get(motion_type3).multiply(strength3),
+            CAM.get(motion_type4).multiply(strength4), CAM.get(motion_type5).multiply(strength5), CAM.get(motion_type6).multiply(strength6)
+            ])
+        RT = get_camera_motion(combined_motion.rotate, combined_motion.translate, speed, frame_length)
+        new_motion = ndarray_to_poses(RT=RT)
+        if prev_poses is not None:
+            new_motion = combine_poses(prev_poses, new_motion)
+        return (new_motion,)
 
 
-class CameraPoseCombine:
+class CameraCtrlPoseAdvanced:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "camera_pose1":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
-                "camera_pose2":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
-                "camera_pose3":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
-                "camera_pose4":(["Static","Pan Up","Pan Down","Pan Left","Pan Right","Zoom In","Zoom Out","ACW","CW"],{"default":"Static"}),
-                "speed":("FLOAT",{"default":1.0}),
-                "video_length":("INT",{"default":16}),
+                "motion_type1": (CAM._LIST,),
+                "strength1": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "motion_type2": (CAM._LIST,),
+                "strength2": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "motion_type3": (CAM._LIST,),
+                "strength3": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "motion_type4": (CAM._LIST,),
+                "strength4": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "motion_type5": (CAM._LIST,),
+                "strength5": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "motion_type6": (CAM._LIST,),
+                "strength6": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "speed": ("FLOAT", {"default": 1.0, "min": -100.0, "max": 100.0, "step": 0.01}),
+                "frame_length": ("INT", {"default": 16}),
             },
+            "optional": {
+                "prev_poses": ("CAMERACTRL_POSES",),
+            }
         }
 
-    RETURN_TYPES = ("CameraPose",)
-    FUNCTION = "camera_pose_combine"
+    RETURN_TYPES = ("CAMERACTRL_POSES",)
+    FUNCTION = "camera_pose_combo"
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
-    def camera_pose_combine(self,camera_pose1,camera_pose2,camera_pose3,camera_pose4,speed,video_length):
-        angle = np.array(CAMERA[camera_pose1]["angle"]) + np.array(CAMERA[camera_pose2]["angle"]) + np.array(CAMERA[camera_pose3]["angle"]) + np.array(CAMERA[camera_pose4]["angle"])
-        T = np.array(CAMERA[camera_pose1]["T"]) + np.array(CAMERA[camera_pose2]["T"]) + np.array(CAMERA[camera_pose3]["T"]) + np.array(CAMERA[camera_pose4]["T"])
-        RT = get_camera_motion(angle, T, speed, video_length)
-        return (RT,)
+    def camera_pose_combo(self,
+                          motion_type1: str, motion_type2: str, motion_type3: str,
+                          motion_type4: str, motion_type5: str, motion_type6: str,
+                          speed: float, frame_length: int,
+                          prev_poses: list[list[float]]=None,
+                          strength1=1.0, strength2=1.0, strength3=1.0, strength4=1.0, strength5=1.0, strength6=1.0):
+        return CameraCtrlPoseCombo.camera_pose_combo(self,
+                                                     motion_type1=motion_type1, motion_type2=motion_type2, motion_type3=motion_type3,
+                                                     motion_type4=motion_type4, motion_type5=motion_type5, motion_type6=motion_type6,
+                                                     speed=speed, frame_length=frame_length, prev_poses=prev_poses,
+                                                     strength1=strength1, strength2=strength2, strength3=strength3,
+                                                     strength4=strength4, strength5=strength5, strength6=strength6)
 
 
-class CameraCtrlPose:
+class CameraCtrlManualAppendPose:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "camera_pose":("CameraPose",),
-                "fx":("FLOAT",{"default":0.474812461, "min": 0, "max": 1, "step": 0.000000001}),
-                "fy":("FLOAT",{"default":0.844111024, "min": 0, "max": 1, "step": 0.000000001}),
-                "cx":("FLOAT",{"default":0.5, "min": 0, "max": 1, "step": 0.01}),
-                "cy":("FLOAT",{"default":0.5, "min": 0, "max": 1, "step": 0.01}),
-            },
+                "poses_first": ("CAMERACTRL_POSES",),
+                "poses_last": ("CAMERACTRL_POSES",),
+            }
         }
-
-    RETURN_TYPES = ("CAMERACTRL_POSES","INT",)
-    RETURN_NAMES = ("cameractrl_poses","video_length",)
-    FUNCTION = "camera_ctrl_pose"
+    
+    RETURN_TYPES = ("CAMERACTRL_POSES",)
+    FUNCTION = "camera_manual_append"
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
-    def camera_ctrl_pose(self,camera_pose,fx,fy,cx,cy):
-        camera_pose_list=camera_pose.tolist()
-        trajs=[]
-        for cp in camera_pose_list:
-            traj=[0,fx,fy,cx,cy,0,0]
-            traj.extend(cp[0])
-            traj.extend(cp[1])
-            traj.extend(cp[2])
-            trajs.append(traj)
-        
-        return (trajs,len(trajs),)
+    def camera_manual_append(self, poses_first: list[list[float]], poses_last: list[list[float]]):
+        return (combine_poses(poses0=poses_first, poses1=poses_last),)
+
+
+class CameraCtrlReplaceCameraParameters:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "poses":("CAMERACTRL_POSES",),
+                "fx": ("FLOAT", {"default": CAM.DEFAULT_FX, "min": 0, "max": 1, "step": 0.000000001}),
+                "fy": ("FLOAT", {"default": CAM.DEFAULT_FY, "min": 0, "max": 1, "step": 0.000000001}),
+                "cx": ("FLOAT", {"default": CAM.DEFAULT_CX, "min": 0, "max": 1, "step": 0.01}),
+                "cy": ("FLOAT", {"default": CAM.DEFAULT_CY, "min": 0, "max": 1, "step": 0.01}),
+            },
+        }
+    
+    RETURN_TYPES = ("CAMERACTRL_POSES",)
+    FUNCTION = "set_camera_parameters"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
+
+    def set_camera_parameters(self, poses: np.ndarray, fx: float, fy: float, cx: float, cy: float):
+        new_poses = copy.deepcopy(poses)
+        for pose in new_poses:
+            # fx,fy,cx,fy are in indexes 1-4 of the 19-long pose list
+            pose[1] = fx
+            pose[2] = fy
+            pose[3] = cx
+            pose[4] = cy
+        return (new_poses,)

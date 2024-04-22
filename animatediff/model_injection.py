@@ -568,7 +568,6 @@ def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ct
         base_key = key.split(".bias")[0]
         # first, initialize qkv_merge on model
         attention_obj: VersatileAttention  = comfy.utils.get_attr(motion_model.model, attr_path)
-        logger.info(f"Setting qkv_merge for: {attr_path}")
         attention_obj.init_qkv_merge(ops=motion_model.model.ops)
         # then, apply weights to qkv_merge
         qkv_merge_state_dict = {}
