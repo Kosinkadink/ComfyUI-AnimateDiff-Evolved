@@ -40,9 +40,11 @@ def avg_pool_nd(dims, *args, **kwargs):
 
 
 class CameraEntry:
-    # TODO: comment on each value with an explanation
-    def __init__(self, entry: list[Tensor]):
+    def __init__(self, entry: list[float]):
         self.entry = entry.copy()
+        self.orig_pose_width = entry[5]
+        self.orig_pose_height = entry[6]
+        # focal length/intrinsic camera parameters
         fx, fy, cx, cy = entry[1:5]
         self.fx = fx
         self.fy = fy
@@ -125,7 +127,7 @@ def ray_condition(K: Tensor, c2w: Tensor, H, W, device):
     rays_d = directions @ c2w[..., :3, :3].transpose(-1, -2)  # B, V, 3, HW
     rays_o = c2w[..., :3, 3]  # B, V, 3
     rays_o = rays_o[:, :, None].expand_as(rays_d)  # B, V, 3, HW
-    # c2w @ dirctions
+    # c2w @ directions
     rays_dxo = torch.cross(rays_o, rays_d)
     plucker = torch.cat([rays_dxo, rays_d], dim=-1)
     plucker = plucker.reshape(B, c2w.shape[1], H, W, 6)  # B, V, H, W, 6
@@ -133,18 +135,19 @@ def ray_condition(K: Tensor, c2w: Tensor, H, W, device):
     return plucker
 
 
-def prepare_pose_embedding(cam_params: list[CameraEntry], image_width, image_height, original_pose_width=1280, original_pose_height=720):
+def prepare_pose_embedding(cam_params: list[CameraEntry], image_width, image_height):
     # clone each CameraEntry in list so that CameraEntries don't get spoiled after a single run
     cam_params = [entry.clone() for entry in cam_params]
     sample_wh_ratio = image_width / image_height
-    pose_wh_ratio = original_pose_width / original_pose_height
-    if pose_wh_ratio > sample_wh_ratio:
-        resized_ori_w = image_height * pose_wh_ratio
-        for cam_param in cam_params:
+
+    for cam_param in cam_params:
+        pose_wh_ratio = cam_param.orig_pose_width / cam_param.orig_pose_height
+
+        if pose_wh_ratio > sample_wh_ratio:
+            resized_ori_w = image_height * pose_wh_ratio
             cam_param.fx = resized_ori_w * cam_param.fx / image_width
-    else:
-        resized_ori_h = image_width / pose_wh_ratio
-        for cam_param in cam_params:
+        else:
+            resized_ori_h = image_width / pose_wh_ratio
             cam_param.fy = resized_ori_h * cam_param.fy / image_height
     intrinsic = np.asarray([[cam_param.fx * image_width,
                              cam_param.fy * image_height,

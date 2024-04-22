@@ -57,6 +57,9 @@ class CAM:
     DEFAULT_CX = 0.5
     DEFAULT_CY = 0.5
 
+    DEFAULT_POSE_WIDTH = 1280
+    DEFAULT_POSE_HEIGHT = 720
+
     STATIC = "Static"
     PAN_UP = "Pan Up"
     PAN_DOWN = "Pan Down"
@@ -139,6 +142,13 @@ def combine_RTs(RT_0: np.ndarray, RT_1: np.ndarray):
 
     return np.concatenate([RT_0, RT_1], axis=0)
 
+def set_original_pose_dims(poses: list[list[float]], pose_width, pose_height):
+    # indexes 5 and 6 are not used for anything in the poses, so can use 5 and 6 to set original pose width/height
+    new_poses = copy.deepcopy(poses)
+    for pose in new_poses:
+        pose[5] = pose_width
+        pose[6] = pose_height
+    return new_poses
 
 def combine_poses(poses0: list[list[float]], poses1: list[list[float]]):
     new_poses = copy.deepcopy(poses0) + copy.deepcopy(poses1)
@@ -161,7 +171,7 @@ def ndarray_to_poses(RT: np.ndarray, fx=CAM.DEFAULT_FX, fy=CAM.DEFAULT_FY, cx=CA
     motion_list=RT.tolist()
     poses = []
     for motion in motion_list:
-        traj = [0, fx, fy, cx, cy, 0, 0]
+        traj = [0, fx, fy, cx, cy, CAM.DEFAULT_POSE_WIDTH, CAM.DEFAULT_POSE_HEIGHT]
         traj.extend(motion[0])
         traj.extend(motion[1])
         traj.extend(motion[2])
@@ -305,6 +315,7 @@ class LoadCameraPoses:
         # and the rest is a header-less CSV file separated by single spaces
         poses = [pose.strip().split(' ') for pose in poses[1:]]
         poses = [[float(x) for x in pose] for pose in poses]
+        poses = set_original_pose_dims(poses, pose_width=CAM.DEFAULT_POSE_WIDTH, pose_height=CAM.DEFAULT_POSE_HEIGHT)
         return (poses,)
 
 
@@ -453,7 +464,7 @@ class CameraCtrlReplaceCameraParameters:
     FUNCTION = "set_camera_parameters"
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
 
-    def set_camera_parameters(self, poses: np.ndarray, fx: float, fy: float, cx: float, cy: float):
+    def set_camera_parameters(self, poses: list[list[float]], fx: float, fy: float, cx: float, cy: float):
         new_poses = copy.deepcopy(poses)
         for pose in new_poses:
             # fx,fy,cx,fy are in indexes 1-4 of the 19-long pose list
@@ -462,3 +473,22 @@ class CameraCtrlReplaceCameraParameters:
             pose[3] = cx
             pose[4] = cy
         return (new_poses,)
+
+
+class CameraCtrlSetOriginalAspectRatio:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "poses":("CAMERACTRL_POSES",),
+                "orig_pose_width": ("INT", {"default": 1280, "min": 1, "max": BIGMAX}),
+                "orig_pose_height": ("INT", {"default": 720, "min": 1, "max": BIGMAX}),
+            }
+        }
+    
+    RETURN_TYPES = ("CAMERACTRL_POSES",)
+    FUNCTION = "set_aspect_ratio"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
+
+    def set_aspect_ratio(self, poses: list[list[float]], orig_pose_width: int, orig_pose_height: int):
+        return (set_original_pose_dims(poses, pose_width=orig_pose_width, pose_height=orig_pose_height),)
