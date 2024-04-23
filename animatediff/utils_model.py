@@ -342,9 +342,11 @@ class ModelTypeSD:
 def get_sd_model_type(model: ModelPatcher) -> str:
     if model is None:
         return None
-    elif type(model.model) == BaseModel:
+    type_str = str(type(model.model).__name__)
+    # instructpix2pix models should be allowed to work with AD
+    if type(model.model) == BaseModel or type_str == "SD15_instructpix2pix":
         return ModelTypeSD.SD1_5
-    elif type(model.model) == SDXL:
+    elif type(model.model) == SDXL or type_str == "SDXL_instructpix2pix":
         return ModelTypeSD.SDXL
     elif type(model.model) == SD21UNCLIP:
         return ModelTypeSD.SD2_1
@@ -353,7 +355,7 @@ def get_sd_model_type(model: ModelPatcher) -> str:
     elif type(model.model) == SVD_img2vid:
         return ModelTypeSD.SVD
     else:
-        return str(type(model.model).__name__)
+        return type_str
 
 def is_checkpoint_sd1_5(model: ModelPatcher):
     return False if model is None else type(model.model) == BaseModel
@@ -368,6 +370,7 @@ def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
 
 
 # TODO: remove this filth when xformers bug gets fixed in future xformers version
+# NOTE: avoid using this for now to avoid false positives with pytorch or non-AD stuff like SVD
 def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Callable:
     if not xformers_enabled:
         return function_to_wrap

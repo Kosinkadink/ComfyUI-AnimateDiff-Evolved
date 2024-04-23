@@ -15,12 +15,18 @@ from .logger import logger
 
 # until xformers bug is fixed, do not use xformers for VersatileAttention! TODO: change this when fix is out
 # logic for choosing optimized_attention method taken from comfy/ldm/modules/attention.py
+# a fallback_attention_mm is selected to avoid CUDA configuration limitation with pytorch's scaled_dot_product
 optimized_attention_mm = attention_basic
+fallback_attention_mm = attention_basic
 if model_management.xformers_enabled():
     pass
     #optimized_attention_mm = attention_xformers
 if model_management.pytorch_attention_enabled():
     optimized_attention_mm = attention_pytorch
+    if args.use_split_cross_attention:
+        fallback_attention_mm = attention_split
+    else:
+        fallback_attention_mm = attention_sub_quad
 else:
     if args.use_split_cross_attention:
         optimized_attention_mm = attention_split
@@ -35,6 +41,7 @@ class CrossAttentionMM(nn.Module):
         inner_dim = dim_head * heads
         context_dim = default(context_dim, query_dim)
 
+        self.actual_attention = optimized_attention_mm
         self.heads = heads
         self.dim_head = dim_head
         self.scale = None
@@ -45,6 +52,9 @@ class CrossAttentionMM(nn.Module):
         self.to_v = operations.Linear(context_dim, inner_dim, bias=False, dtype=dtype, device=device)
 
         self.to_out = nn.Sequential(operations.Linear(inner_dim, query_dim, dtype=dtype, device=device), nn.Dropout(dropout))
+
+    def reset_attention_type(self):
+        self.actual_attention = optimized_attention_mm
 
     def forward(self, x, context=None, value=None, mask=None, scale_mask=None):
         q = self.to_q(x)
@@ -64,7 +74,14 @@ class CrossAttentionMM(nn.Module):
         if scale_mask is not None:
             k *= scale_mask
 
-        out = optimized_attention_mm(q, k, v, self.heads, mask)
+        try:
+            out = self.actual_attention(q, k, v, self.heads, mask)
+        except RuntimeError as e:
+            if str(e).startswith("CUDA error: invalid configuration argument"):
+                self.actual_attention = fallback_attention_mm
+                out = self.actual_attention(q, k, v, self.heads, mask)
+            else:
+                raise
         return self.to_out(out)
 
 # TODO: set up comfy.ops style classes for groupnorm and other functions
