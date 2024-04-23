@@ -781,6 +781,8 @@ class TemporalTransformer3DModel(nn.Module):
         del self.temp_cameractrl_effect
         self.temp_cameractrl_effect = None
         self.prev_cameractrl_hidden_states_batch = 0
+        for block in self.transformer_blocks:
+            block.reset_temp_vars()
 
     def get_scale_mask(self, hidden_states: Tensor) -> Union[Tensor, None]:
         # if no raw mask, return None
@@ -972,6 +974,10 @@ class TemporalTransformerBlock(nn.Module):
         for block in self.attention_blocks:
             block.set_sub_idxs(sub_idxs)
 
+    def reset_temp_vars(self):
+        for block in self.attention_blocks:
+            block.reset_temp_vars()
+
     def forward(
         self,
         hidden_states: Tensor,
@@ -1153,6 +1159,9 @@ class VersatileAttention(CrossAttentionMM):
 
     def init_qkv_merge(self, ops=comfy.ops.disable_weight_init):
         self.qkv_merge = zero_module(ops.Linear(in_features=self.query_dim, out_features=self.query_dim))
+
+    def reset_temp_vars(self):
+        self.reset_attention_type()
 
     def forward(
         self,
