@@ -21,8 +21,8 @@ from comfy.controlnet import ControlBase
 import comfy.ops
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
-from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, prepare_mask_ad
-from .utils_model import ModelTypeSD, wrap_function_to_inject_xformers_bug_info
+from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration
+from .utils_model import ModelTypeSD
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
 from .logger import logger
@@ -380,7 +380,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                     model.motion_models.pre_run(model)
                 if model.sample_settings is not None:
                     model.sample_settings.pre_run(model)
-                latents = wrap_function_to_inject_xformers_bug_info(orig_comfy_sample)(model, noise, *args, **kwargs)
+                latents = orig_comfy_sample(model, noise, *args, **kwargs)
             return latents
         finally:
             del latents

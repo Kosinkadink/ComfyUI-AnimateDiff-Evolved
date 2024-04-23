@@ -370,6 +370,7 @@ def raise_if_not_checkpoint_sd1_5(model: ModelPatcher):
 
 
 # TODO: remove this filth when xformers bug gets fixed in future xformers version
+# NOTE: avoid using this for now to avoid false positives with pytorch or non-AD stuff like SVD
 def wrap_function_to_inject_xformers_bug_info(function_to_wrap: Callable) -> Callable:
     if not xformers_enabled:
         return function_to_wrap
