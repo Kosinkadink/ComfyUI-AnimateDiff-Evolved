@@ -15,8 +15,10 @@ from comfy.model_base import BaseModel
 from comfy.sd import CLIP
 
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
+from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, has_mid_block, normalize_ad_state_dict
+from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention,
+                               has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max,
                            LoraHook, LoraHookGroup, LoraHookMode)
@@ -169,12 +171,6 @@ class ModelPatcherAndInjector(ModelPatcher):
 
     def model_patches_to(self, device):
         super().model_patches_to(device)
-        if self.motion_models is not None:
-            for motion_model in self.motion_models.models:
-                try:
-                    motion_model.model.to(device)
-                except Exception:
-                    pass
 
     def patch_model(self, device_to=None, patch_weights=True):
         # first, perform model patching
@@ -203,19 +199,11 @@ class ModelPatcherAndInjector(ModelPatcher):
             for motion_model in self.motion_models.models:
                 self.currently_injected = True
                 motion_model.model.inject(self)
-                try:
-                    motion_model.model.to(device_to)
-                except Exception:
-                    pass
 
     def eject_model(self, device_to=None):
         if self.motion_models is not None:
             for motion_model in self.motion_models.models:
                 motion_model.model.eject(self)
-                try:
-                    motion_model.model.to(device_to)
-                except Exception:
-                    pass
             self.currently_injected = False
 
     def apply_lora_hooks(self, lora_hooks: LoraHookGroup, device_to=None):
@@ -667,14 +655,22 @@ class MotionModelPatcher(ModelPatcher):
         self.img_features: list[int, Tensor] = None  # temporary
         self.img_latents_shape: tuple = None
 
+        # CameraCtrl
+        self.orig_camera_entries: list[CameraEntry] = None
+        self.camera_features: list[Tensor] = None  # temporary
+        self.camera_features_shape: tuple = None
+        self.cameractrl_multival = None
+
         # temporary variables
         self.current_used_steps = 0
         self.current_keyframe: ADKeyframe = None
         self.current_index = -1
         self.current_scale: Union[float, Tensor] = None
         self.current_effect: Union[float, Tensor] = None
+        self.current_cameractrl_effect: Union[float, Tensor] = None
         self.combined_scale: Union[float, Tensor] = None
         self.combined_effect: Union[float, Tensor] = None
+        self.combined_cameractrl_effect: Union[float, Tensor] = None
         self.was_within_range = False
         self.prev_sub_idxs = None
         self.prev_batched_number = None
@@ -689,6 +685,7 @@ class MotionModelPatcher(ModelPatcher):
         self.cleanup()
         self.model.set_scale(self.scale_multival)
         self.model.set_effect(self.effect_multival)
+        self.model.set_cameractrl_effect(self.cameractrl_multival)
         if self.model.img_encoder is not None:
             self.model.img_encoder.set_ref_drift(self.orig_ref_drift)
             self.model.img_encoder.set_insertion_weights(self.orig_insertion_weights)
@@ -724,6 +721,10 @@ class MotionModelPatcher(ModelPatcher):
                             self.current_effect = self.current_keyframe.effect_multival
                         elif not self.current_keyframe.inherit_missing:
                             self.current_effect = None
+                        if self.current_keyframe.has_cameractrl_effect():
+                            self.current_cameractrl_effect = self.current_keyframe.cameractrl_multival
+                        elif not self.current_keyframe.inherit_missing:
+                            self.current_cameractrl_effect = None
                         # if guarantee_steps greater than zero, stop searching for other keyframes
                         if self.current_keyframe.guarantee_steps > 0:
                             break
@@ -735,9 +736,11 @@ class MotionModelPatcher(ModelPatcher):
             # combine model's scale and effect with keyframe's scale and effect
             self.combined_scale = get_combined_multival(self.scale_multival, self.current_scale)
             self.combined_effect = get_combined_multival(self.effect_multival, self.current_effect)
+            self.combined_cameractrl_effect = get_combined_multival(self.cameractrl_multival, self.current_cameractrl_effect)
             # apply scale and effect
             self.model.set_scale(self.combined_scale)
             self.model.set_effect(self.combined_effect)
+            self.model.set_cameractrl_effect(self.combined_cameractrl_effect)
         # apply effect - if not within range, set effect to 0, effectively turning model off
         if curr_t > self.timestep_range[0] or curr_t < self.timestep_range[1]:
             self.model.set_effect(0.0)
@@ -776,6 +779,39 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
 
+    def prepare_camera_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str]):
+        # if no camera_encoder, done
+        if self.model.camera_encoder is None:
+            return
+        batched_number = len(cond_or_uncond)
+        full_length = ad_params["full_length"]
+        sub_idxs = ad_params["sub_idxs"]
+        goal_length = x.size(0) // batched_number
+        # calculate camera_features if needed
+        if self.camera_features_shape is None or sub_idxs != self.prev_sub_idxs or batched_number != self.prev_batched_number:
+            # make sure there are enough camera_poses to match full_length
+            camera_poses = self.orig_camera_entries.copy()
+            if len(camera_poses) < full_length:
+                for i in range(full_length-len(camera_poses)):
+                    camera_poses.append(camera_poses[-1])
+            if sub_idxs is not None:
+                camera_poses = [camera_poses[idx] for idx in sub_idxs]
+            # make sure camera_poses matches goal_length
+            if len(camera_poses) > goal_length:
+                camera_poses = camera_poses[:goal_length]
+            elif len(camera_poses) < goal_length:
+                # pad the camera_poses with the last element to match goal_length
+                for i in range(goal_length-len(camera_poses)):
+                    camera_poses.append(camera_poses[-1])
+            # create encoded embeddings
+            b, c, h, w = x.shape
+            plucker_embedding = prepare_pose_embedding(camera_poses, image_width=w*8, image_height=h*8).to(dtype=x.dtype, device=x.device)
+            camera_embedding = self.model.camera_encoder(plucker_embedding, video_length=goal_length, batched_number=batched_number)
+            self.model.set_camera_features(camera_features=camera_embedding)
+            self.camera_features_shape = len(camera_embedding)
+        self.prev_sub_idxs = sub_idxs
+        self.prev_batched_number = batched_number
+
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
@@ -783,6 +819,10 @@ class MotionModelPatcher(ModelPatcher):
         del self.img_features
         self.img_features = None
         self.img_latents_shape = None
+        # CameraCtrl
+        del self.camera_features
+        self.camera_features = None
+        self.camera_features_shape = None
         # Default
         self.current_used_steps = 0
         self.current_keyframe = None
@@ -817,10 +857,14 @@ class MotionModelPatcher(ModelPatcher):
         n.keyframes = self.keyframes.clone()
         n.scale_multival = self.scale_multival
         n.effect_multival = self.effect_multival
+        # AnimateLCM-I2V
         n.orig_img_latents = self.orig_img_latents
         n.orig_ref_drift = self.orig_ref_drift
         n.orig_insertion_weights = self.orig_insertion_weights.copy() if self.orig_insertion_weights is not None else self.orig_insertion_weights
         n.orig_apply_ref_when_disabled = self.orig_apply_ref_when_disabled
+        # CameraCtrl
+        n.orig_camera_entries = self.orig_camera_entries
+        n.cameractrl_multival = self.cameractrl_multival
         return n
 
 
@@ -1037,6 +1081,51 @@ def inject_img_encoder_into_model(motion_model: MotionModelPatcher, w_encoder: M
     motion_model.model.img_encoder.to(comfy.model_management.unet_offload_device())
     motion_model.model.img_encoder.load_state_dict(w_encoder.model.img_encoder.state_dict())
 
+
+def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ctrl_name: str):
+    camera_ctrl_path = get_motion_model_path(camera_ctrl_name)
+    full_state_dict = comfy.utils.load_torch_file(camera_ctrl_path, safe_load=True)
+    camera_state_dict: dict[str, Tensor] = dict()
+    attention_state_dict: dict[str, Tensor] = dict()
+    for key in full_state_dict:
+        if key.startswith("encoder"):
+            camera_state_dict[key] = full_state_dict[key]
+        elif "qkv_merge" in key:
+            attention_state_dict[key] = full_state_dict[key]
+    # verify has necessary keys
+    if len(camera_state_dict) == 0:
+        raise Exception("Provided CameraCtrl model had no Camera Encoder-related keys; not a valid CameraCtrl model!")
+    if len(attention_state_dict) == 0:
+        raise Exception("Provided CameraCtrl model had no qkv_merge keys; not a valid CameraCtrl model!")
+    # initialize CameraPoseEncoder on motion model, and load keys
+    camera_encoder = CameraPoseEncoder(channels=motion_model.model.layer_channels, nums_rb=2, ops=motion_model.model.ops).to(
+        device=comfy.model_management.unet_offload_device(),
+        dtype=comfy.model_management.unet_dtype()
+    )
+    camera_encoder.load_state_dict(camera_state_dict)
+    camera_encoder.temporal_pe_max_len = get_position_encoding_max_len(camera_state_dict, mm_name=camera_ctrl_name, mm_format=AnimateDiffFormat.ANIMATEDIFF)
+    motion_model.model.set_camera_encoder(camera_encoder=camera_encoder)
+    # initialize qkv_merge on specific attention blocks, and load keys
+    for key in attention_state_dict:
+        key = key.strip()
+        # to avoid handling the same qkv_merge twice, only pay attention to the bias keys (bias+weight handled together)
+        if key.endswith("weight"):
+            continue
+        attr_path = key.split(".processor.qkv_merge")[0]
+        base_key = key.split(".bias")[0]
+        # first, initialize qkv_merge on model
+        attention_obj: VersatileAttention  = comfy.utils.get_attr(motion_model.model, attr_path)
+        attention_obj.init_qkv_merge(ops=motion_model.model.ops)
+        # then, apply weights to qkv_merge
+        qkv_merge_state_dict = {}
+        qkv_merge_state_dict["weight"] = attention_state_dict[f"{base_key}.weight"]
+        qkv_merge_state_dict["bias"] = attention_state_dict[f"{base_key}.bias"]
+        attention_obj.qkv_merge.load_state_dict(qkv_merge_state_dict)
+        attention_obj.qkv_merge = attention_obj.qkv_merge.to(
+            device=comfy.model_management.unet_offload_device(),
+            dtype=comfy.model_management.unet_dtype()
+        )
+    
 
 def validate_model_compatibility_gen2(model: ModelPatcher, motion_model: MotionModelPatcher):
     # check that motion model is compatible with sd model

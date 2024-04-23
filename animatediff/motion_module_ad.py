@@ -1,5 +1,5 @@
 import math
-from typing import Iterable, Tuple, Union
+from typing import Iterable, Tuple, Union, TYPE_CHECKING
 import re
 
 import torch
@@ -16,7 +16,9 @@ import comfy.ops
 import comfy.model_management
 
 from .context import ContextFuseMethod, ContextOptions, get_context_weights, get_context_windows
-from .animatelcm_i2v_adapter import AdapterEmbed
+from .adapter_animatelcm_i2v import AdapterEmbed
+if TYPE_CHECKING:  # avoids circular import
+    from .adapter_cameractrl import CameraPoseEncoder
 from .utils_motion import CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, prepare_mask_batch
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
@@ -217,10 +219,15 @@ class AnimateDiffModel(nn.Module):
         self.img_encoder: AdapterEmbed = None
         if has_img_encoder(mm_state_dict):
             self.init_img_encoder()
+        self.camera_encoder: 'CameraPoseEncoder' = None
 
     def init_img_encoder(self):
         del self.img_encoder
         self.img_encoder = AdapterEmbed(cin=4, channels=self.layer_channels, nums_rb=2, ksize=1, sk=True, use_conv=False, ops=self.ops)
+
+    def set_camera_encoder(self, camera_encoder: 'CameraPoseEncoder'):
+        del self.camera_encoder
+        self.camera_encoder = camera_encoder
 
     def get_device_debug(self):
         return self.down_blocks[0].motion_modules[0].temporal_transformer.proj_in.weight.device
@@ -362,6 +369,15 @@ class AnimateDiffModel(nn.Module):
         if self.mid_block is not None:
             self.mid_block.set_effect(multival)
 
+    def set_cameractrl_effect(self, multival: Union[float, Tensor]):
+        # cameractrl should only impact down and up blocks
+        if self.down_blocks is not None:
+            for block in self.down_blocks:
+                block.set_cameractrl_effect(multival)
+        if self.up_blocks is not None:
+            for block in self.up_blocks:
+                block.set_cameractrl_effect(multival)
+
     def set_sub_idxs(self, sub_idxs: list[int]):
         if self.down_blocks is not None:
             for block in self.down_blocks:
@@ -387,6 +403,15 @@ class AnimateDiffModel(nn.Module):
         if self.down_blocks is not None:
             for block in self.down_blocks:
                 block.set_img_features(img_features=img_features, apply_ref_when_disabled=apply_ref_when_disabled)
+
+    def set_camera_features(self, camera_features: list[Tensor]):
+        # camera features should only impact down and up blocks
+        if self.down_blocks is not None:
+            for block in self.down_blocks:
+                block.set_camera_features(camera_features=camera_features)
+        if self.up_blocks is not None:
+            for block in self.up_blocks:
+                block.set_camera_features(camera_features=list(reversed(camera_features)))
 
     def _set_scale_multiplier(self, multiplier: Union[float, None]):
         if self.down_blocks is not None:
@@ -466,6 +491,10 @@ class MotionModule(nn.Module):
         for motion_module in self.motion_modules:
             motion_module.set_effect(multival)
     
+    def set_cameractrl_effect(self, multival: Union[float, Tensor]):
+        for motion_module in self.motion_modules:
+            motion_module.set_cameractrl_effect(multival)
+    
     def set_sub_idxs(self, sub_idxs: list[int]):
         for motion_module in self.motion_modules:
             motion_module.set_sub_idxs(sub_idxs)
@@ -477,6 +506,11 @@ class MotionModule(nn.Module):
     def set_img_features(self, img_features: list[Tensor], apply_ref_when_disabled=False):
         for motion_module in self.motion_modules:
             motion_module.set_img_features(img_features=img_features, apply_ref_when_disabled=apply_ref_when_disabled)
+
+    def set_camera_features(self, camera_features: list[Tensor]):
+        for idx, motion_module in enumerate(self.motion_modules):
+            #if idx == 0:
+            motion_module.set_camera_features(camera_features=camera_features)
 
     def reset_temp_vars(self):
         for motion_module in self.motion_modules:
@@ -523,6 +557,8 @@ class VanillaTemporalModule(nn.Module):
         # AnimateLCM-I2V vars
         self.img_features: list[Tensor] = None
         self.apply_ref_when_disabled = False
+        # CameraCtrl vars
+        self.camera_features: list[Tensor] = None
 
         self.temporal_transformer = TemporalTransformer3DModel(
             in_channels=in_channels,
@@ -562,6 +598,16 @@ class VanillaTemporalModule(nn.Module):
         else:
             self.effect = multival
         self.temp_effect_mask = None
+    
+    def set_cameractrl_effect(self, multival: Union[float, Tensor]):
+        if type(multival) == Tensor:
+            pass
+        elif multival is None:
+            multival = 1.0
+        elif multival is not None and math.isclose(multival, 1.0):
+            multival = 1.0
+        self.temporal_transformer.set_cameractrl_effect(multival)
+        
 
     def set_sub_idxs(self, sub_idxs: list[int]):
         self.sub_idxs = sub_idxs
@@ -575,10 +621,15 @@ class VanillaTemporalModule(nn.Module):
         self.img_features = img_features
         self.apply_ref_when_disabled = apply_ref_when_disabled
 
+    def set_camera_features(self, camera_features: list[Tensor]):
+        del self.camera_features
+        self.camera_features = camera_features
+
     def reset_temp_vars(self):
         self.set_effect(None)
         self.set_view_options(None)
         self.set_img_features(None)
+        self.set_camera_features(None)
         self.temporal_transformer.reset_temp_vars()
 
     def get_effect_mask(self, input_tensor: Tensor):
@@ -608,12 +659,18 @@ class VanillaTemporalModule(nn.Module):
     def should_handle_img_features(self):
         return self.img_features is not None and self.block_type == BlockType.DOWN and self.module_idx == 1
 
+    def should_handle_camera_features(self):
+        return self.camera_features is not None and self.block_type != BlockType.MID# and self.module_idx == 0
+
     def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None):
+        mm_kwargs = None
+        if self.should_handle_camera_features():
+            mm_kwargs = {"camera_feature": self.camera_features[self.block_idx]}
         if self.effect is None:
             # do AnimateLCM-I2V stuff if needed
             if self.should_handle_img_features():
                 input_tensor += self.img_features[self.block_idx]
-            return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options)
+            return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options, mm_kwargs)
         # return weighted average of input_tensor and AD output
         if type(self.effect) != Tensor:
             effect = self.effect
@@ -627,8 +684,8 @@ class VanillaTemporalModule(nn.Module):
             effect = self.get_effect_mask(input_tensor)
         # do AnimateLCM-I2V stuff if needed
         if self.should_handle_img_features():
-            return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor+self.img_features[self.block_idx], encoder_hidden_states, attention_mask, self.view_options)*effect
-        return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options)*effect
+            return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor+self.img_features[self.block_idx], encoder_hidden_states, attention_mask, self.view_options, mm_kwargs)*effect
+        return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options, mm_kwargs)*effect
 
 
 class TemporalTransformer3DModel(nn.Module):
@@ -661,6 +718,10 @@ class TemporalTransformer3DModel(nn.Module):
         self.sub_idxs: Union[list[int], None] = None
         self.prev_hidden_states_batch = 0
 
+        # cameractrl stuff
+        self.raw_cameractrl_effect: Union[float, Tensor] = None
+        self.temp_cameractrl_effect: Union[float, Tensor] = None
+        self.prev_cameractrl_hidden_states_batch = 0
 
         inner_dim = num_attention_heads * attention_head_dim
 
@@ -704,6 +765,10 @@ class TemporalTransformer3DModel(nn.Module):
         self.raw_scale_mask = mask
         self.temp_scale_mask = None
 
+    def set_cameractrl_effect(self, multival: Union[float, Tensor]):
+        self.raw_cameractrl_effect = multival
+        self.temp_cameractrl_effect = None
+
     def set_sub_idxs(self, sub_idxs: list[int]):
         self.sub_idxs = sub_idxs
         for block in self.transformer_blocks:
@@ -713,6 +778,9 @@ class TemporalTransformer3DModel(nn.Module):
         del self.temp_scale_mask
         self.temp_scale_mask = None
         self.prev_hidden_states_batch = 0
+        del self.temp_cameractrl_effect
+        self.temp_cameractrl_effect = None
+        self.prev_cameractrl_hidden_states_batch = 0
 
     def get_scale_mask(self, hidden_states: Tensor) -> Union[Tensor, None]:
         # if no raw mask, return None
@@ -757,10 +825,57 @@ class TemporalTransformer3DModel(nn.Module):
             return self.temp_scale_mask[:, self.sub_idxs, :]
         return self.temp_scale_mask
 
-    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, view_options: ContextOptions=None):
+    def get_cameractrl_effect(self, hidden_states: Tensor) -> Union[float, Tensor, None]:
+        # if no raw camera_Ctrl, return None
+        if self.raw_cameractrl_effect is None:
+            return 1.0
+        # if raw_cameractrl is not a Tensor, return it (should be a float)
+        if type(self.raw_cameractrl_effect) != Tensor:
+            return self.raw_cameractrl_effect
+        shape = hidden_states.shape
+        batch, channel, height, width = shape
+        # if temp_cameractrl already calculated, return it
+        if self.temp_cameractrl_effect != None:
+            # check if hidden_states batch matches
+            if batch == self.prev_cameractrl_hidden_states_batch:
+                if self.sub_idxs is not None:
+                    return self.temp_cameractrl_effect[:, self.sub_idxs, :]
+                return self.temp_cameractrl_effect
+            # if does not match, reset cached temp_cameractrl and recalculate it
+            del self.temp_cameractrl_effect
+            self.temp_cameractrl_effect = None
+        # otherwise, calculate temp_cameractrl
+        self.prev_cameractrl_hidden_states_batch = batch
+        mask = prepare_mask_batch(self.raw_scale_mask, shape=(self.full_length, 1, height, width))
+        mask = repeat_to_batch_size(mask, self.full_length)
+        # if mask not the same amount length as full length, make it match
+        if self.full_length != mask.shape[0]:
+            mask = broadcast_image_to(mask, self.full_length, 1)
+        # reshape mask to attention K shape (h*w, latent_count, 1)
+        batch, channel, height, width = mask.shape
+        # first, perform same operations as on hidden_states,
+        # turning (b, c, h, w) -> (b, h*w, c)
+        mask = mask.permute(0, 2, 3, 1).reshape(batch, height*width, channel)
+        # then, make it the same shape as attention's k, (h*w, b, c)
+        mask = mask.permute(1, 0, 2)
+        # make masks match the expected length of h*w
+        batched_number = shape[0] // self.video_length
+        if batched_number > 1:
+            mask = torch.cat([mask] * batched_number, dim=0)
+        # cache mask and set to proper device
+        self.temp_cameractrl_effect = mask
+        # move temp_cameractrl to proper dtype + device
+        self.temp_cameractrl_effect = self.temp_cameractrl_effect.to(dtype=hidden_states.dtype, device=hidden_states.device)
+        # return subset of masks, if needed
+        if self.sub_idxs is not None:
+            return self.temp_cameractrl_effect[:, self.sub_idxs, :]
+        return self.temp_cameractrl_effect
+
+    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, view_options: ContextOptions=None, mm_kwargs: dict[str]=None):
         batch, channel, height, width = hidden_states.shape
         residual = hidden_states
         scale_mask = self.get_scale_mask(hidden_states)
+        cameractrl_effect = self.get_cameractrl_effect(hidden_states)
         # add some casts for fp8 purposes - does not affect speed otherwise
         hidden_states = self.norm(hidden_states).to(hidden_states.dtype)
         inner_dim = hidden_states.shape[1]
@@ -777,7 +892,9 @@ class TemporalTransformer3DModel(nn.Module):
                 attention_mask=attention_mask,
                 video_length=self.video_length,
                 scale_mask=scale_mask,
-                view_options=view_options
+                cameractrl_effect=cameractrl_effect,
+                view_options=view_options,
+                mm_kwargs=mm_kwargs
             )
 
         # output
@@ -816,7 +933,7 @@ class TemporalTransformerBlock(nn.Module):
     ):
         super().__init__()
 
-        attention_blocks = []
+        attention_blocks: Iterable[VersatileAttention] = []
         norms = []
 
         for block_name in attention_block_types:
@@ -840,6 +957,7 @@ class TemporalTransformerBlock(nn.Module):
             )
             norms.append(ops.LayerNorm(dim))
 
+        attention_blocks[0].camera_feature_enabled = True
         self.attention_blocks: Iterable[VersatileAttention] = nn.ModuleList(attention_blocks)
         self.norms = nn.ModuleList(norms)
 
@@ -861,7 +979,9 @@ class TemporalTransformerBlock(nn.Module):
         attention_mask: Tensor=None,
         video_length: int=None,
         scale_mask: Tensor=None,
+        cameractrl_effect: Union[float, Tensor] = None,
         view_options: ContextOptions=None,
+        mm_kwargs: dict[str]=None,
     ):
         # make view_options None if context_length > video_length, or if equal and equal not allowed
         if view_options:
@@ -880,7 +1000,9 @@ class TemporalTransformerBlock(nn.Module):
                         else None,
                         attention_mask=attention_mask,
                         video_length=video_length,
-                        scale_mask=scale_mask
+                        scale_mask=scale_mask,
+                        cameractrl_effect=cameractrl_effect,
+                        mm_kwargs=mm_kwargs
                     ) + hidden_states
                 )
         else:
@@ -893,8 +1015,16 @@ class TemporalTransformerBlock(nn.Module):
             count_final = torch.zeros_like(hidden_states)
             # bias_final = [0.0] * video_length
             batched_conds = hidden_states.size(1) // video_length
+            # store original camera_feature, if present
+            has_camera_feature = False
+            if mm_kwargs is not None:
+                has_camera_feature = True
+                orig_camera_feature = mm_kwargs["camera_feature"]
+            # perform view options
             for sub_idxs in views:
                 sub_hidden_states = rearrange(hidden_states[:, sub_idxs], "b f d c -> (b f) d c")
+                if has_camera_feature:
+                    mm_kwargs["camera_feature"] = orig_camera_feature[:, sub_idxs, :]
                 for attention_block, norm in zip(self.attention_blocks, self.norms):
                     norm_hidden_states = norm(sub_hidden_states).to(sub_hidden_states.dtype)
                     sub_hidden_states = (
@@ -905,7 +1035,9 @@ class TemporalTransformerBlock(nn.Module):
                             else None,
                             attention_mask=attention_mask,
                             video_length=len(sub_idxs),
-                            scale_mask=scale_mask[:, sub_idxs, :] if scale_mask is not None else scale_mask
+                            scale_mask=scale_mask[:, sub_idxs, :] if scale_mask is not None else scale_mask,
+                            cameractrl_effect=cameractrl_effect[:, sub_idxs, :] if type(cameractrl_effect) == Tensor else cameractrl_effect,
+                            mm_kwargs=mm_kwargs
                         ) + sub_hidden_states
                     )
                 sub_hidden_states = rearrange(sub_hidden_states, "(b f) d c -> b f d c", f=len(sub_idxs))
@@ -931,7 +1063,10 @@ class TemporalTransformerBlock(nn.Module):
                 weights_tensor = torch.Tensor(weights).to(device=hidden_states.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
                 value_final[:, sub_idxs] += sub_hidden_states * weights_tensor
                 count_final[:, sub_idxs] += weights_tensor
-            
+            # restore original camera_feature
+            if has_camera_feature:
+                mm_kwargs["camera_feature"] = orig_camera_feature
+                del orig_camera_feature
             # get weighted average of sub_hidden_states, if fuse method requires it
             # if view_options.fuse_method != ContextFuseMethod.RELATIVE:
             hidden_states = value_final / count_final
@@ -959,11 +1094,12 @@ class PositionalEncoding(nn.Module):
         pe[0, :, 1::2] = torch.cos(position * div_term)
         self.register_buffer("pe", pe)
         self.sub_idxs = None
+        self.pe: Tensor
 
     def set_sub_idxs(self, sub_idxs: list[int]):
         self.sub_idxs = sub_idxs
 
-    def forward(self, x):
+    def forward(self, x: Tensor):
         #if self.sub_idxs is not None:
         #    x = x + self.pe[:, self.sub_idxs]
         #else:
@@ -988,6 +1124,10 @@ class VersatileAttention(CrossAttentionMM):
         self.attention_mode = attention_mode
         self.is_cross_attention = kwargs["context_dim"] is not None
 
+        self.query_dim: int = kwargs["query_dim"]
+        self.qkv_merge: comfy.ops.disable_weight_init.Linear = None
+        self.camera_feature_enabled = False
+
         self.pos_encoder = (
             PositionalEncoding(
                 kwargs["query_dim"],
@@ -1011,6 +1151,9 @@ class VersatileAttention(CrossAttentionMM):
         if self.pos_encoder != None:
             self.pos_encoder.set_sub_idxs(sub_idxs)
 
+    def init_qkv_merge(self, ops=comfy.ops.disable_weight_init):
+        self.qkv_merge = zero_module(ops.Linear(in_features=self.query_dim, out_features=self.query_dim))
+
     def forward(
         self,
         hidden_states: Tensor,
@@ -1018,6 +1161,8 @@ class VersatileAttention(CrossAttentionMM):
         attention_mask=None,
         video_length=None,
         scale_mask=None,
+        cameractrl_effect: Union[float, Tensor] = 1.0,
+        mm_kwargs: dict[str]={},
     ):
         if self.attention_mode != "Temporal":
             raise NotImplementedError
@@ -1035,6 +1180,10 @@ class VersatileAttention(CrossAttentionMM):
             if encoder_hidden_states is not None
             else encoder_hidden_states
         )
+
+        if self.camera_feature_enabled and self.qkv_merge is not None and mm_kwargs is not None and "camera_feature" in mm_kwargs:
+            camera_feature: Tensor = mm_kwargs["camera_feature"]
+            hidden_states = (self.qkv_merge(hidden_states + camera_feature) + hidden_states) * cameractrl_effect + hidden_states * (1. - cameractrl_effect)
 
         hidden_states = super().forward(
             hidden_states,

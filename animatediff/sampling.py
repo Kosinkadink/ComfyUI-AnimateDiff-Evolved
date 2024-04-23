@@ -167,6 +167,7 @@ def apply_model_factory(orig_apply_model: Callable):
         if ADGS.motion_models is not None:
             for motion_model in ADGS.motion_models.models:
                 motion_model.prepare_img_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=self.latent_format)
+                motion_model.prepare_camera_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
         del x
         return orig_apply_model(*args, **kwargs)
     return apply_model_ade_wrapper
@@ -247,9 +248,9 @@ class FunctionInjectionHolder:
                         model.model.memory_required = unlimited_memory_required
                 except Exception:
                     pass
-            # if img_encoder present, inject apply_model to handle img_latents correctly
+            # if img_encoder or camera_encoder present, inject apply_model to handle correctly
             for motion_model in model.motion_models:
-                if motion_model.model.img_encoder != None:
+                if (motion_model.model.img_encoder is not None) or (motion_model.model.camera_encoder is not None):
                     model.model.apply_model = apply_model_factory(self.orig_apply_model).__get__(model.model, type(model.model))
                     break
             del info
@@ -350,15 +351,21 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             iter_kwargs = {}
             if iter_opts.need_sampler:
                 # -5 for sampler_name (not custom) and sampler (custom)
-                comfy.model_management.load_model_gpu(model)
                 if is_custom:
                     iter_kwargs[IterationOptions.SAMPLER] = None #args[-5]
                 else:
+                    if SAMPLE_FALLBACK:  # backwards compatibility, for now
+                        # in older comfy, model needs to be loaded to get proper model_sampling to be used for sigmas
+                        comfy.model_management.load_model_gpu(model)
+                        iter_model = model.model
+                    else:
+                        iter_model = model
                     iter_kwargs[IterationOptions.SAMPLER] = comfy.samplers.KSampler(
-                        model.model, steps=999, #steps=args[-7],
+                        iter_model, steps=999, #steps=args[-7],
                         device=model.current_device, sampler=args[-5],
                         scheduler=args[-4], denoise=kwargs.get("denoise", None),
                         model_options=model.model_options)
+                    del iter_model
 
             for curr_i in range(iter_opts.iterations):
                 # handle GLOBALSTATE vars and step tally

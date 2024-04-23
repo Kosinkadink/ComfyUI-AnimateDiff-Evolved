@@ -3,8 +3,12 @@ import comfy.sample as comfy_sample
 from .sampling import motion_sample_factory
 
 from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext)
-from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ApplyAnimateLCMI2VModel, ADKeyframeNode,
-                         LoadAnimateDiffModelNode, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
+from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ADKeyframeNode,
+                         LoadAnimateDiffModelNode)
+from .nodes_animatelcmi2v import (ApplyAnimateLCMI2VModel, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
+from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, CameraCtrlADKeyframeNode, LoadCameraPoses,
+                               CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
+                               CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
                                  SetModelLoraHook, SetClipLoraHook,
@@ -101,6 +105,19 @@ NODE_CLASS_MAPPINGS = {
     "ADE_LoadAnimateLCMI2VModel": LoadAnimateLCMI2VModelNode,
     "ADE_UpscaleAndVAEEncode": UpscaleAndVaeEncode,
     "ADE_InjectI2VIntoAnimateDiffModel": LoadAnimateDiffAndInjectI2VNode,
+    # CameraCtrl Nodes
+    "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
+    "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
+    "ADE_CameraCtrlAnimateDiffKeyframe": CameraCtrlADKeyframeNode,
+    "ADE_LoadCameraPoses": LoadCameraPoses,
+    "ADE_CameraPoseBasic": CameraCtrlPoseBasic,
+    "ADE_CameraPoseCombo": CameraCtrlPoseCombo,
+    "ADE_CameraPoseAdvanced": CameraCtrlPoseAdvanced,
+    "ADE_CameraManualPoseAppend": CameraCtrlManualAppendPose,
+    "ADE_ReplaceCameraParameters": CameraCtrlReplaceCameraParameters,
+    "ADE_ReplaceOriginalPoseAspectRatio": CameraCtrlSetOriginalAspectRatio,
+    # MaskedLoraLoader
+    #"ADE_MaskedLoadLora": MaskedLoraLoader,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
@@ -182,6 +199,19 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_LoadAnimateLCMI2VModel": "Load AnimateLCM-I2V Model 🎭🅐🅓②",
     "ADE_UpscaleAndVAEEncode": "Scale Ref Image and VAE Encode 🎭🅐🅓②",
     "ADE_InjectI2VIntoAnimateDiffModel": "🧪Inject I2V into AnimateDiff Model 🎭🅐🅓②",
+    # CameraCtrl Nodes
+    "ADE_ApplyAnimateDiffModelWithCameraCtrl": "Apply AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
+    "ADE_LoadAnimateDiffModelWithCameraCtrl": "Load AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
+    "ADE_CameraCtrlAnimateDiffKeyframe": "AnimateDiff+CameraCtrl Keyframe 🎭🅐🅓",
+    "ADE_LoadCameraPoses": "Load CameraCtrl Poses (File) 🎭🅐🅓②",
+    "ADE_CameraPoseBasic": "Create CameraCtrl Poses 🎭🅐🅓②",
+    "ADE_CameraPoseCombo": "Create CameraCtrl Poses (Combo) 🎭🅐🅓②",
+    "ADE_CameraPoseAdvanced": "Create CameraCtrl Poses (Adv.) 🎭🅐🅓②",
+    "ADE_CameraManualPoseAppend": "Manual Append CameraCtrl Poses 🎭🅐🅓②",
+    "ADE_ReplaceCameraParameters": "Replace Camera Parameters 🎭🅐🅓②",
+    "ADE_ReplaceOriginalPoseAspectRatio": "Replace Orig. Pose Aspect Ratio 🎭🅐🅓②",
+    # MaskedLoraLoader
+    #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "🚫AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
