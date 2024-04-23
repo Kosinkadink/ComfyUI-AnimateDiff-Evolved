@@ -428,7 +428,14 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
         cond_pred, uncond_pred = sliding_calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
 
     if hasattr(comfy.samplers, "cfg_function"):
-        return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
+        try:
+            cached_calc_cond_batch = comfy.samplers.calc_cond_batch
+            # support sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
+            if ADGS.is_using_sliding_context():
+                comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
+            return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
+        finally:
+            comfy.samplers.calc_cond_batch = cached_calc_cond_batch
     else: # for backwards compatibility, for now
         if "sampler_cfg_function" in model_options:
             args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
@@ -443,6 +450,27 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             cfg_result = fn(args)
 
         return cfg_result
+
+
+def wrapped_cfg_sliding_calc_cond_batch_factory(orig_calc_cond_batch):
+    def wrapped_cfg_sliding_calc_cond_batch(model, conds, x_in, timestep, model_options):
+        # current call to calc_cond_batch should refer to sliding version
+        try:
+            uncond = None
+            current_calc_cond_batch = comfy.samplers.calc_cond_batch
+            # when inside sliding_calc_cond_uncond, should return to original calc_cond_batch
+            comfy.samplers.calc_cond_batch = orig_calc_cond_batch
+            if len(conds) > 1:
+                uncond = conds[1]
+            result = sliding_calc_cond_uncond_batch(model, conds[0], uncond, x_in, timestep, model_options)
+            if uncond is None:
+                result = (result[0],)
+            return result
+        finally:
+            del uncond
+            # make sure calc_cond_batch will become wrapped again
+            comfy.samplers.calc_cond_batch = current_calc_cond_batch
+    return wrapped_cfg_sliding_calc_cond_batch
 
 
 # sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
