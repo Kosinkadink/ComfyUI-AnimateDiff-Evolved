@@ -18,6 +18,7 @@ except ImportError:
     SAMPLE_FALLBACK = True
 import comfy.utils
 from comfy.controlnet import ControlBase
+from comfy.model_base import BaseModel
 import comfy.ops
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
@@ -429,7 +430,7 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     if not ADGS.is_using_sliding_context():
         cond_pred, uncond_pred = calc_cond_uncond_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)
     else:
-        cond_pred, uncond_pred = sliding_calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
+        cond_pred, uncond_pred = sliding_calc_conds_batch(model, [cond, uncond_], x, timestep, model_options)
 
     if hasattr(comfy.samplers, "cfg_function"):
         try:
@@ -460,34 +461,33 @@ def wrapped_cfg_sliding_calc_cond_batch_factory(orig_calc_cond_batch):
     def wrapped_cfg_sliding_calc_cond_batch(model, conds, x_in, timestep, model_options):
         # current call to calc_cond_batch should refer to sliding version
         try:
-            uncond = None
             current_calc_cond_batch = comfy.samplers.calc_cond_batch
-            # when inside sliding_calc_cond_uncond, should return to original calc_cond_batch
+            # when inside sliding_calc_conds_batch, should return to original calc_cond_batch
             comfy.samplers.calc_cond_batch = orig_calc_cond_batch
-            if len(conds) > 1:
-                uncond = conds[1]
-            result = sliding_calc_cond_uncond_batch(model, conds[0], uncond, x_in, timestep, model_options)
-            if uncond is None:
-                result = (result[0],)
+            result = sliding_calc_conds_batch(model, conds, x_in, timestep, model_options)
             return result
         finally:
-            del uncond
             # make sure calc_cond_batch will become wrapped again
             comfy.samplers.calc_cond_batch = current_calc_cond_batch
     return wrapped_cfg_sliding_calc_cond_batch
 
 
-# sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
+# sliding_calc_conds_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
-def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, model_options):
+def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options):
     def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
         if control.previous_controlnet is not None:
             prepare_control_objects(control.previous_controlnet, full_idxs)
+        if not hasattr(control, "sub_idxs"):
+            raise ValueError(f"Control type {type(control).__name__} may not support required features for sliding context window; \
+                                use ControlNet nodes from Kosinkadink/ComfyUI-Advanced-ControlNet, or make sure ComfyUI-Advanced-ControlNet is updated.")
         control.sub_idxs = full_idxs
         control.full_latent_length = ADGS.params.full_length
         control.context_length = ADGS.params.context_options.context_length
     
     def get_resized_cond(cond_in, full_idxs: list[int], context_length: int) -> list:
+        if cond_in is None:
+            return None
         # reuse or resize cond items to match context requirements
         resized_cond = []
         # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
@@ -545,14 +545,13 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
 
     if ADGS.motion_models is not None:
         ADGS.motion_models.set_view_options(ADGS.params.context_options.view_options)
+    
+    # prepare final conds, out_counts, and biases
+    conds_final = [torch.zeros_like(x_in) for _ in conds]
+    counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+    biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
-    # prepare final cond, uncond, and out_count
-    cond_final = torch.zeros_like(x_in)
-    uncond_final = torch.zeros_like(x_in)
-    out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
-    bias_final = [0.0] * x_in.shape[0]
-
-    # perform calc_cond_uncond_batch per context window
+    # perform calc_conds_batch per context window
     for ctx_idxs in context_windows:
         ADGS.params.sub_idxs = ctx_idxs
         if ADGS.motion_models is not None:
@@ -566,13 +565,12 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         for n in range(batched_conds):
             for ind in ctx_idxs:
                 full_idxs.append((ADGS.params.full_length*n)+ind)
-        # get subsections of x, timestep, cond, uncond, cond_concat
+        # get subsections of x, timestep, conds
         sub_x = x_in[full_idxs]
         sub_timestep = timestep[full_idxs]
-        sub_cond = get_resized_cond(cond, full_idxs, len(ctx_idxs)) if cond is not None else None
-        sub_uncond = get_resized_cond(uncond, full_idxs, len(ctx_idxs)) if uncond is not None else None
+        sub_conds = [get_resized_cond(cond, full_idxs, len(ctx_idxs)) for cond in conds]
 
-        sub_cond_out, sub_uncond_out = calc_cond_uncond_batch_wrapper(model, [sub_cond, sub_uncond], sub_x, sub_timestep, model_options)
+        sub_conds_out = calc_cond_uncond_batch_wrapper(model, sub_conds, sub_x, sub_timestep, model_options)
 
         if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
             full_length = ADGS.params.full_length
@@ -582,31 +580,31 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
                 bias = max(1e-2, bias)
                 # take weighted average relative to total bias of current idx
                 # and account for batched_conds
-                for n in range(batched_conds):
-                    bias_total = bias_final[(full_length*n)+idx]
-                    prev_weight = (bias_total / (bias_total + bias))
-                    new_weight = (bias / (bias_total + bias))
-                    cond_final[(full_length*n)+idx] = cond_final[(full_length*n)+idx] * prev_weight + sub_cond_out[(full_length*n)+pos] * new_weight
-                    uncond_final[(full_length*n)+idx] = uncond_final[(full_length*n)+idx] * prev_weight + sub_uncond_out[(full_length*n)+pos] * new_weight
-                    bias_final[(full_length*n)+idx] = bias_total + bias
+                for i in range(len(sub_conds_out)):
+                    for n in range(batched_conds):
+                        bias_total = biases_final[i][(full_length*n)+idx]
+                        prev_weight = (bias_total / (bias_total + bias))
+                        new_weight = (bias / (bias_total + bias))
+                        conds_final[i][(full_length*n)+idx] = conds_final[i][(full_length*n)+idx] * prev_weight + sub_conds_out[i][(full_length*n)+pos] * new_weight
+                        biases_final[i][(full_length*n)+idx] = bias_total + bias
         else:
             # add conds and counts based on weights of fuse method
             weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method) * batched_conds
             weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-            cond_final[full_idxs] += sub_cond_out * weights_tensor
-            uncond_final[full_idxs] += sub_uncond_out * weights_tensor
-            out_count_final[full_idxs] += weights_tensor
-
-    if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
-        # already normalized, so return as is
-        del out_count_final
-        return cond_final, uncond_final
-    else:
-        # normalize cond and uncond via division by context usage counts
-        cond_final /= out_count_final
-        uncond_final /= out_count_final
-        del out_count_final
-        return cond_final, uncond_final
+            for i in range(len(sub_conds_out)):
+                conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
+                counts_final[i][full_idxs] += weights_tensor
+        
+        if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+            # already normalized, so return as is
+            del counts_final
+            return conds_final
+        else:
+            # normalize conds via division by context usage counts
+            for i in range(len(conds_final)):
+                conds_final[i] /= counts_final[i]
+            del counts_final
+            return conds_final
 
 
 def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, timestep, model_options):
@@ -622,39 +620,34 @@ def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, times
         if contains_lora_hooks:
             break
     if contains_lora_hooks:
-        return calc_cond_uncond_batch_lora_hook(model, conds[0], conds[1], x_in, timestep, model_options)
+       return calc_conds_batch_lora_hook(model, conds, x_in, timestep, model_options)
     # keep for backwards compatibility, for now
     if not hasattr(comfy.samplers, "calc_cond_batch"):
         return comfy.samplers.calc_cond_uncond_batch(model, conds[0], conds[1], x_in, timestep, model_options)
     return comfy.samplers.calc_cond_batch(model, conds, x_in, timestep, model_options) 
 
-def calc_cond_uncond_batch_lora_hook(model, cond, uncond, x_in, timestep, model_options):
-    out_cond = torch.zeros_like(x_in)
-    out_count = torch.ones_like(x_in) * 1e-37
 
-    out_uncond = torch.zeros_like(x_in)
-    out_uncond_count = torch.ones_like(x_in) * 1e-37
+# based on comfy.samplers.calc_conds_batch
+def calc_conds_batch_lora_hook(model: BaseModel, conds: list[dict], x_in: Tensor, timestep, model_options: dict):
+    out_conds = []
+    out_counts = []
+    # separate conds by matching lora_hooks
+    hooked_to_run: dict[LoraHookGroup,tuple[dict,int]] = {}
 
-    COND = 0
-    UNCOND = 1
+    # cond is i=0, uncond is i=1
+    for i in range(len(conds)):
+        out_conds.append(torch.zeros_like(x_in))
+        out_counts.append(torch.ones_like(x_in) * 1e-37)
 
-    # separate conds and unconds by matching lora_hooks
-    hooked_to_run = {}
-    for x in cond:
-        p = comfy.samplers.get_area_and_mult(x, x_in, timestep)
-        if p is None:
-            continue
-        hook: LoraHookGroup = x.get("lora_hook", None)
-        hooked_to_run.setdefault(hook, list())
-        hooked_to_run[hook] += [(p, COND)]
-    if uncond is not None:
-        for x in uncond:
-            p = comfy.samplers.get_area_and_mult(x, x_in, timestep)
-            if p is None:
-                continue
-            hook: LoraHookGroup = x.get("lora_hook", None)
-            hooked_to_run.setdefault(hook, list())
-            hooked_to_run[hook] += [(p, UNCOND)]
+        cond = conds[i]
+        if cond is not None:
+            for x in cond:
+                p = comfy.samplers.get_area_and_mult(x, x_in, timestep)
+                if p is None:
+                    continue
+                hook: LoraHookGroup = x.get("lora_hook", None)
+                hooked_to_run.setdefault(hook, list())
+                hooked_to_run[hook] += [(p, i)]
     
     # run every hooked_to_run separately
     for lora_hooks, to_run in hooked_to_run.items():
@@ -729,19 +722,13 @@ def calc_cond_uncond_batch_lora_hook(model, cond, uncond, x_in, timestep, model_
                 output = model_options['model_function_wrapper'](model.apply_model, {"input": input_x, "timestep": timestep_, "c": c, "cond_or_uncond": cond_or_uncond}).chunk(batch_chunks)
             else:
                 output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
-            del input_x
 
             for o in range(batch_chunks):
-                if cond_or_uncond[o] == COND:
-                    out_cond[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
-                    out_count[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += mult[o]
-                else:
-                    out_uncond[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
-                    out_uncond_count[:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += mult[o]
-            del mult
+                cond_index = cond_or_uncond[o]
+                out_conds[cond_index][:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
+                out_counts[cond_index][:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += mult[o]
 
-    out_cond /= out_count
-    del out_count
-    out_uncond /= out_uncond_count
-    del out_uncond_count
-    return out_cond, out_uncond
+    for i in range(len(out_conds)):
+        out_conds[i] /= out_counts[i]
+
+    return out_conds
