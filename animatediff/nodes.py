@@ -12,7 +12,10 @@ from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateD
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
                                  SetModelLoraHook, SetClipLoraHook,
-                                 CombineLoraHooks, CombineLoraHookFourOptional, CombineLoraHookEightOptional)
+                                 CombineLoraHooks, CombineLoraHookFourOptional, CombineLoraHookEightOptional,
+                                 PairedConditioningSetMaskHooked, ConditioningSetMaskHooked,
+                                 PairedConditioningSetMaskAndCombineHooked, ConditioningSetMaskAndCombineHooked,
+                                 PairedConditioningSetUnmaskedAndCombineHooked)
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
@@ -65,6 +68,11 @@ NODE_CLASS_MAPPINGS = {
     "ADE_CombineLoraHooksEight": CombineLoraHookEightOptional,
     "ADE_AttachLoraHookToConditioning": SetModelLoraHook,
     "ADE_AttachLoraHookToCLIP": SetClipLoraHook,
+    "ADE_PairedConditioningSetMask": PairedConditioningSetMaskHooked,
+    "ADE_ConditioningSetMask": ConditioningSetMaskHooked,
+    "ADE_PairedConditioningSetMaskAndCombine": PairedConditioningSetMaskAndCombineHooked,
+    "ADE_ConditioningSetMaskAndCombine": ConditioningSetMaskAndCombineHooked,
+    "ADE_PairedConditioningSetUnmaskedAndCombine": PairedConditioningSetUnmaskedAndCombineHooked,
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
@@ -159,6 +167,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_CombineLoraHooksEight": "Combine LoRA Hooks [8] 🎭🅐🅓",
     "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
     "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
+    "ADE_PairedConditioningSetMask": "Set Mask on Conds 🎭🅐🅓",
+    "ADE_ConditioningSetMask": "Set Mask on Cond 🎭🅐🅓",
+    "ADE_PairedConditioningSetMaskAndCombine": "Set Mask and Combine Conds 🎭🅐🅓",
+    "ADE_ConditioningSetMaskAndCombine": "Set Mask and Combine Cond 🎭🅐🅓",
+    "ADE_PairedConditioningSetUnmaskedAndCombine": "Set Unmasked Conds 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",

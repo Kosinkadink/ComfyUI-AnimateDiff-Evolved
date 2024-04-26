@@ -1,5 +1,6 @@
 from typing import Callable
 
+import collections
 import math
 import torch
 from torch import Tensor
@@ -21,6 +22,7 @@ from comfy.controlnet import ControlBase
 from comfy.model_base import BaseModel
 import comfy.ops
 
+from .conditioning import COND_CONST
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration
 from .utils_model import ModelTypeSD
@@ -221,12 +223,13 @@ class FunctionInjectionHolder:
         pass
     
     def inject_functions(self, model: ModelPatcherAndInjector, params: InjectionParams):
-        # Save Original Functions
+        # Save Original Functions - order must match between here and restore_functions
         self.orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
         self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_manual_cast_forward = comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
+        self.orig_get_area_and_mult = comfy.samplers.get_area_and_mult
         if SAMPLE_FALLBACK:  # for backwards compatibility, for now
             self.orig_get_additional_models = comfy.sample.get_additional_models
         else:
@@ -256,6 +259,7 @@ class FunctionInjectionHolder:
                     break
             del info
         comfy.samplers.sampling_function = evolved_sampling_function
+        comfy.samplers.get_area_and_mult = get_area_and_mult_ADE
         if SAMPLE_FALLBACK:  # for backwards compatibility, for now
             comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
         else:
@@ -268,6 +272,7 @@ class FunctionInjectionHolder:
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_manual_cast_forward
+            comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             comfy.samplers.sampling_function = self.orig_sampling_function
             if SAMPLE_FALLBACK:  # for backwards compatibility, for now
                 comfy.sample.get_additional_models = self.orig_get_additional_models
@@ -608,31 +613,166 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
 
 
 def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, timestep, model_options):
-    # check if conds or unconds contain lora_hook
+    # check if conds or unconds contain lora_hook or default_cond
     contains_lora_hooks = False
+    has_default_cond = False
     for cond_uncond in conds:
         if cond_uncond is None:
             continue
         for t in cond_uncond:
-            if "lora_hook" in t:
+            if COND_CONST.KEY_LORA_HOOK in t:
                 contains_lora_hooks = True
-                break
-        if contains_lora_hooks:
-            break
-    if contains_lora_hooks:
-       return calc_conds_batch_lora_hook(model, conds, x_in, timestep, model_options)
+            if COND_CONST.KEY_DEFAULT_COND in t:
+                has_default_cond = True
+        # if contains_lora_hooks:
+        #     break
+    if contains_lora_hooks or has_default_cond:
+       return calc_conds_batch_lora_hook(model, conds, x_in, timestep, model_options, has_default_cond)
     # keep for backwards compatibility, for now
     if not hasattr(comfy.samplers, "calc_cond_batch"):
         return comfy.samplers.calc_cond_uncond_batch(model, conds[0], conds[1], x_in, timestep, model_options)
     return comfy.samplers.calc_cond_batch(model, conds, x_in, timestep, model_options) 
 
 
+# modified from comfy.samplers.get_area_and_mult
+COND_OBJ = collections.namedtuple('cond_obj', ['input_x', 'mult', 'conditioning', 'area', 'control', 'patches'])
+def get_area_and_mult_ADE(conds, x_in, timestep_in):
+    area = (x_in.shape[2], x_in.shape[3], 0, 0)
+    strength = 1.0
+
+    if 'timestep_start' in conds:
+        timestep_start = conds['timestep_start']
+        if timestep_in[0] > timestep_start:
+            return None
+    if 'timestep_end' in conds:
+        timestep_end = conds['timestep_end']
+        if timestep_in[0] < timestep_end:
+            return None
+    if 'area' in conds:
+        area = conds['area']
+    if 'strength' in conds:
+        strength = conds['strength']
+
+    input_x = x_in[:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]]
+    if 'mask' in conds:
+        # Scale the mask to the size of the input
+        # The mask should have been resized as we began the sampling process
+        mask_strength = 1.0
+        if "mask_strength" in conds:
+            mask_strength = conds["mask_strength"]
+        mask = conds['mask']
+        assert(mask.shape[1] == x_in.shape[2])
+        assert(mask.shape[2] == x_in.shape[3])
+        # make sure mask is capped at input_shape batch length to prevent 0 as dimension
+        mask = mask[:input_x.shape[0], area[2]:area[0] + area[2], area[3]:area[1] + area[3]] * mask_strength
+        mask = mask.unsqueeze(1).repeat(input_x.shape[0] // mask.shape[0], input_x.shape[1], 1, 1)
+    else:
+        mask = torch.ones_like(input_x)
+    mult = mask * strength
+
+    if 'mask' not in conds:
+        rr = 8
+        if area[2] != 0:
+            for t in range(rr):
+                mult[:,:,t:1+t,:] *= ((1.0/rr) * (t + 1))
+        if (area[0] + area[2]) < x_in.shape[2]:
+            for t in range(rr):
+                mult[:,:,area[0] - 1 - t:area[0] - t,:] *= ((1.0/rr) * (t + 1))
+        if area[3] != 0:
+            for t in range(rr):
+                mult[:,:,:,t:1+t] *= ((1.0/rr) * (t + 1))
+        if (area[1] + area[3]) < x_in.shape[3]:
+            for t in range(rr):
+                mult[:,:,:,area[1] - 1 - t:area[1] - t] *= ((1.0/rr) * (t + 1))
+
+    conditioning = {}
+    model_conds = conds["model_conds"]
+    for c in model_conds:
+        conditioning[c] = model_conds[c].process_cond(batch_size=x_in.shape[0], device=x_in.device, area=area)
+
+    control = conds.get('control', None)
+
+    patches = None
+    if 'gligen' in conds:
+        gligen = conds['gligen']
+        patches = {}
+        gligen_type = gligen[0]
+        gligen_model = gligen[1]
+        if gligen_type == "position":
+            gligen_patch = gligen_model.model.set_position(input_x.shape, gligen[2], input_x.device)
+        else:
+            gligen_patch = gligen_model.model.set_empty(input_x.shape, input_x.device)
+
+        patches['middle_patch'] = [gligen_patch]
+
+    return COND_OBJ(input_x, mult, conditioning, area, control, patches)
+
+
+def separate_default_conds(conds: list[dict]):
+    normal_conds = []
+    default_conds = []
+    for i in range(len(conds)):
+        c = []
+        default_c = []
+        for t in conds[i]:
+            # check if cond is a default cond
+            if COND_CONST.KEY_DEFAULT_COND in t:
+                default_c.append(t)
+            else:
+                c.append(t)
+        normal_conds.append(c)
+        default_conds.append(default_c)
+    return normal_conds, default_conds
+
+
+def finalize_default_conds(hooked_to_run: dict[LoraHookGroup,list[tuple[COND_OBJ,int]]], default_conds: list[list[dict]], x_in: Tensor, timestep):
+    # need to figure out remaining unmasked area for conds
+    default_mults = []
+    for d in default_conds:
+        default_mults.append(torch.ones_like(x_in))
+    
+    # look through each finalized cond in hooked_to_run for 'mult' and subtract it from each cond
+    for lora_hooks, to_run in hooked_to_run.items():
+        for cond_obj, i in to_run:
+            # if no default_cond for cond_type, do nothing
+            if len(default_conds[i]) == 0:
+                continue
+            area: list[int] = cond_obj.area
+            default_mults[i][:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]] -= cond_obj.mult
+    
+    # for each default_mult, ReLU to make negatives=0, and then check for any nonzeros
+    for i, mult in enumerate(default_mults):
+        # if no default_cond for cond type, do nothing
+        if len(default_conds[i]) == 0:
+            continue
+        torch.nn.functional.relu(mult, inplace=True)
+        # if mult is all zeros, then don't add default_cond
+        if torch.max(mult) == 0.0:
+            continue
+
+        cond = default_conds[i]
+        for x in cond:
+            # do get_area_and_mult to get all the expected values
+            p = comfy.samplers.get_area_and_mult(x, x_in, timestep)
+            if p is None:
+                continue
+            # replace p's mult with calculated mult
+            p = p._replace(mult=mult)
+            hook: LoraHookGroup = x.get(COND_CONST.KEY_LORA_HOOK, None)
+            hooked_to_run.setdefault(hook, list())
+            hooked_to_run[hook] += [(p, i)]
+
+
 # based on comfy.samplers.calc_conds_batch
-def calc_conds_batch_lora_hook(model: BaseModel, conds: list[dict], x_in: Tensor, timestep, model_options: dict):
+def calc_conds_batch_lora_hook(model: BaseModel, conds: list[list[dict]], x_in: Tensor, timestep, model_options: dict, has_default_cond=False):
     out_conds = []
     out_counts = []
     # separate conds by matching lora_hooks
-    hooked_to_run: dict[LoraHookGroup,tuple[dict,int]] = {}
+    hooked_to_run: dict[LoraHookGroup,list[tuple[collections.namedtuple,int]]] = {}
+
+    # separate out default_conds, if needed
+    if has_default_cond:
+        conds, default_conds = separate_default_conds(conds)
 
     # cond is i=0, uncond is i=1
     for i in range(len(conds)):
@@ -645,10 +785,14 @@ def calc_conds_batch_lora_hook(model: BaseModel, conds: list[dict], x_in: Tensor
                 p = comfy.samplers.get_area_and_mult(x, x_in, timestep)
                 if p is None:
                     continue
-                hook: LoraHookGroup = x.get("lora_hook", None)
+                hook: LoraHookGroup = x.get(COND_CONST.KEY_LORA_HOOK, None)
                 hooked_to_run.setdefault(hook, list())
                 hooked_to_run[hook] += [(p, i)]
     
+    # finalize default_conds, if needed
+    if has_default_cond:
+        finalize_default_conds(hooked_to_run, default_conds, x_in, timestep)
+
     # run every hooked_to_run separately
     for lora_hooks, to_run in hooked_to_run.items():
         while len(to_run) > 0:

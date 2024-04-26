@@ -1,15 +1,166 @@
 import uuid
 import folder_paths
 from typing import Union
+from torch import Tensor
 
 from comfy.model_patcher import ModelPatcher
 from comfy.sd import CLIP
 import comfy.sd
 import comfy.utils
 
-from .utils_motion import LoraHook, LoraHookGroup
+from .conditioning import (COND_CONST, set_mask_conds, set_mask_and_combine_conds, set_unmasked_and_combine_conds,
+                           set_lora_hook_for_conditioning, combine_conditioning)
 from .model_injection import ModelPatcherAndInjector, CLIPWithHooks, load_hooked_lora_for_models, load_model_as_hooked_lora_for_models
+from .utils_motion import LoraHook, LoraHookGroup
 
+
+###############################################
+### Mask, Combine, and Hook Conditioning
+###############################################
+class PairedConditioningSetMaskHooked:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive_ADD": ("CONDITIONING", ),
+                "negative_ADD": ("CONDITIONING", ),
+                "mask": ("MASK", ),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
+            },
+            "optional": {
+                "opt_lora_hook": ("LORA_HOOK",),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "append_and_hook"
+
+    def append_and_hook(self, positive_ADD, negative_ADD,
+                        mask: Tensor, strength: float, set_cond_area: str, opt_lora_hook: LoraHookGroup=None):
+        final_positive, final_negative = set_mask_conds(conds=[positive_ADD, negative_ADD],
+                                                        mask=mask, strength=strength, set_cond_area=set_cond_area, opt_lora_hook=opt_lora_hook)
+        return (final_positive, final_negative)
+
+
+class ConditioningSetMaskHooked:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cond_ADD": ("CONDITIONING",),
+                "mask": ("MASK",),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
+            },
+            "optional": {
+                "opt_lora_hook": ("LORA_HOOK",),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "append_and_hook"
+
+    def append_and_hook(self, cond_ADD,
+                        mask: Tensor, strength: float, set_cond_area: str, opt_lora_hook: LoraHookGroup=None):
+        (final_conditioning,) = set_mask_conds(conds=[cond_ADD],
+                                                        mask=mask, strength=strength, set_cond_area=set_cond_area, opt_lora_hook=opt_lora_hook)
+        return (final_conditioning,) 
+
+
+class PairedConditioningSetMaskAndCombineHooked:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "positive_ADD": ("CONDITIONING",),
+                "negative_ADD": ("CONDITIONING",),
+                "mask": ("MASK",),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
+            },
+            "optional": {
+                "opt_lora_hook": ("LORA_HOOK",),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "append_and_combine"
+
+    def append_and_combine(self, positive, negative, positive_ADD, negative_ADD,
+                           mask: Tensor, strength: float, set_cond_area: str, opt_lora_hook: LoraHookGroup=None):
+        final_positive, final_negative = set_mask_and_combine_conds(conds=[positive, negative], new_conds=[positive_ADD, negative_ADD],
+                                                                    mask=mask, strength=strength, set_cond_area=set_cond_area, opt_lora_hook=opt_lora_hook)
+        return (final_positive, final_negative,)
+
+
+class ConditioningSetMaskAndCombineHooked:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cond": ("CONDITIONING",),
+                "cond_ADD": ("CONDITIONING",),
+                "mask": ("MASK", ),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
+            },
+            "optional": {
+                "opt_lora_hook": ("LORA_HOOK",),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "append_and_combine"
+
+    def append_and_combine(self, conditioning, conditioning_ADD,
+                           mask: Tensor, strength: float, set_cond_area: str, opt_lora_hook: LoraHookGroup=None):
+        (final_conditioning,) = set_mask_and_combine_conds(conds=[conditioning], new_conds=[conditioning_ADD],
+                                                                    mask=mask, strength=strength, set_cond_area=set_cond_area, opt_lora_hook=opt_lora_hook)
+        return (final_conditioning,)
+
+
+class PairedConditioningSetUnmaskedAndCombineHooked:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "positive_DEFAULT": ("CONDITIONING",),
+                "negative_DEFAULT": ("CONDITIONING",),
+            },
+            "optional": {
+                "opt_lora_hook": ("LORA_HOOK",),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "append_and_combine"
+
+    def append_and_combine(self, positive, negative, positive_DEFAULT, negative_DEFAULT,
+                           opt_lora_hook: LoraHookGroup=None):
+        final_positive, final_negative = set_unmasked_and_combine_conds(conds=[positive, negative], new_conds=[positive_DEFAULT, negative_DEFAULT],
+                                                                        opt_lora_hook=opt_lora_hook)
+        return (final_positive, final_negative,)
+###############################################
+###############################################
+###############################################
+
+
+###############################################
+### Register LoRA Hooks
+###############################################
 # based on ComfyUI's nodes.py LoraLoader
 class MaskableLoraLoader:
     def __init__(self):
@@ -28,7 +179,7 @@ class MaskableLoraLoader:
         }
     
     RETURN_TYPES = ("MODEL", "CLIP", "LORA_HOOK")
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_lora"
 
     def load_lora(self, model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora_name: str, strength_model: float, strength_clip: float):
@@ -69,7 +220,7 @@ class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
         }
 
     RETURN_TYPES = ("MODEL", "LORA_HOOK")
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_lora_model_only"
 
     def load_lora_model_only(self, model: ModelPatcher, lora_name: str, strength_model: float):
@@ -90,7 +241,7 @@ class MaskableSDModelLoader:
         }
     
     RETURN_TYPES = ("MODEL", "CLIP", "LORA_HOOK")
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_model_as_lora"
 
     def load_model_as_lora(self, model: ModelPatcher, clip: CLIP, ckpt_name: str):
@@ -119,14 +270,21 @@ class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
         }
     
     RETURN_TYPES = ("MODEL", "LORA_HOOK")
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_model_as_lora_model_only"
 
     def load_model_as_lora_model_only(self, model: ModelPatcher, ckpt_name: str):
         model_lora, clip_lora, lora_hook = self.load_model_as_lora(model=model, clip=None, ckpt_name=ckpt_name)
         return (model_lora, lora_hook)
+###############################################
+###############################################
+###############################################
 
 
+
+###############################################
+### Set LoRA Hooks
+###############################################
 class SetModelLoraHook:
     @classmethod
     def INPUT_TYPES(s):
@@ -182,7 +340,7 @@ class CombineLoraHooks:
         }
     
     RETURN_TYPES = ("LORA_HOOK",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine hooks"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
 
     def combine_lora_hooks(self, lora_hook_A: LoraHookGroup, lora_hook_B: LoraHookGroup):
@@ -204,7 +362,7 @@ class CombineLoraHookFourOptional:
         }
 
     RETURN_TYPES = ("LORA_HOOK",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine hooks"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
 
     def combine_lora_hooks(self,
@@ -233,7 +391,7 @@ class CombineLoraHookEightOptional:
         }
 
     RETURN_TYPES = ("LORA_HOOK",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine hooks"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
 
     def combine_lora_hooks(self,
@@ -247,3 +405,6 @@ class CombineLoraHookEightOptional:
 
 # NOTE: if at some point I add more Javascript stuff to this repo, there should be a combine node
 #   that dynamically increases the hooks available to plug in on the node
+###############################################
+###############################################
+###############################################
