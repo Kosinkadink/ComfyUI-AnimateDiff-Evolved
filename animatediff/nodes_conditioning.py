@@ -8,8 +8,7 @@ from comfy.sd import CLIP
 import comfy.sd
 import comfy.utils
 
-from .conditioning import (COND_CONST, set_mask_conds, set_mask_and_combine_conds, set_unmasked_and_combine_conds,
-                           set_lora_hook_for_conditioning, combine_conditioning)
+from .conditioning import (COND_CONST, TimestepsCond, set_mask_conds, set_mask_and_combine_conds, set_unmasked_and_combine_conds,)
 from .model_injection import ModelPatcherAndInjector, CLIPWithHooks, load_hooked_lora_for_models, load_model_as_hooked_lora_for_models
 from .utils_motion import LoraHook, LoraHookGroup
 
@@ -24,12 +23,13 @@ class PairedConditioningSetMaskHooked:
             "required": {
                 "positive_ADD": ("CONDITIONING", ),
                 "negative_ADD": ("CONDITIONING", ),
-                "mask": ("MASK", ),
                 "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
                 "set_cond_area": (COND_CONST._LIST_COND_AREA,),
             },
             "optional": {
+                "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
+                "opt_timesteps": ("TIMESTEPS_COND",)
             }
         }
 
@@ -39,9 +39,11 @@ class PairedConditioningSetMaskHooked:
     FUNCTION = "append_and_hook"
 
     def append_and_hook(self, positive_ADD, negative_ADD,
-                        mask: Tensor, strength: float, set_cond_area: str, opt_lora_hook: LoraHookGroup=None):
+                        strength: float, set_cond_area: str,
+                        opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
         final_positive, final_negative = set_mask_conds(conds=[positive_ADD, negative_ADD],
-                                                        mask=mask, strength=strength, set_cond_area=set_cond_area, opt_lora_hook=opt_lora_hook)
+                                                        strength=strength, set_cond_area=set_cond_area,
+                                                        opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
         return (final_positive, final_negative)
 
 
@@ -51,23 +53,26 @@ class ConditioningSetMaskHooked:
         return {
             "required": {
                 "cond_ADD": ("CONDITIONING",),
-                "mask": ("MASK",),
                 "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
                 "set_cond_area": (COND_CONST._LIST_COND_AREA,),
             },
             "optional": {
+                "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
+                "opt_timesteps": ("TIMESTEPS_COND",)
             }
         }
 
     RETURN_TYPES = ("CONDITIONING",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
     FUNCTION = "append_and_hook"
 
     def append_and_hook(self, cond_ADD,
-                        mask: Tensor, strength: float, set_cond_area: str, opt_lora_hook: LoraHookGroup=None):
+                        strength: float, set_cond_area: str,
+                        opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
         (final_conditioning,) = set_mask_conds(conds=[cond_ADD],
-                                                        mask=mask, strength=strength, set_cond_area=set_cond_area, opt_lora_hook=opt_lora_hook)
+                                               strength=strength, set_cond_area=set_cond_area,
+                                               opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
         return (final_conditioning,) 
 
 
@@ -80,12 +85,13 @@ class PairedConditioningSetMaskAndCombineHooked:
                 "negative": ("CONDITIONING",),
                 "positive_ADD": ("CONDITIONING",),
                 "negative_ADD": ("CONDITIONING",),
-                "mask": ("MASK",),
                 "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
                 "set_cond_area": (COND_CONST._LIST_COND_AREA,),
             },
             "optional": {
+                "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
+                "opt_timesteps": ("TIMESTEPS_COND",)
             }
         }
     
@@ -95,9 +101,11 @@ class PairedConditioningSetMaskAndCombineHooked:
     FUNCTION = "append_and_combine"
 
     def append_and_combine(self, positive, negative, positive_ADD, negative_ADD,
-                           mask: Tensor, strength: float, set_cond_area: str, opt_lora_hook: LoraHookGroup=None):
+                           strength: float, set_cond_area: str,
+                           opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
         final_positive, final_negative = set_mask_and_combine_conds(conds=[positive, negative], new_conds=[positive_ADD, negative_ADD],
-                                                                    mask=mask, strength=strength, set_cond_area=set_cond_area, opt_lora_hook=opt_lora_hook)
+                                                                    strength=strength, set_cond_area=set_cond_area,
+                                                                    opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
         return (final_positive, final_negative,)
 
 
@@ -108,23 +116,26 @@ class ConditioningSetMaskAndCombineHooked:
             "required": {
                 "cond": ("CONDITIONING",),
                 "cond_ADD": ("CONDITIONING",),
-                "mask": ("MASK", ),
                 "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
                 "set_cond_area": (COND_CONST._LIST_COND_AREA,),
             },
             "optional": {
+                "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
+                "opt_timesteps": ("TIMESTEPS_COND",)
             }
         }
     
     RETURN_TYPES = ("CONDITIONING",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
     FUNCTION = "append_and_combine"
 
     def append_and_combine(self, conditioning, conditioning_ADD,
-                           mask: Tensor, strength: float, set_cond_area: str, opt_lora_hook: LoraHookGroup=None):
+                           strength: float, set_cond_area: str,
+                           opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
         (final_conditioning,) = set_mask_and_combine_conds(conds=[conditioning], new_conds=[conditioning_ADD],
-                                                                    mask=mask, strength=strength, set_cond_area=set_cond_area, opt_lora_hook=opt_lora_hook)
+                                                                    strength=strength, set_cond_area=set_cond_area,
+                                                                    opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
         return (final_conditioning,)
 
 
@@ -153,6 +164,55 @@ class PairedConditioningSetUnmaskedAndCombineHooked:
         final_positive, final_negative = set_unmasked_and_combine_conds(conds=[positive, negative], new_conds=[positive_DEFAULT, negative_DEFAULT],
                                                                         opt_lora_hook=opt_lora_hook)
         return (final_positive, final_negative,)
+    
+
+class ConditioningSetUnmaskedAndCombineHooked:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cond": ("CONDITIONING",),
+                "cond_DEFAULT": ("CONDITIONING",),
+            },
+            "optional": {
+                "opt_lora_hook": ("LORA_HOOK",),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
+    FUNCTION = "append_and_combine"
+
+    def append_and_combine(self, cond, cond_DEFAULT,
+                           opt_lora_hook: LoraHookGroup=None):
+        (final_conditioning,) = set_unmasked_and_combine_conds(conds=[cond], new_conds=[cond_DEFAULT],
+                                                                        opt_lora_hook=opt_lora_hook)
+        return (final_conditioning,)
+###############################################
+###############################################
+###############################################
+
+
+###############################################
+### Scheduling
+###############################################
+class ConditioningTimestepsNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001})
+            }
+        }
+    
+    RETURN_TYPES = ("TIMESTEPS_COND",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "create_schedule"
+
+    def create_schedule(self, start_percent: float, end_percent: float):
+        return (TimestepsCond(start_percent=start_percent, end_percent=end_percent),)
+
 ###############################################
 ###############################################
 ###############################################
@@ -296,7 +356,7 @@ class SetModelLoraHook:
         }
     
     RETURN_TYPES = ("CONDITIONING",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
     FUNCTION = "attach_lora_hook"
 
     def attach_lora_hook(self, conditioning, lora_hook: LoraHookGroup):

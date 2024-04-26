@@ -15,7 +15,8 @@ from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly
                                  CombineLoraHooks, CombineLoraHookFourOptional, CombineLoraHookEightOptional,
                                  PairedConditioningSetMaskHooked, ConditioningSetMaskHooked,
                                  PairedConditioningSetMaskAndCombineHooked, ConditioningSetMaskAndCombineHooked,
-                                 PairedConditioningSetUnmaskedAndCombineHooked)
+                                 PairedConditioningSetUnmaskedAndCombineHooked, ConditioningSetUnmaskedAndCombineHooked,
+                                 ConditioningTimestepsNode)
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
@@ -73,6 +74,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_PairedConditioningSetMaskAndCombine": PairedConditioningSetMaskAndCombineHooked,
     "ADE_ConditioningSetMaskAndCombine": ConditioningSetMaskAndCombineHooked,
     "ADE_PairedConditioningSetUnmaskedAndCombine": PairedConditioningSetUnmaskedAndCombineHooked,
+    "ADE_ConditioningSetUnmaskedAndCombine": ConditioningSetUnmaskedAndCombineHooked,
+    "ADE_TimestepsConditioning": ConditioningTimestepsNode,
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
@@ -167,11 +170,13 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_CombineLoraHooksEight": "Combine LoRA Hooks [8] 🎭🅐🅓",
     "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
     "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
-    "ADE_PairedConditioningSetMask": "Set Mask on Conds 🎭🅐🅓",
-    "ADE_ConditioningSetMask": "Set Mask on Cond 🎭🅐🅓",
-    "ADE_PairedConditioningSetMaskAndCombine": "Set Mask and Combine Conds 🎭🅐🅓",
-    "ADE_ConditioningSetMaskAndCombine": "Set Mask and Combine Cond 🎭🅐🅓",
+    "ADE_PairedConditioningSetMask": "Set Props on Conds 🎭🅐🅓",
+    "ADE_ConditioningSetMask": "Set Props on Cond 🎭🅐🅓",
+    "ADE_PairedConditioningSetMaskAndCombine": "Set Props and Combine Conds 🎭🅐🅓",
+    "ADE_ConditioningSetMaskAndCombine": "Set Props and Combine Cond 🎭🅐🅓",
     "ADE_PairedConditioningSetUnmaskedAndCombine": "Set Unmasked Conds 🎭🅐🅓",
+    "ADE_ConditioningSetUnmaskedAndCombine": "Set Unmasked Cond 🎭🅐🅓",
+    "ADE_TimestepsConditioning": "Timesteps Conditioning 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
