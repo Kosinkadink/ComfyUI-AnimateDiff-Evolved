@@ -600,16 +600,16 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                 conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
                 counts_final[i][full_idxs] += weights_tensor
         
-        if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
-            # already normalized, so return as is
-            del counts_final
-            return conds_final
-        else:
-            # normalize conds via division by context usage counts
-            for i in range(len(conds_final)):
-                conds_final[i] /= counts_final[i]
-            del counts_final
-            return conds_final
+    if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+        # already normalized, so return as is
+        del counts_final
+        return conds_final
+    else:
+        # normalize conds via division by context usage counts
+        for i in range(len(conds_final)):
+            conds_final[i] /= counts_final[i]
+        del counts_final
+        return conds_final
 
 
 def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, timestep, model_options):
