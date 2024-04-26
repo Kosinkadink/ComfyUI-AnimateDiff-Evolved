@@ -292,10 +292,10 @@ class ModelPatcherAndInjector(ModelPatcher):
         if key not in self.hooked_backup:
             self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
         
-        if device_to is not None:
-            temp_weight = comfy.model_management.cast_to_device(weight, device_to, torch.float32, copy=True)
-        else:
-            temp_weight = weight.to(torch.float32, copy=True)
+        # if device_to is not None:
+        temp_weight = comfy.model_management.cast_to_device(weight, weight.device, torch.float32, copy=True)
+        # else:
+        #     temp_weight = weight.to(torch.float32, copy=True)
         out_weight = self.calculate_weight(combined_patches[key], temp_weight, key).to(weight.dtype)
         if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
             self.cached_hooked_patches.setdefault(lora_hooks, {})
