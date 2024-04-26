@@ -52,7 +52,7 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.hooked_backup: dict[str, tuple[Tensor, torch.device]] = {}
         self.cached_hooked_patches = {} # binds LoraHookGroup to pre-calculated weights (speed optimization)
         self.current_lora_hooks = None
-        self.lora_hook_mode = LoraHookMode.MAX_SPEED #LoraHookMode.MIN_VRAM #
+        self.lora_hook_mode = LoraHookMode.MAX_SPEED
         # replace hook stuff
         self.hooked_replace_patches = {} # binds LoraHook to specific replacement keys
         # injection stuff
@@ -254,10 +254,6 @@ class ModelPatcherAndInjector(ModelPatcher):
             if was_injected:
                 self.inject_model()
 
-    def patch_hooked_lowvram(self, lora_hooks: LoraHookGroup, device_to=None, lowvram_model_memory=0):
-        # TODO: handle lowvram situation
-        pass
-
     def patch_cached_hooked_weight(self, cached_weights: dict, key: str):
         # TODO: handle lowvram
         weight: Tensor = comfy.utils.get_attr(self.model, key)
@@ -283,16 +279,10 @@ class ModelPatcherAndInjector(ModelPatcher):
             return
 
         weight: Tensor = comfy.utils.get_attr(self.model, key)
-        #device_to = weight.device
-        # if device_to is None:
-        #     device_to = self.hooked_device
+        # TODO: handle lowvram stuff if necessary
         # if lowvram and a qualifying key, do lowvram stuff if needed, else continue on with normal behavior
         # if self.model_lowvram:
-        #     device_to = weight.device
-            # if key.endswith(".bias") or key.endswith(".weight"):
-            #     finished = self._lowvram_patch_hooked_weight_to_device(lora_hooks, combined_patches, key, device_to)
-            #     if finished:
-            #         return
+        #     self._lowvram_patch_hooked_weight_to_device(lora_hooks, combined_patches, key, device_to)
 
         inplace_update = self.weight_inplace_update
         target_device = self.offload_device
@@ -314,27 +304,6 @@ class ModelPatcherAndInjector(ModelPatcher):
             comfy.utils.copy_to_param(self.model, key, out_weight)
         else:
             comfy.utils.set_attr_param(self.model, key, out_weight)
-
-    def _lowvram_patch_hooked_weight_to_device(self, lora_hooks: LoraHookGroup, combined_patches: dict, key: str, device_to=None):
-        # get key of module where weight should be stored
-        split_key = key.split(".")
-        key_type = split_key[-1]
-        module_key = ".".join(split_key[:-1])
-        module = comfy.utils.get_attr(self.model, module_key)
-        
-        if key_type == "bias":
-            stored_func = getattr(module, "bias_function", None)
-            if not stored_func:
-                return False
-            if module.comfy_cast_weights:
-                return False
-        elif key_type == "weight":
-            stored_func = getattr(module, "weight_function", None)
-            if module.comfy_cast_weights:
-                return False
-            if not stored_func:
-                return False
-        return False
 
     def patch_hooked_replace_weight_to_device(self, lora_hooks: LoraHookGroup, model_sd: dict, replace_patches: dict, device_to=None):
         # first handle replace_patches
@@ -370,8 +339,7 @@ class ModelPatcherAndInjector(ModelPatcher):
             self.eject_model()
         # TODO: handle lowvram, assuming there is something that needs to be done
         # if self.model_lowvram:
-        #     logger.warn("lowvram detected in unpatch_hooked!!!")
-        #if device_to is None:
+        #     self._lowvram_unpatch_hooked()
         keys = list(self.hooked_backup.keys())
         if self.weight_inplace_update:
             for k in keys:
@@ -391,6 +359,31 @@ class ModelPatcherAndInjector(ModelPatcher):
         # reinject model, if necessary
         if was_injected:
             self.inject_model()
+
+    def _lowvram_patch_hooked_weight_to_device(self, lora_hooks: LoraHookGroup, combined_patches: dict, key: str, device_to=None):
+        return
+        # get key of module where weight should be stored
+        split_key = key.split(".")
+        key_type = split_key[-1]
+        module_key = ".".join(split_key[:-1])
+        module = comfy.utils.get_attr(self.model, module_key)
+        
+        if key_type == "bias":
+            stored_func = getattr(module, "bias_function", None)
+            if not stored_func:
+                return False
+            if module.comfy_cast_weights:
+                return False
+        elif key_type == "weight":
+            stored_func = getattr(module, "weight_function", None)
+            if module.comfy_cast_weights:
+                return False
+            if not stored_func:
+                return False
+        return False
+    
+    def _lowvram_unpatch_hooked(self):
+        return
 
 
 class CLIPWithHooks(CLIP):
