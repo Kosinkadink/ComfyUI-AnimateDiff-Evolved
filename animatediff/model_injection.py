@@ -53,6 +53,8 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.cached_hooked_patches = {} # binds LoraHookGroup to pre-calculated weights (speed optimization)
         self.current_lora_hooks = None
         self.lora_hook_mode = LoraHookMode.MAX_SPEED
+        self.model_params_lowvram = False 
+        self.model_params_lowvram_keys = {} # keeps track of keys with applied 'weight_function' or 'bias_function'
         # replace hook stuff
         self.hooked_replace_patches = {} # binds LoraHook to specific replacement keys
         # injection stuff
@@ -182,6 +184,22 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.inject_model()
         return patched_model
 
+    def patch_model_lowvram(self, *args, **kwargs):
+        try:
+            return super().patch_model_lowvram(*args, **kwargs)
+        finally:
+            # check if any modules have weight_function or bias_function that is not None
+            # NOTE: this serves no purpose currently, but I have it here for future reasons
+            for n, m in self.model.named_modules():
+                if not hasattr(m, "comfy_cast_weights"):
+                    continue
+                if getattr(m, "weight_function", None) is not None:
+                    self.model_params_lowvram = True
+                    self.model_params_lowvram_keys[f"{n}.weight"] = n
+                if getattr(m, "bias_function", None) is not None:
+                    self.model_params_lowvram = True
+                    self.model_params_lowvram_keys[f"{n}.weight"] = n
+
     def unpatch_model(self, device_to=None, unpatch_weights=True):
         # first, eject motion model from unet
         self.eject_model()
@@ -190,9 +208,17 @@ class ModelPatcherAndInjector(ModelPatcher):
             # handle hooked_patches first
             self.unpatch_hooked()
             self.clear_cached_hooked_weights()
-            return super().unpatch_model(device_to)
+            try:
+                return super().unpatch_model(device_to)
+            finally:
+                self.model_params_lowvram = False
+                self.model_params_lowvram_keys.clear()
         else:
-            return super().unpatch_model(device_to, unpatch_weights)
+            try:
+                return super().unpatch_model(device_to, unpatch_weights)
+            finally:
+                self.model_params_lowvram = False
+                self.model_params_lowvram_keys.clear()
 
     def inject_model(self):
         if self.motion_models is not None:
@@ -246,7 +272,7 @@ class ModelPatcherAndInjector(ModelPatcher):
             self.inject_model()
 
     def patch_cached_hooked_weight(self, cached_weights: dict, key: str):
-        # TODO: handle lowvram
+        # TODO: handle model_params_lowvram stuff if necessary
         inplace_update = self.weight_inplace_update
         if key not in self.hooked_backup:
             weight: Tensor = comfy.utils.get_attr(self.model, key)
@@ -275,15 +301,8 @@ class ModelPatcherAndInjector(ModelPatcher):
                 target_device = weight.device
             self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
 
-        # TODO: handle lowvram stuff if necessary
-        # if lowvram and a qualifying key, do lowvram stuff if needed, else continue on with normal behavior
-        # if self.model_lowvram:
-        #     self._lowvram_patch_hooked_weight_to_device(lora_hooks, combined_patches, key, device_to)
-
-        # if device_to is not None:
+        # TODO: handle model_params_lowvram stuff if necessary
         temp_weight = comfy.model_management.cast_to_device(weight, weight.device, torch.float32, copy=True)
-        # else:
-        #     temp_weight = weight.to(torch.float32, copy=True)
         out_weight = self.calculate_weight(combined_patches[key], temp_weight, key).to(weight.dtype)
         if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
             self.cached_hooked_patches.setdefault(lora_hooks, {})
@@ -303,6 +322,7 @@ class ModelPatcherAndInjector(ModelPatcher):
             inplace_update = self.weight_inplace_update
             weight: Tensor = comfy.utils.get_attr(self.model, key)
             if key not in self.hooked_backup:
+                # TODO: handle model_params_lowvram stuff if necessary
                 target_device = self.offload_device
                 if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
                     target_device = weight.device
@@ -324,9 +344,7 @@ class ModelPatcherAndInjector(ModelPatcher):
         was_injected = self.currently_injected
         if was_injected:
             self.eject_model()
-        # TODO: handle lowvram, assuming there is something that needs to be done
-        # if self.model_lowvram:
-        #     self._lowvram_unpatch_hooked()
+        # TODO: handle model_params_lowvram stuff if necessary
         keys = list(self.hooked_backup.keys())
         if self.weight_inplace_update:
             for k in keys:
@@ -346,31 +364,6 @@ class ModelPatcherAndInjector(ModelPatcher):
         # reinject model, if necessary
         if was_injected:
             self.inject_model()
-
-    def _lowvram_patch_hooked_weight_to_device(self, lora_hooks: LoraHookGroup, combined_patches: dict, key: str, device_to=None):
-        return
-        # get key of module where weight should be stored
-        split_key = key.split(".")
-        key_type = split_key[-1]
-        module_key = ".".join(split_key[:-1])
-        module = comfy.utils.get_attr(self.model, module_key)
-        
-        if key_type == "bias":
-            stored_func = getattr(module, "bias_function", None)
-            if not stored_func:
-                return False
-            if module.comfy_cast_weights:
-                return False
-        elif key_type == "weight":
-            stored_func = getattr(module, "weight_function", None)
-            if module.comfy_cast_weights:
-                return False
-            if not stored_func:
-                return False
-        return False
-    
-    def _lowvram_unpatch_hooked(self):
-        return
 
 
 class CLIPWithHooks(CLIP):
@@ -428,6 +421,9 @@ class ModelPatcherCLIPHooks(ModelPatcher):
         self.current_lora_hooks = None
         self.desired_lora_hooks = None
         self.lora_hook_mode = LoraHookMode.MAX_SPEED
+
+        self.model_params_lowvram = False
+        self.model_params_lowvram_keys = {} # keeps track of keys with applied 'weight_function' or 'bias_function'
         # replace hook stuff
         self.hooked_replace_patches = {} # binds LoraHook to specific replacement keys
 
@@ -479,7 +475,6 @@ class ModelPatcherCLIPHooks(ModelPatcher):
         '''
         Based on add_patches, but for hooked weights.
         '''
-        # TODO: make this work with timestep scheduling
         current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook, {})
         p = set()
         for key in patches:
@@ -563,6 +558,22 @@ class ModelPatcherCLIPHooks(ModelPatcher):
             self.current_lora_hooks = self.desired_lora_hooks
         return super().patch_model(device_to, patch_weights, *args, **kwargs)
 
+    def patch_model_lowvram(self, *args, **kwargs):
+        try:
+            return super().patch_model_lowvram(*args, **kwargs)
+        finally:
+            # check if any modules have weight_function or bias_function that is not None
+            # NOTE: this serves no purpose currently, but I have it here for future reasons
+            for n, m in self.model.named_modules():
+                if not hasattr(m, "comfy_cast_weights"):
+                    continue
+                if getattr(m, "weight_function", None) is not None:
+                    self.model_params_lowvram = True
+                    self.model_params_lowvram_keys[f"{n}.weight"] = n
+                if getattr(m, "bias_function", None) is not None:
+                    self.model_params_lowvram = True
+                    self.model_params_lowvram_keys[f"{n}.weight"] = n
+
     def unpatch_model(self, device_to=None, unpatch_weights=True, *args, **kwargs):
         try:
             return super().unpatch_model(device_to, unpatch_weights, *args, **kwargs)
@@ -577,6 +588,8 @@ class ModelPatcherCLIPHooks(ModelPatcher):
             else:
                 for k in keys:
                     comfy.utils.set_attr_param(self.model, k, self.hooked_backup[k][0].to(device=self.hooked_backup[k][1]))
+            self.model_params_lowvram = False
+            self.model_params_lowvram_keys.clear()
             # clear hooked_backup
             self.hooked_backup.clear()
             self.current_lora_hooks = None
