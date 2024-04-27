@@ -179,91 +179,80 @@ class ModelPatcherAndInjector(ModelPatcher):
         else:
             patched_model = super().patch_model(device_to, patch_weights)
         # finally, perform motion model injection
-        self.inject_model(device_to=device_to)
+        self.inject_model()
         return patched_model
 
     def unpatch_model(self, device_to=None, unpatch_weights=True):
         # first, eject motion model from unet
-        self.eject_model(device_to=device_to)
+        self.eject_model()
         # finally, do normal model unpatching
         if unpatch_weights: # TODO: keep only 'else' portion when don't need to worry about past comfy versions
             # handle hooked_patches first
-            self.unpatch_hooked(device_to=device_to)
+            self.unpatch_hooked()
             self.clear_cached_hooked_weights()
             return super().unpatch_model(device_to)
         else:
             return super().unpatch_model(device_to, unpatch_weights)
 
-    def inject_model(self, device_to=None):
+    def inject_model(self):
         if self.motion_models is not None:
             for motion_model in self.motion_models.models:
                 self.currently_injected = True
                 motion_model.model.inject(self)
 
-    def eject_model(self, device_to=None):
+    def eject_model(self):
         if self.motion_models is not None:
             for motion_model in self.motion_models.models:
                 motion_model.model.eject(self)
             self.currently_injected = False
 
-    def apply_lora_hooks(self, lora_hooks: LoraHookGroup, device_to=None):
+    def apply_lora_hooks(self, lora_hooks: LoraHookGroup):
         # first, determine if need to reapply patches
         if self.current_lora_hooks == lora_hooks:
             return
-        # unpatch hooks, if needed
-        self.unpatch_hooked(device_to=device_to)
-        # finally, patch hooks
-        self.patch_hooked(lora_hooks=lora_hooks, device_to=device_to)
+        # patch hooks
+        self.patch_hooked(lora_hooks=lora_hooks)
 
-    def patch_hooked(self, lora_hooks: LoraHookGroup, device_to=None, patch_weights=True) -> None:
-        if not patch_weights:
-            return
-        # use current device
-        if not device_to:
-            device_to=self.current_device
-        # then, handle weights
-        if patch_weights:
-            # first, unpatch any previous patches
-            self.unpatch_hooked()
-            # eject model, if needed
-            was_injected = self.currently_injected
-            if was_injected:
-                self.eject_model()
+    def patch_hooked(self, lora_hooks: LoraHookGroup) -> None:
+        # first, unpatch any previous patches
+        self.unpatch_hooked()
+        # eject model, if needed
+        was_injected = self.currently_injected
+        if was_injected:
+            self.eject_model()
 
-            model_sd = self.model_state_dict()
-            # if have cached weights for lora_hooks, use it
-            cached_weights = self.cached_hooked_patches.get(lora_hooks, None)
-            if cached_weights is not None:
-                for key in cached_weights:
-                    if key not in model_sd:
-                        logger.warning(f"Cached LoraHook hook could not patch. key doesn't exist in model: {key}")
-                    self.patch_cached_hooked_weight(cached_weights=cached_weights, key=key)
-            else:
-                # get combined patches of relevant lora_hooks
-                relevant_patches = self.get_combined_hooked_patches(lora_hooks=lora_hooks)
-                replace_patches = self.get_hooked_replace_patches(lora_hooks=lora_hooks)
-                if len(replace_patches) > 0:
-                    self.patch_hooked_replace_weight_to_device(lora_hooks=lora_hooks, model_sd=model_sd, replace_patches=replace_patches)
-                for key in relevant_patches:
-                    if key not in model_sd:
-                        logger.warning(f"LoraHook could not patch. key doesn't exist in model: {key}")
-                        continue
-                    self.patch_hooked_weight_to_device(lora_hooks=lora_hooks, combined_patches=relevant_patches, key=key, device_to=device_to)
-            self.current_lora_hooks = lora_hooks
-            # reinject model, if needed
-            if was_injected:
-                self.inject_model()
+        model_sd = self.model_state_dict()
+        # if have cached weights for lora_hooks, use it
+        cached_weights = self.cached_hooked_patches.get(lora_hooks, None)
+        if cached_weights is not None:
+            for key in cached_weights:
+                if key not in model_sd:
+                    logger.warning(f"Cached LoraHook could not patch. key doesn't exist in model: {key}")
+                self.patch_cached_hooked_weight(cached_weights=cached_weights, key=key)
+        else:
+            # get combined patches of relevant lora_hooks
+            relevant_patches = self.get_combined_hooked_patches(lora_hooks=lora_hooks)
+            replace_patches = self.get_hooked_replace_patches(lora_hooks=lora_hooks)
+            if len(replace_patches) > 0:
+                self.patch_hooked_replace_weight_to_device(lora_hooks=lora_hooks, model_sd=model_sd, replace_patches=replace_patches)
+            for key in relevant_patches:
+                if key not in model_sd:
+                    logger.warning(f"LoraHook could not patch. key doesn't exist in model: {key}")
+                    continue
+                self.patch_hooked_weight_to_device(lora_hooks=lora_hooks, combined_patches=relevant_patches, key=key)
+        self.current_lora_hooks = lora_hooks
+        # reinject model, if needed
+        if was_injected:
+            self.inject_model()
 
     def patch_cached_hooked_weight(self, cached_weights: dict, key: str):
         # TODO: handle lowvram
-        weight: Tensor = comfy.utils.get_attr(self.model, key)
-
         inplace_update = self.weight_inplace_update
-        target_device = self.offload_device
-        if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-            target_device = weight.device
-
         if key not in self.hooked_backup:
+            weight: Tensor = comfy.utils.get_attr(self.model, key)
+            target_device = self.offload_device
+            if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
+                target_device = weight.device
             self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
         if inplace_update:
             comfy.utils.copy_to_param(self.model, key, cached_weights[key])
@@ -274,24 +263,23 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.cached_hooked_patches.clear()
         self.current_lora_hooks = None
 
-    def patch_hooked_weight_to_device(self, lora_hooks: LoraHookGroup, combined_patches: dict, key: str, device_to=None):
+    def patch_hooked_weight_to_device(self, lora_hooks: LoraHookGroup, combined_patches: dict, key: str):
         if key not in combined_patches:
             return
 
+        inplace_update = self.weight_inplace_update
         weight: Tensor = comfy.utils.get_attr(self.model, key)
+        if key not in self.hooked_backup:
+            target_device = self.offload_device
+            if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
+                target_device = weight.device
+            self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
+
         # TODO: handle lowvram stuff if necessary
         # if lowvram and a qualifying key, do lowvram stuff if needed, else continue on with normal behavior
         # if self.model_lowvram:
         #     self._lowvram_patch_hooked_weight_to_device(lora_hooks, combined_patches, key, device_to)
 
-        inplace_update = self.weight_inplace_update
-        target_device = self.offload_device
-        if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-            target_device = weight.device
-
-        if key not in self.hooked_backup:
-            self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
-        
         # if device_to is not None:
         temp_weight = comfy.model_management.cast_to_device(weight, weight.device, torch.float32, copy=True)
         # else:
@@ -305,21 +293,22 @@ class ModelPatcherAndInjector(ModelPatcher):
         else:
             comfy.utils.set_attr_param(self.model, key, out_weight)
 
-    def patch_hooked_replace_weight_to_device(self, lora_hooks: LoraHookGroup, model_sd: dict, replace_patches: dict, device_to=None):
+    def patch_hooked_replace_weight_to_device(self, lora_hooks: LoraHookGroup, model_sd: dict, replace_patches: dict):
         # first handle replace_patches
         for key in replace_patches:
             if key not in model_sd:
                 logger.warning(f"LoraHook could not replace patch. key doesn't exist in model: {key}")
                 continue
-            weight: Tensor = comfy.utils.get_attr(self.model, key)
+
             inplace_update = self.weight_inplace_update
-            target_device = self.offload_device
-            if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-                target_device = weight.device
-            
+            weight: Tensor = comfy.utils.get_attr(self.model, key)
             if key not in self.hooked_backup:
+                target_device = self.offload_device
+                if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
+                    target_device = weight.device
                 self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
-            out_weight = replace_patches[key].to(self.load_device)
+
+            out_weight = replace_patches[key].to(weight.device)
             if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
                 self.cached_hooked_patches.setdefault(lora_hooks, {})
                 self.cached_hooked_patches[lora_hooks][key] = out_weight
@@ -328,9 +317,7 @@ class ModelPatcherAndInjector(ModelPatcher):
             else:
                 comfy.utils.set_attr_param(self.model, key, out_weight)
 
-    def unpatch_hooked(self, device_to=None, unpatch_weights=True) -> None:
-        if not unpatch_weights:
-            return
+    def unpatch_hooked(self) -> None:
         # if no backups from before hook, then nothing to unpatch
         if len(self.hooked_backup) == 0:
             return
