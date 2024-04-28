@@ -595,7 +595,14 @@ def load_model_as_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcher
     if model is not None and model_loaded is not None:
         new_modelpatcher = ModelPatcherAndInjector.create_from(model)
         comfy.model_management.unload_model_clones(new_modelpatcher)
-        k = new_modelpatcher.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=model_loaded.model.state_dict(), strength_patch=strength_model)
+        expected_model_keys = model_loaded.model_keys.copy()
+        patches_model: dict[str, Tensor] = model_loaded.model.state_dict()
+        # do not include ANY model_sampling components of the model that should act as a patch
+        for key in list(patches_model.keys()):
+            if key.startswith("model_sampling"):
+                expected_model_keys.discard(key)
+                patches_model.pop(key, None)
+        k = new_modelpatcher.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=patches_model, strength_patch=strength_model)
     else:
         k = ()
         new_modelpatcher = None
@@ -603,7 +610,9 @@ def load_model_as_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcher
     if clip is not None and clip_loaded is not None:
         new_clip = CLIPWithHooks(clip)
         comfy.model_management.unload_model_clones(new_clip)
-        k1 = new_clip.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=clip.cond_stage_model.state_dict(), strength_patch=strength_clip)
+        expected_clip_keys = clip_loaded.patcher.model_keys.copy()
+        patches_clip: dict[str, Tensor] = clip.cond_stage_model.state_dict()
+        k1 = new_clip.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=patches_clip, strength_patch=strength_clip)
     else:
         k1 = ()
         new_clip = None
@@ -611,11 +620,11 @@ def load_model_as_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcher
     k = set(k)
     k1 = set(k1)
     if model is not None and model_loaded is not None:
-        for key in model_loaded.model_keys:
+        for key in expected_model_keys:
             if key not in k:
                 logger.warning(f"MODEL-AS-LORA NOT LOADED {key}")
     if clip is not None and clip_loaded is not None:
-        for key in clip_loaded.patcher.model_keys:
+        for key in expected_clip_keys:
             if key not in k1:
                 logger.warning(f"CLIP-AS-LORA NOT LOADED {key}")
     
