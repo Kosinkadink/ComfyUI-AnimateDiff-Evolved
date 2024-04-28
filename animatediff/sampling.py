@@ -714,12 +714,17 @@ def separate_default_conds(conds: list[dict]):
     for i in range(len(conds)):
         c = []
         default_c = []
-        for t in conds[i]:
-            # check if cond is a default cond
-            if COND_CONST.KEY_DEFAULT_COND in t:
-                default_c.append(t)
-            else:
-                c.append(t)
+        # if cond is None, make normal/default_conds reflect that too
+        if conds[i] is None:
+            c = None
+            default_c = []
+        else:
+            for t in conds[i]:
+                # check if cond is a default cond
+                if COND_CONST.KEY_DEFAULT_COND in t:
+                    default_c.append(t)
+                else:
+                    c.append(t)
         normal_conds.append(c)
         default_conds.append(default_c)
     return normal_conds, default_conds

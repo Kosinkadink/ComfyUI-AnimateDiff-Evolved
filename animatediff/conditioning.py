@@ -1,6 +1,10 @@
 import uuid
 from torch import Tensor
 
+from comfy.model_base import BaseModel
+
+from .utils_motion import get_sorted_list_via_attr
+
 
 class LoraHookMode:
     MIN_VRAM = "min_vram"
@@ -65,6 +69,93 @@ class LoraHookGroup:
             else:
                 final_hook = final_hook.clone_and_combine(hook)
         return final_hook
+
+
+class LoraHookKeyframe:
+    def __init__(self, strength: float, start_percent=0.0, guarantee_steps=1):
+        self.strength = strength
+        # scheduling
+        self.start_percent = float(start_percent)
+        self.start_t = 999999999.9
+        self.guarantee_steps = guarantee_steps
+    
+    def clone(self):
+        c = LoraHookKeyframe(strength=self.strength,
+                             start_percent=self.start_percent, guarantee_steps=self.guarantee_steps)
+        c.start_t = self.start_t
+        return c
+
+class LoraHookKeyframeGroup:
+    def __init__(self):
+        self.keyframes: list[LoraHookKeyframe] = []
+        self._current_keyframe: LoraHookKeyframe = None
+        self._current_used_steps: int = 0
+        self._current_index: int = 0
+    
+    def reset(self):
+        self._current_keyframe = None
+        self._current_used_steps = 0
+        self._current_index = 0
+        self._set_first_as_current()
+
+    def add(self, keyframe: LoraHookKeyframe):
+        # add to end of list, then sort
+        self.keyframes.append(keyframe)
+        self.keyframes = get_sorted_list_via_attr(self.keyframes, "start_percent")
+        self._set_first_as_current()
+
+    def _set_first_as_current(self):
+        if len(self.keyframes) > 0:
+            self._current_keyframe = self.keyframes[0]
+        else:
+            self._current_keyframe = None
+    
+    def has_index(self, index: int) -> int:
+        return index >= 0 and index < len(self.keyframes)
+    
+    def is_empty(self) -> bool:
+        return len(self.keyframes) == 0
+    
+    def clone(self):
+        cloned = LoraHookKeyframeGroup()
+        for keyframe in self.keyframes:
+            cloned.keyframes.append(keyframe)
+        cloned._set_first_as_current()
+        return cloned
+    
+    def initialize_timesteps(self, model: BaseModel):
+        for keyframe in self.keyframes:
+            keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
+
+    def prepare_current_keyframe(self, t: Tensor):
+        curr_t: float = t[0]
+        prev_index = self._current_index
+        # if met guaranteed steps, look for next keyframe in case need to switch
+        if self._current_used_steps >= self._current_keyframe.guarantee_steps:
+            # if has next index, loop through and see if need t oswitch
+            if self.has_index(self._current_index+1):
+                for i in range(self._current_index+1, len(self.keyframes)):
+                    eval_c = self.keyframes[i]
+                    # check if start_t is greater or equal to curr_t
+                    # NOTE: t is in terms of sigmas, not percent, so bigger number = earlier step in sampling
+                    if eval_c.start_t >= curr_t:
+                        self._current_index = i
+                        self._current_keyframe = eval_c
+                        self._current_used_steps = 0
+                        # if guarantee_steps greater than zero, stop searching for other keyframes
+                        if self._current_keyframe.guarantee_steps > 0:
+                            break
+                    # if eval_c is outside the percent range, stop looking further
+                    else: break
+        # update steps current context is used
+        self._current_used_steps += 1
+
+    # properties shadow those of LoraHookKeyframe
+    @property
+    def strength(self):
+        if self._current_keyframe is not None:
+            return self._current_keyframe.strength
+        return None
 
 
 class COND_CONST:
