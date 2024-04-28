@@ -609,9 +609,9 @@ def load_model_as_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcher
         
     if clip is not None and clip_loaded is not None:
         new_clip = CLIPWithHooks(clip)
-        comfy.model_management.unload_model_clones(new_clip)
+        comfy.model_management.unload_model_clones(new_clip.patcher)
         expected_clip_keys = clip_loaded.patcher.model_keys.copy()
-        patches_clip: dict[str, Tensor] = clip.cond_stage_model.state_dict()
+        patches_clip: dict[str, Tensor] = clip_loaded.cond_stage_model.state_dict()
         k1 = new_clip.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=patches_clip, strength_patch=strength_clip)
     else:
         k1 = ()

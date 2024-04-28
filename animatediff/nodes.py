@@ -62,7 +62,7 @@ NODE_CLASS_MAPPINGS = {
     # Conditioning
     "ADE_RegisterLoraHook": MaskableLoraLoader,
     "ADE_RegisterLoraHookModelOnly": MaskableLoraLoaderModelOnly,
-    #"ADE_RegisterModelAsLoraHook": MaskableSDModelLoader,  # CLIP does not work properly on first run
+    "ADE_RegisterModelAsLoraHook": MaskableSDModelLoader,
     "ADE_RegisterModelAsLoraHookModelOnly": MaskableSDModelLoaderModelOnly,
     "ADE_CombineLoraHooks": CombineLoraHooks,
     "ADE_CombineLoraHooksFour": CombineLoraHookFourOptional,
@@ -163,7 +163,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Conditioning
     "ADE_RegisterLoraHook": "Register LoRA Hook 🎭🅐🅓",
     "ADE_RegisterLoraHookModelOnly": "Register LoRA Hook (Model Only) 🎭🅐🅓",
-    #"ADE_RegisterModelAsLoraHook": "Register Model as LoRA Hook🔬 🎭🅐🅓",  # CLIP does not work properly on first run
+    "ADE_RegisterModelAsLoraHook": "Register Model as LoRA Hook 🎭🅐🅓",
     "ADE_RegisterModelAsLoraHookModelOnly": "Register Model as LoRA Hook (MO) 🎭🅐🅓",
     "ADE_CombineLoraHooks": "Combine LoRA Hooks [2] 🎭🅐🅓",
     "ADE_CombineLoraHooksFour": "Combine LoRA Hooks [4] 🎭🅐🅓",
