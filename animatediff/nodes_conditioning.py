@@ -298,6 +298,8 @@ class MaskableSDModelLoader:
                 "model": ("MODEL",),
                 "clip": ("CLIP",),
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
+                "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+                "strength_clip": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
             }
         }
     
@@ -305,7 +307,7 @@ class MaskableSDModelLoader:
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_model_as_lora"
 
-    def load_model_as_lora(self, model: ModelPatcher, clip: CLIP, ckpt_name: str):
+    def load_model_as_lora(self, model: ModelPatcher, clip: CLIP, ckpt_name: str, strength_model: float, strength_clip: float):
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
         out = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
         model_loaded = out[0]
@@ -316,7 +318,8 @@ class MaskableSDModelLoader:
         lora_hook_group.add(lora_hook)
         model_lora, clip_lora = load_model_as_hooked_lora_for_models(model=model, clip=clip,
                                                                      model_loaded=model_loaded, clip_loaded=clip_loaded,
-                                                                     lora_hook=lora_hook)
+                                                                     lora_hook=lora_hook,
+                                                                     strength_model=strength_model, strength_clip=strength_clip)
         return (model_lora, clip_lora, lora_hook_group)
 
 
@@ -327,6 +330,7 @@ class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
             "required": {
                 "model": ("MODEL",),
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
+                "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
             }
         }
     
@@ -334,8 +338,9 @@ class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_model_as_lora_model_only"
 
-    def load_model_as_lora_model_only(self, model: ModelPatcher, ckpt_name: str):
-        model_lora, clip_lora, lora_hook = self.load_model_as_lora(model=model, clip=None, ckpt_name=ckpt_name)
+    def load_model_as_lora_model_only(self, model: ModelPatcher, ckpt_name: str, strength_model: float):
+        model_lora, clip_lora, lora_hook = self.load_model_as_lora(model=model, clip=None, ckpt_name=ckpt_name,
+                                                                   strength_model=strength_model, strength_clip=0)
         return (model_lora, lora_hook)
 ###############################################
 ###############################################

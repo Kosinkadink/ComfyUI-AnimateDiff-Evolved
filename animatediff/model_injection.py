@@ -55,8 +55,6 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.lora_hook_mode = LoraHookMode.MAX_SPEED
         self.model_params_lowvram = False 
         self.model_params_lowvram_keys = {} # keeps track of keys with applied 'weight_function' or 'bias_function'
-        # replace hook stuff
-        self.hooked_replace_patches = {} # binds LoraHook to specific replacement keys
         # injection stuff
         self.currently_injected = False
         self.motion_injection_params: InjectionParams = InjectionParams()
@@ -75,11 +73,6 @@ class ModelPatcherAndInjector(ModelPatcher):
             cloned.cached_hooked_patches[group] = {}
             for k in self.cached_hooked_patches[group]:
                 cloned.cached_hooked_patches[group][k] = self.cached_hooked_patches[group][k]
-        # copy replace lora hooks
-        for hook in self.hooked_replace_patches:
-            cloned.hooked_replace_patches[hook] = {}
-            for k in self.hooked_replace_patches[hook]:
-                cloned.hooked_replace_patches[hook][k] = self.hooked_replace_patches[hook][k]
         cloned.hooked_backup = self.hooked_backup
         cloned.current_lora_hooks = self.current_lora_hooks
         cloned.currently_injected = self.currently_injected
@@ -102,15 +95,13 @@ class ModelPatcherAndInjector(ModelPatcher):
         if not returned:
             return returned
         # currently, hook patches require that model gets loaded when sampled, so always say is not a clone if hooks present
-        if len(self.hooked_patches) > 0 or len(self.hooked_replace_patches) > 0:
+        if len(self.hooked_patches) > 0:
             return False
         if type(self) != type(clone):
             return False
         if self.current_lora_hooks != clone.current_lora_hooks:
             return False
         if self.hooked_patches.keys() != clone.hooked_patches.keys():
-            return False
-        if self.hooked_replace_patches.keys() != clone.hooked_replace_patches.keys():
             return False
         return returned
 
@@ -135,6 +126,26 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.patches_uuid = uuid.uuid4()
         return list(p)
     
+    def add_hooked_patches_as_diffs(self, lora_hook: LoraHook, patches: dict, strength_patch=1.0, strength_model=1.0):
+        '''
+        Based on add_hooked_patches, but intended for using a model's weights as lora hook.
+        '''
+        # TODO: make this work with timestep scheduling
+        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook, {})
+        p = set()
+        for key in patches:
+            if key in self.model_keys:
+                p.add(key)
+                current_patches: list[tuple] = current_hooked_patches.get(key, [])
+                # take difference between desired weight and existing weight to get diff
+
+                current_patches.append((strength_patch, (patches[key]-comfy.utils.get_attr(self.model, key),), strength_model))
+                current_hooked_patches[key] = current_patches
+        self.hooked_patches[lora_hook] = current_hooked_patches
+        # since should care about these patches too to determine if same model, reroll patches_uuid
+        self.patches_uuid = uuid.uuid4()
+        return list(p)
+
     def get_combined_hooked_patches(self, lora_hooks: LoraHookGroup):
         '''
         Returns patches for selected lora_hooks.
@@ -149,27 +160,6 @@ class ModelPatcherAndInjector(ModelPatcher):
                     current_patches.extend(hook_patches[key])
                     combined_patches[key] = current_patches
         return combined_patches
-
-    def add_hooked_replace_patches(self, lora_hook: LoraHook, patches: dict):
-        self.hooked_replace_patches.setdefault(lora_hook, {})
-        p = set()
-        for key in patches:
-            if key in self.model_keys:
-                p.add(key)
-                self.hooked_replace_patches[lora_hook][key] = patches[key]
-        # since should care about these patches too to determine if same model, reroll patches_uuid
-        self.patches_uuid = uuid.uuid4()
-        return list(p)
-
-    def get_hooked_replace_patches(self, lora_hooks: LoraHookGroup):
-        # return first hook found in hooked_replace_patches
-        patches = {}
-        if lora_hooks is not None:
-            for hook in lora_hooks.hooks:
-                if hook in self.hooked_replace_patches:
-                    patches = self.hooked_replace_patches[hook]
-                    break
-        return patches
 
     def model_patches_to(self, device):
         super().model_patches_to(device)
@@ -258,9 +248,6 @@ class ModelPatcherAndInjector(ModelPatcher):
         else:
             # get combined patches of relevant lora_hooks
             relevant_patches = self.get_combined_hooked_patches(lora_hooks=lora_hooks)
-            replace_patches = self.get_hooked_replace_patches(lora_hooks=lora_hooks)
-            if len(replace_patches) > 0:
-                self.patch_hooked_replace_weight_to_device(lora_hooks=lora_hooks, model_sd=model_sd, replace_patches=replace_patches)
             for key in relevant_patches:
                 if key not in model_sd:
                     logger.warning(f"LoraHook could not patch. key doesn't exist in model: {key}")
@@ -387,13 +374,9 @@ class CLIPWithHooks(CLIP):
 
     def add_hooked_patches(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
         return self.patcher.add_hooked_patches(lora_hook=lora_hook, patches=patches, strength_patch=strength_patch, strength_model=strength_model)
-
-    def add_hooked_replace_patches(self, lora_hook: LoraHook, patches):
-        return self.patcher.add_hooked_replace_patches(lora_hook=lora_hook, patches=patches)
-
-    # def encode_from_tokens(self, tokens, return_pooled=False):
-    #     comfy.model_management.cleanup_models()
-    #     return super().encode_from_tokens(tokens, return_pooled)
+    
+    def add_hooked_patches_as_diffs(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
+        return self.patcher.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=patches, strength_patch=strength_patch, strength_model=strength_model)
 
 
 class ModelPatcherCLIPHooks(ModelPatcher):
@@ -424,8 +407,6 @@ class ModelPatcherCLIPHooks(ModelPatcher):
 
         self.model_params_lowvram = False
         self.model_params_lowvram_keys = {} # keeps track of keys with applied 'weight_function' or 'bias_function'
-        # replace hook stuff
-        self.hooked_replace_patches = {} # binds LoraHook to specific replacement keys
 
     def clone(self):
         cloned = ModelPatcherCLIPHooks(self)
@@ -434,11 +415,6 @@ class ModelPatcherCLIPHooks(ModelPatcher):
             cloned.hooked_patches[hook] = {}
             for k in self.hooked_patches[hook]:
                 cloned.hooked_patches[hook][k] = self.hooked_patches[hook][k][:]
-        # copy replace lora hooks
-        for hook in self.hooked_replace_patches:
-            cloned.hooked_replace_patches[hook] = {}
-            for k in self.hooked_replace_patches[hook]:
-                cloned.hooked_replace_patches[hook][k] = self.hooked_replace_patches[hook][k]
         cloned.patches_backup = self.patches_backup
         cloned.hooked_backup = self.hooked_backup
         cloned.current_lora_hooks = self.current_lora_hooks
@@ -464,8 +440,6 @@ class ModelPatcherCLIPHooks(ModelPatcher):
             return False
         if self.hooked_patches.keys() != clone.hooked_patches.keys():
             return False
-        if self.hooked_replace_patches.keys() != clone.hooked_replace_patches.keys():
-            return False
         return returned
 
     def set_desired_hooks(self, lora_hooks: LoraHookGroup):
@@ -488,6 +462,24 @@ class ModelPatcherCLIPHooks(ModelPatcher):
         self.patches_uuid = uuid.uuid4()
         return list(p)
     
+    def add_hooked_patches_as_diffs(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
+        '''
+        Based on add_hooked_patches, but intended for using a model's weights as lora hook.
+        '''
+        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook, {})
+        p = set()
+        for key in patches:
+            if key in self.model_keys:
+                p.add(key)
+                current_patches: list[tuple] = current_hooked_patches.get(key, [])
+                # take difference between desired weight and existing weight to get diff
+                current_patches.append((strength_patch, (patches[key]-comfy.utils.get_attr(self.model, key),), strength_model))
+                current_hooked_patches[key] = current_patches
+        self.hooked_patches[lora_hook] = current_hooked_patches
+        # since should care about these patches too to determine if same model, reroll patches_uuid
+        self.patches_uuid = uuid.uuid4()
+        return list(p)
+    
     def get_combined_hooked_patches(self, lora_hooks: LoraHookGroup):
         '''
         Returns patches for selected lora_hooks.
@@ -502,27 +494,6 @@ class ModelPatcherCLIPHooks(ModelPatcher):
                     current_patches.extend(hook_patches[key])
                     combined_patches[key] = current_patches
         return combined_patches
-
-    def add_hooked_replace_patches(self, lora_hook: LoraHook, patches: dict):
-        self.hooked_replace_patches.setdefault(lora_hook, {})
-        p = set()
-        for key in patches:
-            if key in self.model_keys:
-                p.add(key)
-                self.hooked_replace_patches[lora_hook][key] = patches[key]
-        # since should care about these patches too to determine if same model, reroll patches_uuid
-        self.patches_uuid = uuid.uuid4()
-        return list(p)
-
-    def get_hooked_replace_patches(self, lora_hooks: LoraHookGroup):
-        # return first hook found in hooked_replace_patches
-        patches = {}
-        if lora_hooks is not None:
-            for hook in lora_hooks.hooks:
-                if hook in self.hooked_replace_patches:
-                    patches = self.hooked_replace_patches[hook]
-                    break
-        return patches
     
     def patch_hooked_replace_weight_to_device(self, model_sd: dict, replace_patches: dict):
         # first handle replace_patches
@@ -545,12 +516,6 @@ class ModelPatcherCLIPHooks(ModelPatcher):
     def patch_model(self, device_to=None, patch_weights=True, *args, **kwargs):
         if self.desired_lora_hooks is not None:
             self.patches_backup = self.patches.copy()
-            # first, handle replace patches  # TODO: make work properly for CLIP
-            replace_patches = self.get_hooked_replace_patches(lora_hooks=self.desired_lora_hooks)
-            if len(replace_patches) > 0:
-                model_sd = self.model_state_dict()
-                self.patch_hooked_replace_weight_to_device(model_sd=model_sd, replace_patches=replace_patches)
-            # then, handle usual patches
             relevant_patches = self.get_combined_hooked_patches(lora_hooks=self.desired_lora_hooks)
             for key in relevant_patches:
                 self.patches.setdefault(key, [])
@@ -595,7 +560,8 @@ class ModelPatcherCLIPHooks(ModelPatcher):
             self.current_lora_hooks = None
 
 
-def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora: dict[str, Tensor], lora_hook: LoraHook, strength_model: float, strength_clip: float):
+def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora: dict[str, Tensor], lora_hook: LoraHook,
+                                strength_model: float, strength_clip: float):
     key_map = {}
     if model is not None:
         key_map = comfy.lora.model_lora_keys_unet(model.model, key_map)
@@ -624,17 +590,20 @@ def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInject
     return (new_modelpatcher, new_clip)
 
 
-def load_model_as_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, model_loaded: ModelPatcher, clip_loaded: CLIP, lora_hook: LoraHook):
+def load_model_as_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, model_loaded: ModelPatcher, clip_loaded: CLIP, lora_hook: LoraHook,
+                                         strength_model: float, strength_clip: float):
     if model is not None and model_loaded is not None:
         new_modelpatcher = ModelPatcherAndInjector.create_from(model)
-        k = new_modelpatcher.add_hooked_replace_patches(lora_hook=lora_hook, patches=model_loaded.model.state_dict())
+        comfy.model_management.unload_model_clones(new_modelpatcher)
+        k = new_modelpatcher.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=model_loaded.model.state_dict(), strength_patch=strength_model)
     else:
         k = ()
         new_modelpatcher = None
         
     if clip is not None and clip_loaded is not None:
         new_clip = CLIPWithHooks(clip)
-        k1 = new_clip.add_hooked_replace_patches(lora_hook=lora_hook, patches=clip.cond_stage_model.state_dict())
+        comfy.model_management.unload_model_clones(new_clip)
+        k1 = new_clip.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=clip.cond_stage_model.state_dict(), strength_patch=strength_clip)
     else:
         k1 = ()
         new_clip = None
