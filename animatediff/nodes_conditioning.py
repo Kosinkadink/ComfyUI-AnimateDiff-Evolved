@@ -8,9 +8,9 @@ from comfy.sd import CLIP
 import comfy.sd
 import comfy.utils
 
-from .conditioning import (COND_CONST, TimestepsCond, set_mask_conds, set_mask_and_combine_conds, set_unmasked_and_combine_conds,)
+from .conditioning import (COND_CONST, TimestepsCond, set_mask_conds, set_mask_and_combine_conds, set_unmasked_and_combine_conds,
+                           LoraHook, LoraHookGroup)
 from .model_injection import ModelPatcherAndInjector, CLIPWithHooks, load_hooked_lora_for_models, load_model_as_hooked_lora_for_models
-from .utils_motion import LoraHook, LoraHookGroup
 
 
 ###############################################

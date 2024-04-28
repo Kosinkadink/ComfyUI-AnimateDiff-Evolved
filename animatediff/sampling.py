@@ -22,11 +22,11 @@ from comfy.controlnet import ControlBase
 from comfy.model_base import BaseModel
 import comfy.ops
 
-from .conditioning import COND_CONST
+from .conditioning import COND_CONST, LoraHookGroup
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration
 from .utils_model import ModelTypeSD
-from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, LoraHookGroup
+from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
 from .logger import logger
 
