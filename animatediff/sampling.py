@@ -41,8 +41,8 @@ class AnimateDiffHelper_GlobalState:
         self.params: InjectionParams = None
         self.sample_settings: SampleSettings = None
         self.reset()
-    
-    def initialize(self, model):
+
+    def initialize(self, model: BaseModel):
         # this function is to be run in sampling func
         if not self.initialized:
             self.initialized = True
@@ -53,15 +53,36 @@ class AnimateDiffHelper_GlobalState:
             if self.sample_settings.custom_cfg is not None:
                 self.sample_settings.custom_cfg.initialize_timesteps(model)
 
+    def hooks_initialize(self, model: BaseModel, hook_groups: list[LoraHookGroup]):
+        # this function is to be run the first time all gathered
+        if not self.hooks_initialized:
+            self.hooks_initialized = True
+            for hook_group in hook_groups:
+                for hook in hook_group.hooks:
+                    hook.reset()
+                    hook.initialize_timesteps(model)
+
+    def prepare_current_keyframes(self, timestep: Tensor):
+        if self.motion_models is not None:
+            self.motion_models.prepare_current_keyframe(t=timestep)
+        if self.params.context_options is not None:
+            self.params.context_options.prepare_current_context(t=timestep)
+        if self.sample_settings.custom_cfg is not None:
+            self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
+
+    def prepare_hooks_current_keyframes(self, timestep: Tensor, hook_groups: list[LoraHookGroup]):
+        if self.model_patcher is not None:
+            self.model_patcher.prepare_hooked_patches_current_keyframe(t=timestep, hook_groups=hook_groups)
+
     def reset(self):
         self.initialized = False
+        self.hooks_initialized = False
         self.start_step: int = 0
         self.last_step: int = 0
         self.current_step: int = 0
         self.total_steps: int = 0
         if self.model_patcher is not None:
-            self.model_patcher.unpatch_hooked()
-            self.model_patcher.clear_cached_hooked_weights()
+            self.model_patcher.clean_hooks()
             del self.model_patcher
             self.model_patcher = None
         if self.motion_models is not None:
@@ -73,13 +94,13 @@ class AnimateDiffHelper_GlobalState:
         if self.sample_settings is not None:
             del self.sample_settings
             self.sample_settings = None
-    
+
     def update_with_inject_params(self, params: InjectionParams):
         self.params = params
 
     def is_using_sliding_context(self):
         return self.params is not None and self.params.is_using_sliding_context()
-    
+
     def create_exposed_params(self):
         # This dict will be exposed to be used by other extensions
         # DO NOT change any of the key names
@@ -379,6 +400,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                 ADGS.start_step = kwargs.get("start_step") or 0
                 ADGS.current_step = ADGS.start_step
                 ADGS.last_step = kwargs.get("last_step") or 0
+                ADGS.hooks_initialized = False
                 if iter_opts.iterations > 1:
                     logger.info(f"Iteration {curr_i+1}/{iter_opts.iterations}")
                 # perform any iter_opts preprocessing on latents
@@ -413,12 +435,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
 
 def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS.initialize(model)
-    if ADGS.motion_models is not None:
-        ADGS.motion_models.prepare_current_keyframe(t=timestep)
-    if ADGS.params.context_options is not None:
-        ADGS.params.context_options.prepare_current_context(t=timestep)
-    if ADGS.sample_settings.custom_cfg is not None:
-        ADGS.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
+    ADGS.prepare_current_keyframes(timestep=timestep)
 
     # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
     if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
@@ -513,11 +530,7 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                     # look for control
                     elif key == "control":
                         control_item = cond_item
-                        if hasattr(control_item, "sub_idxs"):
-                            prepare_control_objects(control_item, full_idxs)
-                        else:
-                            raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; \
-                                                use Control objects from Kosinkadink/ComfyUI-Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
+                        prepare_control_objects(control_item, full_idxs)
                         resized_actual_cond[key] = control_item
                         del control_item
                     elif isinstance(cond_item, dict):
@@ -616,17 +629,21 @@ def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, times
     # check if conds or unconds contain lora_hook or default_cond
     contains_lora_hooks = False
     has_default_cond = False
+    hook_groups = []
     for cond_uncond in conds:
         if cond_uncond is None:
             continue
         for t in cond_uncond:
             if COND_CONST.KEY_LORA_HOOK in t:
                 contains_lora_hooks = True
+                hook_groups.append(t[COND_CONST.KEY_LORA_HOOK])
             if COND_CONST.KEY_DEFAULT_COND in t:
                 has_default_cond = True
         # if contains_lora_hooks:
         #     break
     if contains_lora_hooks or has_default_cond:
+       ADGS.hooks_initialize(model, hook_groups=hook_groups)
+       ADGS.prepare_hooks_current_keyframes(timestep, hook_groups=hook_groups)
        return calc_conds_batch_lora_hook(model, conds, x_in, timestep, model_options, has_default_cond)
     # keep for backwards compatibility, for now
     if not hasattr(comfy.samplers, "calc_cond_batch"):

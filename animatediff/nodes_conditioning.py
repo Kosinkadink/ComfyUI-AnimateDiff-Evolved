@@ -2,6 +2,7 @@ import uuid
 import folder_paths
 from typing import Union
 from torch import Tensor
+from collections.abc import Iterable
 
 from comfy.model_patcher import ModelPatcher
 from comfy.sd import CLIP
@@ -9,8 +10,10 @@ import comfy.sd
 import comfy.utils
 
 from .conditioning import (COND_CONST, TimestepsCond, set_mask_conds, set_mask_and_combine_conds, set_unmasked_and_combine_conds,
-                           LoraHook, LoraHookGroup)
+                           LoraHook, LoraHookGroup, LoraHookKeyframe, LoraHookKeyframeGroup)
 from .model_injection import ModelPatcherAndInjector, CLIPWithHooks, load_hooked_lora_for_models, load_model_as_hooked_lora_for_models
+from .utils_model import BIGMAX, InterpolationMethod
+from .logger import logger
 
 
 ###############################################
@@ -213,6 +216,150 @@ class ConditioningTimestepsNode:
 
     def create_schedule(self, start_percent: float, end_percent: float):
         return (TimestepsCond(start_percent=start_percent, end_percent=end_percent),)
+
+
+class SetLoraHookKeyframes:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "lora_hook": ("LORA_HOOK",), 
+                "hook_kf": ("LORA_HOOK_KEYFRAMES",),
+            }
+        }
+    
+    RETURN_TYPES = ("LORA_HOOK",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "set_hook_keyframes"
+
+    def set_hook_keyframes(self, lora_hook: LoraHookGroup, hook_kf: LoraHookKeyframeGroup):
+        new_lora_hook = lora_hook.clone()
+        new_lora_hook.set_keyframes_on_hooks(hook_kf=hook_kf)
+        return (new_lora_hook,)
+
+
+class CreateLoraHookKeyframe:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            },
+            "optional": {
+                "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
+            }
+        }
+    
+    RETURN_TYPES = ("LORA_HOOK_KEYFRAMES",)
+    RETURN_NAMES = ("HOOK_KF",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
+    FUNCTION = "create_hook_keyframe"
+
+    def create_hook_keyframe(self, strength_model: float, start_percent: float, guarantee_steps: float,
+                             prev_hook_kf: LoraHookKeyframeGroup=None):
+        if prev_hook_kf:
+            prev_hook_kf = prev_hook_kf.clone()
+        else:
+            prev_hook_kf = LoraHookKeyframeGroup()
+        keyframe = LoraHookKeyframe(strength=strength_model, start_percent=start_percent, guarantee_steps=guarantee_steps)
+        prev_hook_kf.add(keyframe)
+        return (prev_hook_kf,)
+
+
+class CreateLoraHookKeyframeInterpolation:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "strength_start": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001}, ),
+                "strength_end": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001}, ),
+                "interpolation": (InterpolationMethod._LIST, ),
+                "intervals": ("INT", {"default": 5, "min": 2, "max": 100, "step": 1}),
+                "print_keyframes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
+            }
+        }
+    
+    RETURN_TYPES = ("LORA_HOOK_KEYFRAMES",)
+    RETURN_NAMES = ("HOOK_KF",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
+    FUNCTION = "create_hook_keyframes"
+
+    def create_hook_keyframes(self,
+                              start_percent: float, end_percent: float,
+                              strength_start: float, strength_end: float, interpolation: str, intervals: int,
+                              prev_hook_kf: LoraHookKeyframeGroup=None, print_keyframes=False):
+        if prev_hook_kf:
+            prev_hook_kf = prev_hook_kf.clone()
+        else:
+            prev_hook_kf = LoraHookKeyframeGroup()
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=intervals, method=interpolation)
+        strengths = InterpolationMethod.get_weights(num_from=strength_start, num_to=strength_end, length=intervals, method=interpolation)
+        
+        is_first = True
+        for percent, strength in zip(percents, strengths):
+            guarantee_steps = 0
+            if is_first:
+                guarantee_steps = 1
+                is_first = False
+            prev_hook_kf.add(LoraHookKeyframe(strength=strength, start_percent=percent, guarantee_steps=guarantee_steps))
+            if print_keyframes:
+                logger.info(f"LoraHookKeyframe - start_percent:{percent} = {strength}")
+        return (prev_hook_kf,)
+    
+
+class CreateLoraHookKeyframeFromStrengthList:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "strengths_float": ("FLOAT", {"default": -1, "min": -1, "step": 0.001, "forceInput": True}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "print_keyframes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
+            }
+        }
+    
+    RETURN_TYPES = ("LORA_HOOK_KEYFRAMES",)
+    RETURN_NAMES = ("HOOK_KF",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
+    FUNCTION = "create_hook_keyframes"
+
+    def create_hook_keyframes(self, strengths_float: Union[float, list[float]],
+                              start_percent: float, end_percent: float,
+                              prev_hook_kf: LoraHookKeyframeGroup=None, print_keyframes=False):
+        if prev_hook_kf:
+            prev_hook_kf = prev_hook_kf.clone()
+        else:
+            prev_hook_kf = LoraHookKeyframeGroup()
+        if type(strengths_float) in (float, int):
+            strengths_float = [float(strengths_float)]
+        elif isinstance(strengths_float, Iterable):
+            pass
+        else:
+            raise Exception(f"strengths_floast must be either an interable input or a float, but was {type(strengths_float).__repr__}.")
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=len(strengths_float), method=InterpolationMethod.LINEAR)
+
+        is_first = True
+        for percent, strength in zip(percents, strengths_float):
+            guarantee_steps = 0
+            if is_first:
+                guarantee_steps = 1
+                is_first = False
+            prev_hook_kf.add(LoraHookKeyframe(strength=strength, start_percent=percent, guarantee_steps=guarantee_steps))
+            if print_keyframes:
+                logger.info(f"LoraHookKeyframe - start_percent:{percent} = {strength}")
+        return (prev_hook_kf,)
+
 
 ###############################################
 ###############################################

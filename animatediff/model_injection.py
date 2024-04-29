@@ -6,6 +6,7 @@ from torch import Tensor
 import torch.nn.functional as F
 import torch
 import uuid
+import math
 
 import comfy.lora
 import comfy.model_management
@@ -21,7 +22,7 @@ from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyA
                                has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max
-from .conditioning import LoraHook, LoraHookGroup, LoraHookMode
+from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -48,9 +49,9 @@ class ModelPatcherAndInjector(ModelPatcher):
             self.object_patches_backup = m.object_patches_backup
 
         # lora hook stuff
-        self.hooked_patches = {} # binds LoraHook to specific keys
+        self.hooked_patches: dict[HookRef] = {} # binds LoraHook to specific keys
         self.hooked_backup: dict[str, tuple[Tensor, torch.device]] = {}
-        self.cached_hooked_patches = {} # binds LoraHookGroup to pre-calculated weights (speed optimization)
+        self.cached_hooked_patches: dict[LoraHookGroup, dict[str, Tensor]] = {} # binds LoraHookGroup to pre-calculated weights (speed optimization)
         self.current_lora_hooks = None
         self.lora_hook_mode = LoraHookMode.MAX_SPEED
         self.model_params_lowvram = False 
@@ -64,10 +65,10 @@ class ModelPatcherAndInjector(ModelPatcher):
     def clone(self, hooks_only=False):
         cloned = ModelPatcherAndInjector(self)
         # copy lora hooks
-        for hook in self.hooked_patches:
-            cloned.hooked_patches[hook] = {}
-            for k in self.hooked_patches[hook]:
-                cloned.hooked_patches[hook][k] = self.hooked_patches[hook][k][:]
+        for hook_ref in self.hooked_patches:
+            cloned.hooked_patches[hook_ref] = {}
+            for k in self.hooked_patches[hook_ref]:
+                cloned.hooked_patches[hook_ref][k] = self.hooked_patches[hook_ref][k][:]
         # copy pre-calc weights bound to LoraHookGroups
         for group in self.cached_hooked_patches:
             cloned.cached_hooked_patches[group] = {}
@@ -107,13 +108,31 @@ class ModelPatcherAndInjector(ModelPatcher):
 
     def set_lora_hook_mode(self, lora_hook_mode: str):
         self.lora_hook_mode = lora_hook_mode
+    
+    def prepare_hooked_patches_current_keyframe(self, t: Tensor, hook_groups: list[LoraHookGroup]):
+        curr_t = t[0]
+        for hook_group in hook_groups:
+            for hook in hook_group.hooks:
+                changed = hook.lora_keyframe.prepare_current_keyframe(curr_t=curr_t)
+                # if keyframe changed, remove any cached LoraHookGroups that contain hook with the same hook_ref;
+                # this will cause the weights to be recalculated when sampling
+                if changed:
+                    for cached_group in list(self.cached_hooked_patches.keys()):
+                        if cached_group.contains(hook):
+                            self.cached_hooked_patches.pop(cached_group)
+
+    def clean_hooks(self):
+        self.unpatch_hooked()
+        self.clear_cached_hooked_weights()
+        # for lora_hook in self.hooked_patches:
+        #     lora_hook.reset()
 
     def add_hooked_patches(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
         '''
         Based on add_patches, but for hooked weights.
         '''
         # TODO: make this work with timestep scheduling
-        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook, {})
+        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook.hook_ref, {})
         p = set()
         for key in patches:
             if key in self.model_keys:
@@ -121,7 +140,7 @@ class ModelPatcherAndInjector(ModelPatcher):
                 current_patches: list[tuple] = current_hooked_patches.get(key, [])
                 current_patches.append((strength_patch, patches[key], strength_model))
                 current_hooked_patches[key] = current_patches
-        self.hooked_patches[lora_hook] = current_hooked_patches
+        self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
         # since should care about these patches too to determine if same model, reroll patches_uuid
         self.patches_uuid = uuid.uuid4()
         return list(p)
@@ -131,17 +150,16 @@ class ModelPatcherAndInjector(ModelPatcher):
         Based on add_hooked_patches, but intended for using a model's weights as lora hook.
         '''
         # TODO: make this work with timestep scheduling
-        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook, {})
+        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook.hook_ref, {})
         p = set()
         for key in patches:
             if key in self.model_keys:
                 p.add(key)
                 current_patches: list[tuple] = current_hooked_patches.get(key, [])
                 # take difference between desired weight and existing weight to get diff
-
                 current_patches.append((strength_patch, (patches[key]-comfy.utils.get_attr(self.model, key),), strength_model))
                 current_hooked_patches[key] = current_patches
-        self.hooked_patches[lora_hook] = current_hooked_patches
+        self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
         # since should care about these patches too to determine if same model, reroll patches_uuid
         self.patches_uuid = uuid.uuid4()
         return list(p)
@@ -154,10 +172,19 @@ class ModelPatcherAndInjector(ModelPatcher):
         combined_patches = {}
         if lora_hooks is not None:
             for hook in lora_hooks.hooks:
-                hook_patches: dict = self.hooked_patches.get(hook, {})
+                hook_patches: dict = self.hooked_patches.get(hook.hook_ref, {})
                 for key in hook_patches.keys():
                     current_patches: list[tuple] = combined_patches.get(key, [])
-                    current_patches.extend(hook_patches[key])
+                    if math.isclose(hook.strength, 1.0):
+                        # if hook strength is 1.0, can just add it directly
+                        current_patches.extend(hook_patches[key])
+                    else:
+                        # otherwise, need to multiply original patch strength by hook strength
+                        # patches are stored as tuples: (strength_patch, (tuple_with_weights,), strength_model)
+                        for patch in hook_patches[key]:
+                            new_patch = list(patch)
+                            new_patch[0] *= hook.strength
+                            current_patches.append(tuple(new_patch))
                     combined_patches[key] = current_patches
         return combined_patches
 
@@ -196,8 +223,7 @@ class ModelPatcherAndInjector(ModelPatcher):
         # finally, do normal model unpatching
         if unpatch_weights: # TODO: keep only 'else' portion when don't need to worry about past comfy versions
             # handle hooked_patches first
-            self.unpatch_hooked()
-            self.clear_cached_hooked_weights()
+            self.clean_hooks()
             try:
                 return super().unpatch_model(device_to)
             finally:

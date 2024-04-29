@@ -1,4 +1,3 @@
-import uuid
 from torch import Tensor
 
 from comfy.model_base import BaseModel
@@ -13,13 +12,42 @@ class LoraHookMode:
     #MAX_SPEED_LOWVRAM = "max_speed_lowvram"
 
 
+# Acts simply as a way to track unique LoraHooks
+class HookRef:
+    pass
+
+
 class LoraHook:
     def __init__(self, lora_name: str):
         self.lora_name = lora_name
-        self.id = f"{lora_name}|{uuid.uuid4()}"
+        self.lora_keyframe = LoraHookKeyframeGroup()
+        self.hook_ref = HookRef()
     
-    # def __eq__(self, other: 'LoraHook'):
-    #     return self.id == other.id
+    def initialize_timesteps(self, model: BaseModel):
+        self.lora_keyframe.initialize_timesteps(model)
+
+    def reset(self):
+        self.lora_keyframe.reset()
+
+
+    def get_copy(self):
+        '''
+        Copies LoraHook, but maintains same HookRef
+        '''
+        c = LoraHook(lora_name=self.lora_name)
+        c.lora_keyframe = self.lora_keyframe
+        c.hook_ref = self.hook_ref # same instance that acts as ref
+        return c
+
+    @property
+    def strength(self):
+        return self.lora_keyframe.strength
+
+    def __eq__(self, other: 'LoraHook'):
+        return self.__class__ == other.__class__ and self.hook_ref == other.hook_ref
+
+    def __hash__(self):
+        return hash(self.hook_ref)
 
 
 class LoraHookGroup:
@@ -35,24 +63,32 @@ class LoraHookGroup:
             names.append(hook.lora_name)
         return ",".join(names)
 
-    def add(self, hook: str):
+    def add(self, hook: LoraHook):
         if hook not in self.hooks:
             self.hooks.append(hook)
     
     def is_empty(self):
         return len(self.hooks) == 0
 
+    def contains(self, lora_hook: LoraHook):
+        return lora_hook in self.hooks
+
     def clone(self):
         cloned = LoraHookGroup()
         for hook in self.hooks:
-            cloned.add(hook)
+            cloned.add(hook.get_copy())
         return cloned
 
     def clone_and_combine(self, other: 'LoraHookGroup'):
         cloned = self.clone()
         for hook in other.hooks:
-            cloned.add(hook)
+            cloned.add(hook.get_copy())
         return cloned
+    
+    def set_keyframes_on_hooks(self, hook_kf: 'LoraHookKeyframeGroup'):
+        hook_kf = hook_kf.clone()
+        for hook in self.hooks:
+            hook.lora_keyframe = hook_kf
 
     @staticmethod
     def combine_all_lora_hooks(lora_hooks_list: list['LoraHookGroup'], require_count=2) -> 'LoraHookGroup':
@@ -91,11 +127,13 @@ class LoraHookKeyframeGroup:
         self._current_keyframe: LoraHookKeyframe = None
         self._current_used_steps: int = 0
         self._current_index: int = 0
+        self._curr_t: float = -1
     
     def reset(self):
         self._current_keyframe = None
         self._current_used_steps = 0
         self._current_index = 0
+        self._curr_t = -1
         self._set_first_as_current()
 
     def add(self, keyframe: LoraHookKeyframe):
@@ -127,8 +165,11 @@ class LoraHookKeyframeGroup:
         for keyframe in self.keyframes:
             keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
 
-    def prepare_current_keyframe(self, t: Tensor):
-        curr_t: float = t[0]
+    def prepare_current_keyframe(self, curr_t: float) -> bool:
+        if self.is_empty():
+            return False
+        if curr_t == self._curr_t:
+            return False
         prev_index = self._current_index
         # if met guaranteed steps, look for next keyframe in case need to switch
         if self._current_used_steps >= self._current_keyframe.guarantee_steps:
@@ -149,13 +190,17 @@ class LoraHookKeyframeGroup:
                     else: break
         # update steps current context is used
         self._current_used_steps += 1
+        # update current timestep this was performed on
+        self._curr_t = curr_t
+        # return True if keyframe changed, False if no change
+        return prev_index != self._current_index
 
     # properties shadow those of LoraHookKeyframe
     @property
     def strength(self):
         if self._current_keyframe is not None:
             return self._current_keyframe.strength
-        return None
+        return 1.0
 
 
 class COND_CONST:

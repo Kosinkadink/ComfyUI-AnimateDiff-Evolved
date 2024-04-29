@@ -16,7 +16,8 @@ from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly
                                  PairedConditioningSetMaskHooked, ConditioningSetMaskHooked,
                                  PairedConditioningSetMaskAndCombineHooked, ConditioningSetMaskAndCombineHooked,
                                  PairedConditioningSetUnmaskedAndCombineHooked, ConditioningSetUnmaskedAndCombineHooked,
-                                 ConditioningTimestepsNode)
+                                 ConditioningTimestepsNode, SetLoraHookKeyframes,
+                                 CreateLoraHookKeyframe, CreateLoraHookKeyframeInterpolation, CreateLoraHookKeyframeFromStrengthList)
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGKeyframeNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
@@ -67,8 +68,12 @@ NODE_CLASS_MAPPINGS = {
     "ADE_CombineLoraHooks": CombineLoraHooks,
     "ADE_CombineLoraHooksFour": CombineLoraHookFourOptional,
     "ADE_CombineLoraHooksEight": CombineLoraHookEightOptional,
-    "ADE_AttachLoraHookToConditioning": SetModelLoraHook,
     "ADE_AttachLoraHookToCLIP": SetClipLoraHook,
+    "ADE_LoraHookKeyframe": CreateLoraHookKeyframe,
+    "ADE_LoraHookKeyframeInterpolation": CreateLoraHookKeyframeInterpolation,
+    "ADE_LoraHookKeyframeFromStrengthList": CreateLoraHookKeyframeFromStrengthList,
+    "ADE_SetLoraHookKeyframe": SetLoraHookKeyframes,
+    "ADE_AttachLoraHookToConditioning": SetModelLoraHook,
     "ADE_PairedConditioningSetMask": PairedConditioningSetMaskHooked,
     "ADE_ConditioningSetMask": ConditioningSetMaskHooked,
     "ADE_PairedConditioningSetMaskAndCombine": PairedConditioningSetMaskAndCombineHooked,
@@ -168,8 +173,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_CombineLoraHooks": "Combine LoRA Hooks [2] 🎭🅐🅓",
     "ADE_CombineLoraHooksFour": "Combine LoRA Hooks [4] 🎭🅐🅓",
     "ADE_CombineLoraHooksEight": "Combine LoRA Hooks [8] 🎭🅐🅓",
-    "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
     "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
+    "ADE_LoraHookKeyframe": "LoRA Hook Keyframe 🎭🅐🅓",
+    "ADE_LoraHookKeyframeInterpolation": "LoRA Hook Keyframes Interpolation 🎭🅐🅓",
+    "ADE_LoraHookKeyframeFromStrengthList": "LoRA Hook Keyframes From List 🎭🅐🅓",
+    "ADE_SetLoraHookKeyframe": "Set LoRA Hook Keyframes 🎭🅐🅓",
+    "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
     "ADE_PairedConditioningSetMask": "Set Props on Conds 🎭🅐🅓",
     "ADE_ConditioningSetMask": "Set Props on Cond 🎭🅐🅓",
     "ADE_PairedConditioningSetMaskAndCombine": "Set Props and Combine Conds 🎭🅐🅓",
