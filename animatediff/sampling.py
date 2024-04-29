@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 from torch.nn.functional import group_norm
 from einops import rearrange
+from types import MethodType
 
 import comfy.ldm.modules.attention as attention
 from comfy.ldm.modules.diffusionmodules import openaimodel
@@ -698,6 +699,7 @@ def get_area_and_mult_ADE(conds, x_in, timestep_in):
         patches = {}
         gligen_type = gligen[0]
         gligen_model = gligen[1]
+        gligen_model.model.set_position = MethodType(gligen_batch_set_position, gligen_model.model)
         if gligen_type == "position":
             gligen_patch = gligen_model.model.set_position(input_x.shape, gligen[2], input_x.device)
         else:
@@ -881,3 +883,46 @@ def calc_conds_batch_lora_hook(model: BaseModel, conds: list[list[dict]], x_in: 
         out_conds[i] /= out_counts[i]
 
     return out_conds
+
+def gligen_batch_set_position(self, latent_image_shape, position_params_batch, device):
+    batch, c, h, w = latent_image_shape
+
+    all_boxes = []
+    all_masks = []
+    all_conds = []
+
+    for batch_idx in range(batch):
+        if ADGS.params.sub_idxs is not None:
+            position_params = position_params_batch[ADGS.params.sub_idxs[batch_idx]]
+        else:
+            position_params = position_params_batch[batch_idx]
+        masks = torch.zeros([self.max_objs], device="cpu")
+        boxes = []
+        positive_embeddings = []
+
+        for p in position_params:
+            x1 = (p[4]) / w
+            y1 = (p[3]) / h
+            x2 = (p[4] + p[2]) / w
+            y2 = (p[3] + p[1]) / h
+            masks[len(boxes)] = 1.0
+            boxes.append(torch.tensor((x1, y1, x2, y2)).unsqueeze(0))
+            positive_embeddings.append(p[0])
+
+        if len(boxes) < self.max_objs:
+            append_boxes = torch.zeros([self.max_objs - len(boxes), 4], device="cpu")
+            append_conds = torch.zeros([self.max_objs - len(boxes), self.key_dim], device="cpu")
+            boxes = torch.cat(boxes + [append_boxes])
+            conds = torch.cat(positive_embeddings + [append_conds])
+        else:
+            boxes = torch.cat(boxes)
+            conds = torch.cat(positive_embeddings)
+        all_boxes.append(boxes)
+        all_masks.append(masks)
+        all_conds.append(conds)
+
+    box_out = torch.stack(all_boxes).to(device)
+    masks_out = torch.stack(all_masks).to(device)
+    conds_out = torch.stack(all_conds).to(device)
+    
+    return self._set_position(box_out, masks_out, conds_out)
