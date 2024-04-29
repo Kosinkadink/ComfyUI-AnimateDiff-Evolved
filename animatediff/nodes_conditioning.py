@@ -359,8 +359,6 @@ class CreateLoraHookKeyframeFromStrengthList:
             if print_keyframes:
                 logger.info(f"LoraHookKeyframe - start_percent:{percent} = {strength}")
         return (prev_hook_kf,)
-
-
 ###############################################
 ###############################################
 ###############################################
