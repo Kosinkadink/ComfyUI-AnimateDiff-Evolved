@@ -545,6 +545,8 @@ class CombineLoraHooks:
     def INPUT_TYPES(s):
         return {
             "required": {
+            },
+            "optional": {
                 "lora_hook_A": ("LORA_HOOK",),
                 "lora_hook_B": ("LORA_HOOK",),
             }
@@ -554,8 +556,9 @@ class CombineLoraHooks:
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
 
-    def combine_lora_hooks(self, lora_hook_A: LoraHookGroup, lora_hook_B: LoraHookGroup):
-        return (lora_hook_A.clone_and_combine(lora_hook_B),)
+    def combine_lora_hooks(self, lora_hook_A: LoraHookGroup=None, lora_hook_B: LoraHookGroup=None):
+        candidates = [lora_hook_A, lora_hook_B]
+        return (LoraHookGroup.combine_all_lora_hooks(candidates),)
 
 
 class CombineLoraHookFourOptional:

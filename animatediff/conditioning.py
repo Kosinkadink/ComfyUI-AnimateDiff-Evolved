@@ -91,13 +91,16 @@ class LoraHookGroup:
             hook.lora_keyframe = hook_kf
 
     @staticmethod
-    def combine_all_lora_hooks(lora_hooks_list: list['LoraHookGroup'], require_count=2) -> 'LoraHookGroup':
+    def combine_all_lora_hooks(lora_hooks_list: list['LoraHookGroup'], require_count=1) -> 'LoraHookGroup':
         actual: list[LoraHookGroup] = []
         for group in lora_hooks_list:
             if group is not None:
                 actual.append(group)
         if len(actual) < require_count:
             raise Exception(f"Need at least {require_count} LoRA Hooks to combine, but only had {len(actual)}.")
+        # if only 1 hook, just return itself without any cloning
+        if len(actual) == 1:
+            return actual[0]
         final_hook: LoraHookGroup = None
         for hook in actual:
             if final_hook is None:
