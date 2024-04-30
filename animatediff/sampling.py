@@ -1,5 +1,6 @@
 from typing import Callable
 
+import collections
 import math
 import torch
 from torch import Tensor
@@ -18,8 +19,10 @@ except ImportError:
     SAMPLE_FALLBACK = True
 import comfy.utils
 from comfy.controlnet import ControlBase
+from comfy.model_base import BaseModel
 import comfy.ops
 
+from .conditioning import COND_CONST, LoraHookGroup
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration
 from .utils_model import ModelTypeSD
@@ -33,12 +36,13 @@ from .logger import logger
 # Global variable to use to more conveniently hack variable access into samplers
 class AnimateDiffHelper_GlobalState:
     def __init__(self):
+        self.model_patcher: ModelPatcherAndInjector = None
         self.motion_models: MotionModelGroup = None
         self.params: InjectionParams = None
         self.sample_settings: SampleSettings = None
         self.reset()
-    
-    def initialize(self, model):
+
+    def initialize(self, model: BaseModel):
         # this function is to be run in sampling func
         if not self.initialized:
             self.initialized = True
@@ -49,12 +53,38 @@ class AnimateDiffHelper_GlobalState:
             if self.sample_settings.custom_cfg is not None:
                 self.sample_settings.custom_cfg.initialize_timesteps(model)
 
+    def hooks_initialize(self, model: BaseModel, hook_groups: list[LoraHookGroup]):
+        # this function is to be run the first time all gathered
+        if not self.hooks_initialized:
+            self.hooks_initialized = True
+            for hook_group in hook_groups:
+                for hook in hook_group.hooks:
+                    hook.reset()
+                    hook.initialize_timesteps(model)
+
+    def prepare_current_keyframes(self, timestep: Tensor):
+        if self.motion_models is not None:
+            self.motion_models.prepare_current_keyframe(t=timestep)
+        if self.params.context_options is not None:
+            self.params.context_options.prepare_current_context(t=timestep)
+        if self.sample_settings.custom_cfg is not None:
+            self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
+
+    def prepare_hooks_current_keyframes(self, timestep: Tensor, hook_groups: list[LoraHookGroup]):
+        if self.model_patcher is not None:
+            self.model_patcher.prepare_hooked_patches_current_keyframe(t=timestep, hook_groups=hook_groups)
+
     def reset(self):
         self.initialized = False
+        self.hooks_initialized = False
         self.start_step: int = 0
         self.last_step: int = 0
         self.current_step: int = 0
         self.total_steps: int = 0
+        if self.model_patcher is not None:
+            self.model_patcher.clean_hooks()
+            del self.model_patcher
+            self.model_patcher = None
         if self.motion_models is not None:
             del self.motion_models
             self.motion_models = None
@@ -64,13 +94,13 @@ class AnimateDiffHelper_GlobalState:
         if self.sample_settings is not None:
             del self.sample_settings
             self.sample_settings = None
-    
+
     def update_with_inject_params(self, params: InjectionParams):
         self.params = params
 
     def is_using_sliding_context(self):
         return self.params is not None and self.params.is_using_sliding_context()
-    
+
     def create_exposed_params(self):
         # This dict will be exposed to be used by other extensions
         # DO NOT change any of the key names
@@ -214,12 +244,13 @@ class FunctionInjectionHolder:
         pass
     
     def inject_functions(self, model: ModelPatcherAndInjector, params: InjectionParams):
-        # Save Original Functions
+        # Save Original Functions - order must match between here and restore_functions
         self.orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
         self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_manual_cast_forward = comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
+        self.orig_get_area_and_mult = comfy.samplers.get_area_and_mult
         if SAMPLE_FALLBACK:  # for backwards compatibility, for now
             self.orig_get_additional_models = comfy.sample.get_additional_models
         else:
@@ -249,6 +280,7 @@ class FunctionInjectionHolder:
                     break
             del info
         comfy.samplers.sampling_function = evolved_sampling_function
+        comfy.samplers.get_area_and_mult = get_area_and_mult_ADE
         if SAMPLE_FALLBACK:  # for backwards compatibility, for now
             comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
         else:
@@ -261,6 +293,7 @@ class FunctionInjectionHolder:
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_manual_cast_forward
+            comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             comfy.samplers.sampling_function = self.orig_sampling_function
             if SAMPLE_FALLBACK:  # for backwards compatibility, for now
                 comfy.sample.get_additional_models = self.orig_get_additional_models
@@ -318,6 +351,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                 # update GLOBALSTATE for next iteration
                 ADGS.current_step = ADGS.start_step + step + 1
             kwargs["callback"] = ad_callback
+            ADGS.model_patcher = model
             ADGS.motion_models = model.motion_models
             ADGS.sample_settings = model.sample_settings
 
@@ -366,6 +400,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                 ADGS.start_step = kwargs.get("start_step") or 0
                 ADGS.current_step = ADGS.start_step
                 ADGS.last_step = kwargs.get("last_step") or 0
+                ADGS.hooks_initialized = False
                 if iter_opts.iterations > 1:
                     logger.info(f"Iteration {curr_i+1}/{iter_opts.iterations}")
                 # perform any iter_opts preprocessing on latents
@@ -400,12 +435,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
 
 def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS.initialize(model)
-    if ADGS.motion_models is not None:
-        ADGS.motion_models.prepare_current_keyframe(t=timestep)
-    if ADGS.params.context_options is not None:
-        ADGS.params.context_options.prepare_current_context(t=timestep)
-    if ADGS.sample_settings.custom_cfg is not None:
-        ADGS.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
+    ADGS.prepare_current_keyframes(timestep=timestep)
 
     # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
     if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
@@ -420,19 +450,15 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
     if not ADGS.is_using_sliding_context():
-        if hasattr(comfy.samplers, "calc_cond_batch"):
-            cond_pred, uncond_pred = comfy.samplers.calc_cond_batch(model, [cond, uncond_], x, timestep, model_options)
-        else:
-            cond_pred, uncond_pred = comfy.samplers.calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
+        cond_pred, uncond_pred = calc_cond_uncond_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)
     else:
-        cond_pred, uncond_pred = sliding_calc_cond_uncond_batch(model, cond, uncond_, x, timestep, model_options)
+        cond_pred, uncond_pred = sliding_calc_conds_batch(model, [cond, uncond_], x, timestep, model_options)
 
     if hasattr(comfy.samplers, "cfg_function"):
         try:
             cached_calc_cond_batch = comfy.samplers.calc_cond_batch
-            # support sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
-            if ADGS.is_using_sliding_context():
-                comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
+            # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
+            comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
             return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
         finally:
             comfy.samplers.calc_cond_batch = cached_calc_cond_batch
@@ -456,34 +482,35 @@ def wrapped_cfg_sliding_calc_cond_batch_factory(orig_calc_cond_batch):
     def wrapped_cfg_sliding_calc_cond_batch(model, conds, x_in, timestep, model_options):
         # current call to calc_cond_batch should refer to sliding version
         try:
-            uncond = None
             current_calc_cond_batch = comfy.samplers.calc_cond_batch
-            # when inside sliding_calc_cond_uncond, should return to original calc_cond_batch
+            # when inside sliding_calc_conds_batch, should return to original calc_cond_batch
             comfy.samplers.calc_cond_batch = orig_calc_cond_batch
-            if len(conds) > 1:
-                uncond = conds[1]
-            result = sliding_calc_cond_uncond_batch(model, conds[0], uncond, x_in, timestep, model_options)
-            if uncond is None:
-                result = (result[0],)
-            return result
+            if not ADGS.is_using_sliding_context():
+                return calc_cond_uncond_batch_wrapper(model, conds, x_in, timestep, model_options)
+            else:
+                return sliding_calc_conds_batch(model, conds, x_in, timestep, model_options)
         finally:
-            del uncond
             # make sure calc_cond_batch will become wrapped again
             comfy.samplers.calc_cond_batch = current_calc_cond_batch
     return wrapped_cfg_sliding_calc_cond_batch
 
 
-# sliding_calc_cond_uncond_batch inspired by ashen's initial hack for 16-frame sliding context:
+# sliding_calc_conds_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
-def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, model_options):
+def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options):
     def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
         if control.previous_controlnet is not None:
             prepare_control_objects(control.previous_controlnet, full_idxs)
+        if not hasattr(control, "sub_idxs"):
+            raise ValueError(f"Control type {type(control).__name__} may not support required features for sliding context window; \
+                                use ControlNet nodes from Kosinkadink/ComfyUI-Advanced-ControlNet, or make sure ComfyUI-Advanced-ControlNet is updated.")
         control.sub_idxs = full_idxs
         control.full_latent_length = ADGS.params.full_length
         control.context_length = ADGS.params.context_options.context_length
     
     def get_resized_cond(cond_in, full_idxs: list[int], context_length: int) -> list:
+        if cond_in is None:
+            return None
         # reuse or resize cond items to match context requirements
         resized_cond = []
         # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
@@ -504,11 +531,7 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
                     # look for control
                     elif key == "control":
                         control_item = cond_item
-                        if hasattr(control_item, "sub_idxs"):
-                            prepare_control_objects(control_item, full_idxs)
-                        else:
-                            raise ValueError(f"Control type {type(control_item).__name__} may not support required features for sliding context window; \
-                                                use Control objects from Kosinkadink/ComfyUI-Advanced-ControlNet nodes, or make sure Advanced-ControlNet is updated.")
+                        prepare_control_objects(control_item, full_idxs)
                         resized_actual_cond[key] = control_item
                         del control_item
                     elif isinstance(cond_item, dict):
@@ -541,14 +564,13 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
 
     if ADGS.motion_models is not None:
         ADGS.motion_models.set_view_options(ADGS.params.context_options.view_options)
+    
+    # prepare final conds, out_counts, and biases
+    conds_final = [torch.zeros_like(x_in) for _ in conds]
+    counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+    biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
-    # prepare final cond, uncond, and out_count
-    cond_final = torch.zeros_like(x_in)
-    uncond_final = torch.zeros_like(x_in)
-    out_count_final = torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device)
-    bias_final = [0.0] * x_in.shape[0]
-
-    # perform calc_cond_uncond_batch per context window
+    # perform calc_conds_batch per context window
     for ctx_idxs in context_windows:
         ADGS.params.sub_idxs = ctx_idxs
         if ADGS.motion_models is not None:
@@ -562,16 +584,12 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
         for n in range(batched_conds):
             for ind in ctx_idxs:
                 full_idxs.append((ADGS.params.full_length*n)+ind)
-        # get subsections of x, timestep, cond, uncond, cond_concat
+        # get subsections of x, timestep, conds
         sub_x = x_in[full_idxs]
         sub_timestep = timestep[full_idxs]
-        sub_cond = get_resized_cond(cond, full_idxs, len(ctx_idxs)) if cond is not None else None
-        sub_uncond = get_resized_cond(uncond, full_idxs, len(ctx_idxs)) if uncond is not None else None
+        sub_conds = [get_resized_cond(cond, full_idxs, len(ctx_idxs)) for cond in conds]
 
-        if hasattr(comfy.samplers, "calc_cond_batch"):
-            sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_batch(model, [sub_cond, sub_uncond], sub_x, sub_timestep, model_options)
-        else:
-            sub_cond_out, sub_uncond_out = comfy.samplers.calc_cond_uncond_batch(model, sub_cond, sub_uncond, sub_x, sub_timestep, model_options)
+        sub_conds_out = calc_cond_uncond_batch_wrapper(model, sub_conds, sub_x, sub_timestep, model_options)
 
         if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
             full_length = ADGS.params.full_length
@@ -581,28 +599,303 @@ def sliding_calc_cond_uncond_batch(model, cond, uncond, x_in: Tensor, timestep, 
                 bias = max(1e-2, bias)
                 # take weighted average relative to total bias of current idx
                 # and account for batched_conds
-                for n in range(batched_conds):
-                    bias_total = bias_final[(full_length*n)+idx]
-                    prev_weight = (bias_total / (bias_total + bias))
-                    new_weight = (bias / (bias_total + bias))
-                    cond_final[(full_length*n)+idx] = cond_final[(full_length*n)+idx] * prev_weight + sub_cond_out[(full_length*n)+pos] * new_weight
-                    uncond_final[(full_length*n)+idx] = uncond_final[(full_length*n)+idx] * prev_weight + sub_uncond_out[(full_length*n)+pos] * new_weight
-                    bias_final[(full_length*n)+idx] = bias_total + bias
+                for i in range(len(sub_conds_out)):
+                    for n in range(batched_conds):
+                        bias_total = biases_final[i][(full_length*n)+idx]
+                        prev_weight = (bias_total / (bias_total + bias))
+                        new_weight = (bias / (bias_total + bias))
+                        conds_final[i][(full_length*n)+idx] = conds_final[i][(full_length*n)+idx] * prev_weight + sub_conds_out[i][(full_length*n)+pos] * new_weight
+                        biases_final[i][(full_length*n)+idx] = bias_total + bias
         else:
             # add conds and counts based on weights of fuse method
             weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method) * batched_conds
             weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-            cond_final[full_idxs] += sub_cond_out * weights_tensor
-            uncond_final[full_idxs] += sub_uncond_out * weights_tensor
-            out_count_final[full_idxs] += weights_tensor
-
+            for i in range(len(sub_conds_out)):
+                conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
+                counts_final[i][full_idxs] += weights_tensor
+        
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
         # already normalized, so return as is
-        del out_count_final
-        return cond_final, uncond_final
+        del counts_final
+        return conds_final
     else:
-        # normalize cond and uncond via division by context usage counts
-        cond_final /= out_count_final
-        uncond_final /= out_count_final
-        del out_count_final
-        return cond_final, uncond_final
+        # normalize conds via division by context usage counts
+        for i in range(len(conds_final)):
+            conds_final[i] /= counts_final[i]
+        del counts_final
+        return conds_final
+
+
+def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, timestep, model_options):
+    # check if conds or unconds contain lora_hook or default_cond
+    contains_lora_hooks = False
+    has_default_cond = False
+    hook_groups = []
+    for cond_uncond in conds:
+        if cond_uncond is None:
+            continue
+        for t in cond_uncond:
+            if COND_CONST.KEY_LORA_HOOK in t:
+                contains_lora_hooks = True
+                hook_groups.append(t[COND_CONST.KEY_LORA_HOOK])
+            if COND_CONST.KEY_DEFAULT_COND in t:
+                has_default_cond = True
+        # if contains_lora_hooks:
+        #     break
+    if contains_lora_hooks or has_default_cond:
+       ADGS.hooks_initialize(model, hook_groups=hook_groups)
+       ADGS.prepare_hooks_current_keyframes(timestep, hook_groups=hook_groups)
+       return calc_conds_batch_lora_hook(model, conds, x_in, timestep, model_options, has_default_cond)
+    # keep for backwards compatibility, for now
+    if not hasattr(comfy.samplers, "calc_cond_batch"):
+        return comfy.samplers.calc_cond_uncond_batch(model, conds[0], conds[1], x_in, timestep, model_options)
+    return comfy.samplers.calc_cond_batch(model, conds, x_in, timestep, model_options) 
+
+
+# modified from comfy.samplers.get_area_and_mult
+COND_OBJ = collections.namedtuple('cond_obj', ['input_x', 'mult', 'conditioning', 'area', 'control', 'patches'])
+def get_area_and_mult_ADE(conds, x_in, timestep_in):
+    area = (x_in.shape[2], x_in.shape[3], 0, 0)
+    strength = 1.0
+
+    if 'timestep_start' in conds:
+        timestep_start = conds['timestep_start']
+        if timestep_in[0] > timestep_start:
+            return None
+    if 'timestep_end' in conds:
+        timestep_end = conds['timestep_end']
+        if timestep_in[0] < timestep_end:
+            return None
+    if 'area' in conds:
+        area = conds['area']
+    if 'strength' in conds:
+        strength = conds['strength']
+
+    input_x = x_in[:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]]
+    if 'mask' in conds:
+        # Scale the mask to the size of the input
+        # The mask should have been resized as we began the sampling process
+        mask_strength = 1.0
+        if "mask_strength" in conds:
+            mask_strength = conds["mask_strength"]
+        mask = conds['mask']
+        assert(mask.shape[1] == x_in.shape[2])
+        assert(mask.shape[2] == x_in.shape[3])
+        # make sure mask is capped at input_shape batch length to prevent 0 as dimension
+        mask = mask[:input_x.shape[0], area[2]:area[0] + area[2], area[3]:area[1] + area[3]] * mask_strength
+        mask = mask.unsqueeze(1).repeat(input_x.shape[0] // mask.shape[0], input_x.shape[1], 1, 1)
+    else:
+        mask = torch.ones_like(input_x)
+    mult = mask * strength
+
+    if 'mask' not in conds:
+        rr = 8
+        if area[2] != 0:
+            for t in range(rr):
+                mult[:,:,t:1+t,:] *= ((1.0/rr) * (t + 1))
+        if (area[0] + area[2]) < x_in.shape[2]:
+            for t in range(rr):
+                mult[:,:,area[0] - 1 - t:area[0] - t,:] *= ((1.0/rr) * (t + 1))
+        if area[3] != 0:
+            for t in range(rr):
+                mult[:,:,:,t:1+t] *= ((1.0/rr) * (t + 1))
+        if (area[1] + area[3]) < x_in.shape[3]:
+            for t in range(rr):
+                mult[:,:,:,area[1] - 1 - t:area[1] - t] *= ((1.0/rr) * (t + 1))
+
+    conditioning = {}
+    model_conds = conds["model_conds"]
+    for c in model_conds:
+        conditioning[c] = model_conds[c].process_cond(batch_size=x_in.shape[0], device=x_in.device, area=area)
+
+    control = conds.get('control', None)
+
+    patches = None
+    if 'gligen' in conds:
+        gligen = conds['gligen']
+        patches = {}
+        gligen_type = gligen[0]
+        gligen_model = gligen[1]
+        if gligen_type == "position":
+            gligen_patch = gligen_model.model.set_position(input_x.shape, gligen[2], input_x.device)
+        else:
+            gligen_patch = gligen_model.model.set_empty(input_x.shape, input_x.device)
+
+        patches['middle_patch'] = [gligen_patch]
+
+    return COND_OBJ(input_x, mult, conditioning, area, control, patches)
+
+
+def separate_default_conds(conds: list[dict]):
+    normal_conds = []
+    default_conds = []
+    for i in range(len(conds)):
+        c = []
+        default_c = []
+        # if cond is None, make normal/default_conds reflect that too
+        if conds[i] is None:
+            c = None
+            default_c = []
+        else:
+            for t in conds[i]:
+                # check if cond is a default cond
+                if COND_CONST.KEY_DEFAULT_COND in t:
+                    default_c.append(t)
+                else:
+                    c.append(t)
+        normal_conds.append(c)
+        default_conds.append(default_c)
+    return normal_conds, default_conds
+
+
+def finalize_default_conds(hooked_to_run: dict[LoraHookGroup,list[tuple[COND_OBJ,int]]], default_conds: list[list[dict]], x_in: Tensor, timestep):
+    # need to figure out remaining unmasked area for conds
+    default_mults = []
+    for d in default_conds:
+        default_mults.append(torch.ones_like(x_in))
+    
+    # look through each finalized cond in hooked_to_run for 'mult' and subtract it from each cond
+    for lora_hooks, to_run in hooked_to_run.items():
+        for cond_obj, i in to_run:
+            # if no default_cond for cond_type, do nothing
+            if len(default_conds[i]) == 0:
+                continue
+            area: list[int] = cond_obj.area
+            default_mults[i][:,:,area[2]:area[0] + area[2],area[3]:area[1] + area[3]] -= cond_obj.mult
+    
+    # for each default_mult, ReLU to make negatives=0, and then check for any nonzeros
+    for i, mult in enumerate(default_mults):
+        # if no default_cond for cond type, do nothing
+        if len(default_conds[i]) == 0:
+            continue
+        torch.nn.functional.relu(mult, inplace=True)
+        # if mult is all zeros, then don't add default_cond
+        if torch.max(mult) == 0.0:
+            continue
+
+        cond = default_conds[i]
+        for x in cond:
+            # do get_area_and_mult to get all the expected values
+            p = comfy.samplers.get_area_and_mult(x, x_in, timestep)
+            if p is None:
+                continue
+            # replace p's mult with calculated mult
+            p = p._replace(mult=mult)
+            hook: LoraHookGroup = x.get(COND_CONST.KEY_LORA_HOOK, None)
+            hooked_to_run.setdefault(hook, list())
+            hooked_to_run[hook] += [(p, i)]
+
+
+# based on comfy.samplers.calc_conds_batch
+def calc_conds_batch_lora_hook(model: BaseModel, conds: list[list[dict]], x_in: Tensor, timestep, model_options: dict, has_default_cond=False):
+    out_conds = []
+    out_counts = []
+    # separate conds by matching lora_hooks
+    hooked_to_run: dict[LoraHookGroup,list[tuple[collections.namedtuple,int]]] = {}
+
+    # separate out default_conds, if needed
+    if has_default_cond:
+        conds, default_conds = separate_default_conds(conds)
+
+    # cond is i=0, uncond is i=1
+    for i in range(len(conds)):
+        out_conds.append(torch.zeros_like(x_in))
+        out_counts.append(torch.ones_like(x_in) * 1e-37)
+
+        cond = conds[i]
+        if cond is not None:
+            for x in cond:
+                p = comfy.samplers.get_area_and_mult(x, x_in, timestep)
+                if p is None:
+                    continue
+                hook: LoraHookGroup = x.get(COND_CONST.KEY_LORA_HOOK, None)
+                hooked_to_run.setdefault(hook, list())
+                hooked_to_run[hook] += [(p, i)]
+    
+    # finalize default_conds, if needed
+    if has_default_cond:
+        finalize_default_conds(hooked_to_run, default_conds, x_in, timestep)
+
+    # run every hooked_to_run separately
+    for lora_hooks, to_run in hooked_to_run.items():
+        while len(to_run) > 0:
+            first = to_run[0]
+            first_shape = first[0][0].shape
+            to_batch_temp = []
+            for x in range(len(to_run)):
+                if comfy.samplers.can_concat_cond(to_run[x][0], first[0]):
+                    to_batch_temp += [x]
+
+            to_batch_temp.reverse()
+            to_batch = to_batch_temp[:1]
+
+            free_memory = comfy.model_management.get_free_memory(x_in.device)
+            for i in range(1, len(to_batch_temp) + 1):
+                batch_amount = to_batch_temp[:len(to_batch_temp)//i]
+                input_shape = [len(batch_amount) * first_shape[0]] + list(first_shape)[1:]
+                if model.memory_required(input_shape) < free_memory:
+                    to_batch = batch_amount
+                    break
+            ADGS.model_patcher.apply_lora_hooks(lora_hooks=lora_hooks)
+
+            input_x = []
+            mult = []
+            c = []
+            cond_or_uncond = []
+            area = []
+            control = None
+            patches = None
+            for x in to_batch:
+                o = to_run.pop(x)
+                p = o[0]
+                input_x.append(p.input_x)
+                mult.append(p.mult)
+                c.append(p.conditioning)
+                area.append(p.area)
+                cond_or_uncond.append(o[1])
+                control = p.control
+                patches = p.patches
+
+            batch_chunks = len(cond_or_uncond)
+            input_x = torch.cat(input_x)
+            c = comfy.samplers.cond_cat(c)
+            timestep_ = torch.cat([timestep] * batch_chunks)
+
+            if control is not None:
+                c['control'] = control.get_control(input_x, timestep_, c, len(cond_or_uncond))
+
+            transformer_options = {}
+            if 'transformer_options' in model_options:
+                transformer_options = model_options['transformer_options'].copy()
+
+            if patches is not None:
+                if "patches" in transformer_options:
+                    cur_patches = transformer_options["patches"].copy()
+                    for p in patches:
+                        if p in cur_patches:
+                            cur_patches[p] = cur_patches[p] + patches[p]
+                        else:
+                            cur_patches[p] = patches[p]
+                    transformer_options["patches"] = cur_patches
+                else:
+                    transformer_options["patches"] = patches
+
+            transformer_options["cond_or_uncond"] = cond_or_uncond[:]
+            transformer_options["sigmas"] = timestep
+
+            c['transformer_options'] = transformer_options
+
+            if 'model_function_wrapper' in model_options:
+                output = model_options['model_function_wrapper'](model.apply_model, {"input": input_x, "timestep": timestep_, "c": c, "cond_or_uncond": cond_or_uncond}).chunk(batch_chunks)
+            else:
+                output = model.apply_model(input_x, timestep_, **c).chunk(batch_chunks)
+
+            for o in range(batch_chunks):
+                cond_index = cond_or_uncond[o]
+                out_conds[cond_index][:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += output[o] * mult[o]
+                out_counts[cond_index][:,:,area[o][2]:area[o][0] + area[o][2],area[o][3]:area[o][1] + area[o][3]] += mult[o]
+
+    for i in range(len(out_conds)):
+        out_conds[i] /= out_counts[i]
+
+    return out_conds

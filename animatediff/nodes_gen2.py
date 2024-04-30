@@ -52,7 +52,7 @@ class UseEvolvedSamplingNode:
         if context_options:
             params.set_context(context_options)
         # need to use a ModelPatcher that supports injection of motion modules into unet
-        model = ModelPatcherAndInjector(model)
+        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
         model.motion_models = m_models
         model.sample_settings = sample_settings if sample_settings is not None else SampleSettings()
         model.motion_injection_params = params
