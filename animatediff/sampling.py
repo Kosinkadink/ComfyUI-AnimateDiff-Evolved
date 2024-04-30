@@ -457,9 +457,8 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
     if hasattr(comfy.samplers, "cfg_function"):
         try:
             cached_calc_cond_batch = comfy.samplers.calc_cond_batch
-            # support sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
-            if ADGS.is_using_sliding_context():
-                comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
+            # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
+            comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
             return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
         finally:
             comfy.samplers.calc_cond_batch = cached_calc_cond_batch
@@ -486,8 +485,10 @@ def wrapped_cfg_sliding_calc_cond_batch_factory(orig_calc_cond_batch):
             current_calc_cond_batch = comfy.samplers.calc_cond_batch
             # when inside sliding_calc_conds_batch, should return to original calc_cond_batch
             comfy.samplers.calc_cond_batch = orig_calc_cond_batch
-            result = sliding_calc_conds_batch(model, conds, x_in, timestep, model_options)
-            return result
+            if not ADGS.is_using_sliding_context():
+                return calc_cond_uncond_batch_wrapper(model, conds, x_in, timestep, model_options)
+            else:
+                return sliding_calc_conds_batch(model, conds, x_in, timestep, model_options)
         finally:
             # make sure calc_cond_batch will become wrapped again
             comfy.samplers.calc_cond_batch = current_calc_cond_batch
