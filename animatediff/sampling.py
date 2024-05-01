@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 from torch.nn.functional import group_norm
 from einops import rearrange
+from types import MethodType
 
 import comfy.ldm.modules.attention as attention
 from comfy.ldm.modules.diffusionmodules import openaimodel
@@ -293,8 +294,8 @@ class FunctionInjectionHolder:
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_manual_cast_forward
-            comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             comfy.samplers.sampling_function = self.orig_sampling_function
+            comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             if SAMPLE_FALLBACK:  # for backwards compatibility, for now
                 comfy.sample.get_additional_models = self.orig_get_additional_models
             else:
@@ -718,6 +719,12 @@ def get_area_and_mult_ADE(conds, x_in, timestep_in):
         gligen_model = gligen[1]
         if gligen_type == "position":
             gligen_patch = gligen_model.model.set_position(input_x.shape, gligen[2], input_x.device)
+        elif gligen_type == "position_batched":
+            try:
+                gligen_model.model.set_position_batched_ADE = MethodType(gligen_batch_set_position_ADE, gligen_model.model)
+                gligen_patch = gligen_model.model.set_position_batched_ADE(input_x.shape, gligen[2], input_x.device)
+            finally:
+                delattr(gligen_model.model, "set_position_batched_ADE")
         else:
             gligen_patch = gligen_model.model.set_empty(input_x.shape, input_x.device)
 
@@ -899,3 +906,52 @@ def calc_conds_batch_lora_hook(model: BaseModel, conds: list[list[dict]], x_in: 
         out_conds[i] /= out_counts[i]
 
     return out_conds
+
+def gligen_batch_set_position_ADE(self, latent_image_shape: torch.Size, position_params_batch: list[list[tuple[Tensor, int, int, int, int]]], device):
+    batch, c, h, w = latent_image_shape
+
+    all_boxes = []
+    all_masks = []
+    all_conds = []
+
+    # make sure there are enough position_params to match expected amount
+    if len(position_params_batch) < ADGS.params.full_length:
+        position_params_batch = position_params_batch.copy()
+        for _ in range(ADGS.params.full_length-len(position_params_batch)):
+            position_params_batch.append(position_params_batch[-1])
+
+    for batch_idx in range(batch):
+        if ADGS.params.sub_idxs is not None:
+            position_params = position_params_batch[ADGS.params.sub_idxs[batch_idx]]
+        else:
+            position_params = position_params_batch[batch_idx]
+        masks = torch.zeros([self.max_objs], device="cpu")
+        boxes = []
+        positive_embeddings = []
+
+        for p in position_params:
+            x1 = (p[4]) / w
+            y1 = (p[3]) / h
+            x2 = (p[4] + p[2]) / w
+            y2 = (p[3] + p[1]) / h
+            masks[len(boxes)] = 1.0
+            boxes.append(torch.tensor((x1, y1, x2, y2)).unsqueeze(0))
+            positive_embeddings.append(p[0])
+
+        if len(boxes) < self.max_objs:
+            append_boxes = torch.zeros([self.max_objs - len(boxes), 4], device="cpu")
+            append_conds = torch.zeros([self.max_objs - len(boxes), self.key_dim], device="cpu")
+            boxes = torch.cat(boxes + [append_boxes])
+            conds = torch.cat(positive_embeddings + [append_conds])
+        else:
+            boxes = torch.cat(boxes)
+            conds = torch.cat(positive_embeddings)
+        all_boxes.append(boxes)
+        all_masks.append(masks)
+        all_conds.append(conds)
+
+    box_out = torch.stack(all_boxes).to(device)
+    masks_out = torch.stack(all_masks).to(device)
+    conds_out = torch.stack(all_conds).to(device)
+    
+    return self._set_position(box_out, masks_out, conds_out)

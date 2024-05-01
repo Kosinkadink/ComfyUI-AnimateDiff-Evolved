@@ -8,6 +8,7 @@ AnimateDiff workflows will often make use of these helpful node packs:
 - [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) for loading videos, combining images into videos, and doing various image/latent operations like appending, splitting, duplicating, selecting, or counting. Actively maintained by AustinMroz and I.
 - [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux) for ControlNet preprocessors not present in vanilla ComfyUI. Maintained by Fannovel16.
 - [ComfyUI_IPAdapter_plus](https://github.com/cubiq/ComfyUI_IPAdapter_plus) for IPAdapter support. Maintained by cubiq (matt3o).
+- [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) for miscellaneous nodes including selecting coordinates for animated GLIGEN. Maintained by kijai.
 
 # Installation
 
@@ -68,12 +69,14 @@ NOTE: you can also use custom locations for models/motion loras by making use of
 - fp8 support; requires newest ComfyUI and torch >= 2.1 (decreases VRAM usage, but changes outputs)
 - Mac M1/M2/M3 support
 - Usage of Context Options and Sample Settings outside of AnimateDiff via Gen2 Use Evolved Sampling node
+- Maskable and Schedulable SD LoRA (and Models as LoRA) for both AnimateDiff and StableDiffusion usage via LoRA Hooks
+- Per-frame GLIGEN coordinates control
+     - Currently requires GLIGENTextBoxApplyBatch from KJNodes to do so, but I will add native nodes to do this soon.
 
 ## Upcoming Features
-- Maskable Motion LoRA (Goal: mid May)
-- Maskable SD LoRA (Goal: end of April. Already works in develop for the past month, but I want to make it less painful to use)
-- Schedulable GLIGEN coordinates
-- Example workflows for **every feature** in AnimateDiff-Evolved repo, and hopefully a long Youtube video showing all features
+- Example workflows for **every feature** in AnimateDiff-Evolved repo, and hopefully a long Youtube video showing all features (Goal: mid-May)
+- Maskable Motion LoRA (Goal: end of May/beginning of June)
+- Timestep schedulable GLIGEN coordinates
 - Dynamic memory management for motion models that load/unload at different start/end_percents
 - [PIA](https://github.com/open-mmlab/PIA) support
 - [UniCtrl](https://github.com/XuweiyiChen/UniCtrl) support
