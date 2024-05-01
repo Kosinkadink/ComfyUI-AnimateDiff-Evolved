@@ -907,12 +907,18 @@ def calc_conds_batch_lora_hook(model: BaseModel, conds: list[list[dict]], x_in: 
 
     return out_conds
 
-def gligen_batch_set_position_ADE(self, latent_image_shape, position_params_batch, device):
+def gligen_batch_set_position_ADE(self, latent_image_shape: torch.Size, position_params_batch: list[list[tuple[Tensor, int, int, int, int]]], device):
     batch, c, h, w = latent_image_shape
 
     all_boxes = []
     all_masks = []
     all_conds = []
+
+    # make sure there are enough position_params to match expected amount
+    if len(position_params_batch) < ADGS.params.full_length:
+        position_params_batch = position_params_batch.copy()
+        for _ in range(ADGS.params.full_length-len(position_params_batch)):
+            position_params_batch.append(position_params_batch[-1])
 
     for batch_idx in range(batch):
         if ADGS.params.sub_idxs is not None:
