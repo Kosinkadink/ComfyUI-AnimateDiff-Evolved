@@ -717,9 +717,14 @@ def get_area_and_mult_ADE(conds, x_in, timestep_in):
         patches = {}
         gligen_type = gligen[0]
         gligen_model = gligen[1]
-        gligen_model.model.set_position = MethodType(gligen_batch_set_position, gligen_model.model)
         if gligen_type == "position":
             gligen_patch = gligen_model.model.set_position(input_x.shape, gligen[2], input_x.device)
+        elif gligen_type == "position_batched":
+            try:
+                gligen_model.model.set_position_batched_ADE = MethodType(gligen_batch_set_position_ADE, gligen_model.model)
+                gligen_patch = gligen_model.model.set_position_batched_ADE(input_x.shape, gligen[2], input_x.device)
+            finally:
+                delattr(gligen_model.model, "set_position_batched_ADE")
         else:
             gligen_patch = gligen_model.model.set_empty(input_x.shape, input_x.device)
 
@@ -902,7 +907,7 @@ def calc_conds_batch_lora_hook(model: BaseModel, conds: list[list[dict]], x_in: 
 
     return out_conds
 
-def gligen_batch_set_position(self, latent_image_shape, position_params_batch, device):
+def gligen_batch_set_position_ADE(self, latent_image_shape, position_params_batch, device):
     batch, c, h, w = latent_image_shape
 
     all_boxes = []
