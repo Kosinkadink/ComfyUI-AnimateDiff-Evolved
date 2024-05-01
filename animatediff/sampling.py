@@ -293,8 +293,8 @@ class FunctionInjectionHolder:
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_manual_cast_forward
-            comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             comfy.samplers.sampling_function = self.orig_sampling_function
+            comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             if SAMPLE_FALLBACK:  # for backwards compatibility, for now
                 comfy.sample.get_additional_models = self.orig_get_additional_models
             else:
