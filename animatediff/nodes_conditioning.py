@@ -133,10 +133,10 @@ class ConditioningSetMaskAndCombineHooked:
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
     FUNCTION = "append_and_combine"
 
-    def append_and_combine(self, conditioning, conditioning_ADD,
+    def append_and_combine(self, cond, cond_ADD,
                            strength: float, set_cond_area: str,
                            opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
-        (final_conditioning,) = set_mask_and_combine_conds(conds=[conditioning], new_conds=[conditioning_ADD],
+        (final_conditioning,) = set_mask_and_combine_conds(conds=[cond], new_conds=[cond_ADD],
                                                                     strength=strength, set_cond_area=set_cond_area,
                                                                     opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
         return (final_conditioning,)
