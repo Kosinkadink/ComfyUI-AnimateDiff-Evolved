@@ -117,6 +117,12 @@ class ModelPatcherAndInjector(ModelPatcher):
                 # if keyframe changed, remove any cached LoraHookGroups that contain hook with the same hook_ref;
                 # this will cause the weights to be recalculated when sampling
                 if changed:
+                    # reset current_lora_hooks if contains lora hook that changed
+                    if self.current_lora_hooks is not None:
+                        for current_hook in self.current_lora_hooks.hooks:
+                            if current_hook == hook:
+                                self.current_lora_hooks = None
+                                break
                     for cached_group in list(self.cached_hooked_patches.keys()):
                         if cached_group.contains(hook):
                             self.cached_hooked_patches.pop(cached_group)
