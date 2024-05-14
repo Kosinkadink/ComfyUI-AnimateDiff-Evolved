@@ -299,7 +299,7 @@ class CreateLoraHookKeyframeInterpolation:
             prev_hook_kf = prev_hook_kf.clone()
         else:
             prev_hook_kf = LoraHookKeyframeGroup()
-        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=intervals, method=interpolation)
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=intervals, method=InterpolationMethod.LINEAR)
         strengths = InterpolationMethod.get_weights(num_from=strength_start, num_to=strength_end, length=intervals, method=interpolation)
         
         is_first = True
