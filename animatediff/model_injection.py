@@ -702,11 +702,26 @@ class MotionModelPatcher(ModelPatcher):
         self.was_within_range = False
         self.prev_sub_idxs = None
         self.prev_batched_number = None
+    
+    def patch_model_lowvram(self, device_to=None, lowvram_model_memory=0, force_patch_weights=False, *args, **kwargs):
+        patched_model = super().patch_model_lowvram(device_to, lowvram_model_memory, force_patch_weights, *args, **kwargs)
 
-    def patch_model(self, *args, **kwargs):
-        # patch as normal; used to need to do prepare_weights call to work with lowvram, but no longer needed
-        # will consider removing this override at some point since it does nothing at the moment
-        patched_model = super().patch_model(*args, **kwargs)
+        # figure out the tensors (likely pe's) that should be cast to device besides just the named_modules
+        remaining_tensors = list(self.model.state_dict().keys())
+        named_modules = []
+        for n, _ in self.model.named_modules():
+            named_modules.append(n)
+            named_modules.append(f"{n}.weight")
+            named_modules.append(f"{n}.bias")
+        for name in named_modules:
+            if name in remaining_tensors:
+                remaining_tensors.remove(name)
+
+        for key in remaining_tensors:
+            self.patch_weight_to_device(key, device_to)
+            if device_to is not None:
+                comfy.utils.set_attr(self.model, key, comfy.utils.get_attr(self.model, key).to(device_to))
+
         return patched_model
 
     def pre_run(self, model: ModelPatcherAndInjector):

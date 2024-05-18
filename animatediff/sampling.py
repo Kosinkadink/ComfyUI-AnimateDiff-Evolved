@@ -249,7 +249,7 @@ class FunctionInjectionHolder:
         self.orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
         self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
-        self.orig_groupnorm_manual_cast_forward = comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights
+        self.orig_groupnorm_forward_comfy_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
         self.orig_get_area_and_mult = comfy.samplers.get_area_and_mult
         if SAMPLE_FALLBACK:  # for backwards compatibility, for now
@@ -267,7 +267,7 @@ class FunctionInjectionHolder:
             if not (info.mm_version == AnimateDiffVersion.V3 or
                     (info.mm_format not in [AnimateDiffFormat.HOTSHOTXL] and info.sd_type == ModelTypeSD.SD1_5 and info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
-                comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
+                comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
                 try:
                     if model.load_device.type == "mps":
@@ -293,7 +293,7 @@ class FunctionInjectionHolder:
             model.model.memory_required = self.orig_memory_required
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
-            comfy.ops.manual_cast.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_manual_cast_forward
+            comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_forward_comfy_cast_weights
             comfy.samplers.sampling_function = self.orig_sampling_function
             comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             if SAMPLE_FALLBACK:  # for backwards compatibility, for now
