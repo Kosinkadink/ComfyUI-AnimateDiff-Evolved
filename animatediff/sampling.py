@@ -609,7 +609,7 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                         biases_final[i][(full_length*n)+idx] = bias_total + bias
         else:
             # add conds and counts based on weights of fuse method
-            weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method) * batched_conds
+            weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep) * batched_conds
             weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
             for i in range(len(sub_conds_out)):
                 conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
