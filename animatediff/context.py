@@ -14,11 +14,12 @@ class ContextFuseMethod:
     RANDOM = "random"
     GAUSS_SIGMA = "gauss-sigma"
     GAUSS_SIGMA_INV = "gauss-sigma inverse"
-    TEMPORAL_EDGE = "temporal edge"
+    DELAYED_REVERSE_SAWTOOTH = "delayed reverse sawtooth"
     PYRAMID_SIGMA = "pyramid-sigma"
     PYRAMID_SIGMA_INV = "pyramid-sigma inverse"
-    LIST = [PYRAMID, FLAT, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM, TEMPORAL_EDGE ]
-    LIST_STATIC = [PYRAMID, RELATIVE, FLAT, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM, TEMPORAL_EDGE]
+
+    LIST = [PYRAMID, FLAT, DELAYED_REVERSE_SAWTOOTH, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM]
+    LIST_STATIC = [PYRAMID, RELATIVE, FLAT, DELAYED_REVERSE_SAWTOOTH, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM]
 
 
 class ContextType:
@@ -351,7 +352,7 @@ def create_weights_gauss_sigma(length: int, **kwargs) -> list[float]:
     else:
         max_weight = (length + 1) // 2
     w *= max_weight / np.linalg.norm(w)
-    print("create_weights_gauss_sigma sigma",sigma,w)
+    #print("create_weights_gauss_sigma sigma",sigma,w)
     return list(w)
     
 def create_weights_gauss_sigma_inv(length: int, **kwargs) -> list[float]:
@@ -363,7 +364,7 @@ def create_weights_gauss_sigma_inv(length: int, **kwargs) -> list[float]:
     else:
         max_weight = (length + 1) // 2
     w *= max_weight / np.linalg.norm(w)
-    print("create_weights_gauss_sigma_inv sigma",sigma,w)
+    #print("create_weights_gauss_sigma_inv sigma",sigma,w)
     return list(w)
 
 def create_weights_pyramid_sigma_inv(length: int, **kwargs) -> list[float]:
@@ -379,7 +380,6 @@ def create_weights_pyramid_sigma_inv(length: int, **kwargs) -> list[float]:
         weight_sequence2 = np.array([-max_weight]*(max_weight) +[max_weight] + [-max_weight]*(max_weight-1))
     weight_sequence = (sigma * weight_sequence2 + (1.0-sigma) * weight_sequence).clip(0.001,max_weight)
     #print("create_weights_pyramid_sigma_inv",kwargs["sigma"].mean(),sigma, len(weight_sequence),weight_sequence)
-      
     return list(weight_sequence)
 
 def create_weights_pyramid_sigma(length: int, **kwargs) -> list[float]:
@@ -395,18 +395,18 @@ def create_weights_pyramid_sigma(length: int, **kwargs) -> list[float]:
         weight_sequence2 = np.array([-max_weight]*(max_weight) +[max_weight] + [-max_weight]*(max_weight-1))
     weight_sequence = (sigma * weight_sequence + (1.0-sigma) * weight_sequence2).clip(0.001,max_weight)
     #print("create_weights_pyramid_sigma",kwargs["sigma"].mean(),sigma, len(weight_sequence),weight_sequence)
-      
     return list(weight_sequence)
 
-def create_weights_temporal_edge(length: int, **kwargs) -> list[float]:
+def create_weights_delayed_reverse_sawtooth(length: int, **kwargs) -> list[float]:
+    # assigns 0.01 to first half (or half-1 if even) of weights, then the rest of the weights are basically
+    # based on distance from context edge
     if length % 2 == 0:
         max_weight = length // 2
         weight_sequence = [0.01]*(max_weight-1) + [max_weight] + list(range(max_weight, 0, -1))
     else:
         max_weight = (length + 1) // 2
         weight_sequence = [0.01]*max_weight + [max_weight] + list(range(max_weight - 1, 0, -1))
-    
-    #print("create_weights_temporal_edge",len(weight_sequence),weight_sequence)
+    #print("create_weights_delayed_falling_edge",len(weight_sequence),weight_sequence)
     return weight_sequence
 
 
@@ -417,7 +417,7 @@ FUSE_MAPPING = {
     ContextFuseMethod.GAUSS_SIGMA: create_weights_gauss_sigma,
     ContextFuseMethod.GAUSS_SIGMA_INV: create_weights_gauss_sigma_inv,
     ContextFuseMethod.RANDOM: create_weights_random,
-    ContextFuseMethod.TEMPORAL_EDGE: create_weights_temporal_edge,
+    ContextFuseMethod.DELAYED_REVERSE_SAWTOOTH: create_weights_delayed_reverse_sawtooth,
     ContextFuseMethod.PYRAMID_SIGMA: create_weights_pyramid_sigma,
     ContextFuseMethod.PYRAMID_SIGMA_INV: create_weights_pyramid_sigma_inv,
 }
