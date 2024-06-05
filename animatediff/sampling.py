@@ -25,8 +25,9 @@ import comfy.ops
 
 from .conditioning import COND_CONST, LoraHookGroup
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
-from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration
+from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
 from .utils_model import ModelTypeSD
+from .utils_motion import composite_extend
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
 from .logger import logger
@@ -41,6 +42,7 @@ class AnimateDiffHelper_GlobalState:
         self.motion_models: MotionModelGroup = None
         self.params: InjectionParams = None
         self.sample_settings: SampleSettings = None
+        self.callback_output_dict: dict[str] = {}
         self.reset()
 
     def initialize(self, model: BaseModel):
@@ -53,6 +55,8 @@ class AnimateDiffHelper_GlobalState:
                 self.params.context_options.initialize_timesteps(model)
             if self.sample_settings.custom_cfg is not None:
                 self.sample_settings.custom_cfg.initialize_timesteps(model)
+            if self.sample_settings.image_injection is not None:
+                self.sample_settings.image_injection.initialize_timesteps(model)
 
     def hooks_initialize(self, model: BaseModel, hook_groups: list[LoraHookGroup]):
         # this function is to be run the first time all gathered
@@ -82,6 +86,8 @@ class AnimateDiffHelper_GlobalState:
         self.last_step: int = 0
         self.current_step: int = 0
         self.total_steps: int = 0
+        self.callback_output_dict.clear()
+        self.callback_output_dict = {}
         if self.model_patcher is not None:
             self.model_patcher.clean_hooks()
             del self.model_patcher
@@ -349,6 +355,9 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             def ad_callback(step, x0, x, total_steps):
                 if original_callback is not None:
                     original_callback(step, x0, x, total_steps)
+                # store denoised latents if image_injection will be used
+                if model.sample_settings.image_injection is not None:
+                    ADGS.callback_output_dict["x0"] = x0
                 # update GLOBALSTATE for next iteration
                 ADGS.current_step = ADGS.start_step + step + 1
             kwargs["callback"] = ad_callback
@@ -460,7 +469,13 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             cached_calc_cond_batch = comfy.samplers.calc_cond_batch
             # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
             comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
-            return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
+            to_return = comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
+            if ADGS.sample_settings.image_injection is not None:
+                to_inject = ADGS.sample_settings.image_injection.prepare_injection(timestep)
+                # if have something to inject, do it
+                if to_inject is not None:
+                    to_return = perform_image_injection(to_return, to_inject)
+            return to_return
         finally:
             comfy.samplers.calc_cond_batch = cached_calc_cond_batch
     else: # for backwards compatibility, for now
@@ -477,6 +492,45 @@ def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, mode
             cfg_result = fn(args)
 
         return cfg_result
+
+
+def perform_image_injection(latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:
+    try:
+        orig_device = latents.device
+        orig_dtype = latents.dtype
+        # NOTE: current_loaded_models is a list of LoadedModel
+        cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
+        # follow same steps as in KSampler Custom to get same denoised_x0 value
+        decoded_x0 = ADGS.model_patcher.model.process_latent_out(ADGS.callback_output_dict.get("x0", torch.zeros_like(latents, device="cpu")).cpu())
+        # VAE decode to get the image representation of denoised_x0
+        decoded_x0 = to_inject.vae.decode(decoded_x0)
+        # VAE encode to get back latent representation
+        encoded_x0 = to_inject.vae.encode(decoded_x0)
+        # get difference between original latents and encoded_x0 to get 'noise'
+        x_combo: Tensor = ADGS.model_patcher.model.process_latent_out(latents.to(encoded_x0.device)) - encoded_x0
+        #x_combo: Tensor = latents.to(encoded_x0.device) - encoded_x0
+        # get mask, or default to full mask
+        mask = to_inject.mask
+        b, c, h, w = x_combo.shape
+        # need to resize images and masks to match expected dims
+        if mask is None:
+            mask = torch.ones(1, h, w)
+        if to_inject.invert_mask:
+            mask = 1.0 - mask
+        # composite decoded_x0 with image to inject;
+        # make sure to move dims to match expectation of (b,c,h,w)
+        composited = composite_extend(destination=decoded_x0.movedim(-1, 1), source=to_inject.image.movedim(-1, 1), x=0, y=0, mask=mask,
+                                      multiplier=to_inject.vae.downscale_ratio, resize_source=True).movedim(1, -1)
+        # encode composited to get latent representation
+        composited = to_inject.vae.encode(composited)
+        # add composited to x_diff to get noise mixed with composited latent
+        x_combo += composited * 1.0
+        # clean mem and return on proper device and dtype
+        del decoded_x0
+        del encoded_x0
+        return ADGS.model_patcher.model.process_latent_in(x_combo).to(dtype=orig_dtype, device=orig_device)
+    finally:
+        comfy.model_management.load_models_gpu(cached_loaded_models)
 
 
 def wrapped_cfg_sliding_calc_cond_batch_factory(orig_calc_cond_batch):

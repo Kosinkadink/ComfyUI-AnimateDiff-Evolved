@@ -5,8 +5,10 @@ from torch import Tensor
 
 import comfy.sample
 import comfy.samplers
+import comfy.model_management
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
+from comfy.sd import VAE
 
 from . import freeinit
 from .conditioning import LoraHookMode
@@ -54,7 +56,7 @@ class NoiseNormalize:
 class SampleSettings:
     def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None,
                  iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False,
-                 custom_cfg: 'CustomCFGKeyframeGroup'=None, sigma_schedule: SigmaSchedule=None):
+                 custom_cfg: 'CustomCFGKeyframeGroup'=None, sigma_schedule: SigmaSchedule=None, image_injection: 'NoisedImageToInjectGroup'=None):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
@@ -66,6 +68,7 @@ class SampleSettings:
         self.adapt_denoise_steps = adapt_denoise_steps
         self.custom_cfg = custom_cfg.clone() if custom_cfg else custom_cfg
         self.sigma_schedule = sigma_schedule
+        self.image_injection = image_injection.clone() if image_injection else NoisedImageToInjectGroup()
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
@@ -93,15 +96,20 @@ class SampleSettings:
     def pre_run(self, model: ModelPatcher):
         if self.custom_cfg is not None:
             self.custom_cfg.reset()
+        if self.image_injection is not None:
+            self.image_injection.reset()
     
     def cleanup(self):
         if self.custom_cfg is not None:
             self.custom_cfg.reset()
+        if self.image_injection is not None:
+            self.image_injection.reset()
 
     def clone(self):
         return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
                            noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
-                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg, sigma_schedule=self.sigma_schedule)
+                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg,
+                           sigma_schedule=self.sigma_schedule, image_injection=self.image_injection)
 
 
 class NoiseLayer:
@@ -554,3 +562,86 @@ class CustomCFGKeyframeGroup:
         if self._current_keyframe != None:
             return self._current_keyframe.cfg_multival
         return None
+
+
+class NoisedImageToInject:
+    def __init__(self, image: Tensor, mask: Tensor, vae: VAE, start_percent: float, guarantee_steps: int=1, invert_mask=False):
+        self.image = image
+        self.mask = mask
+        self.vae = vae
+        self.invert_mask = invert_mask
+        # scheduling
+        self.start_percent = float(start_percent)
+        self.start_t = 999999999.9
+        self.guarantee_steps = guarantee_steps
+
+    def clone(self):
+        cloned = NoisedImageToInject(image=self.image, vae=self.vae, start_percent=self.start_percent)
+        cloned.start_t = self.start_t
+        return cloned
+
+
+class NoisedImageToInjectGroup:
+    def __init__(self):
+        self.injections: list[NoisedImageToInject] = []
+        self._current_index: int = -1
+        self._current_used_steps: int = 0
+    
+    @property
+    def current_injection(self):
+        return self.injections[self._current_index]
+
+    def reset(self):
+        self._current_index = -1
+        self._current_used_steps: int = 0
+
+    def add(self, to_inject: NoisedImageToInject):
+        # add to end of list, then sort
+        self.injections.append(to_inject)
+        self.injections = get_sorted_list_via_attr(self.injections, "start_percent")
+
+    def is_empty(self) -> bool:
+        return len(self.injections) == 0
+
+    def has_index(self, index: int) -> int:
+        return index >=0 and index < len(self.injections)
+
+    def clone(self):
+        cloned = NoisedImageToInjectGroup()
+        for to_inject in self.injections:
+            cloned.injections.append(to_inject)
+        return cloned
+    
+    def initialize_timesteps(self, model: BaseModel):
+        for to_inject in self.injections:
+            to_inject.start_t = model.model_sampling.percent_to_sigma(to_inject.start_percent)
+
+    def prepare_injection(self, t: Tensor) -> Union[NoisedImageToInject, None]:
+        curr_t: float = t[0]
+        prev_index = self._current_index
+        # if nothing to inject, return input latents
+        if self.is_empty():
+            return None
+        try:
+            to_inject = None
+            if self._current_index >= 0 and self._current_used_steps < self.current_injection.guarantee_steps:
+                to_inject = self.current_injection
+            else:
+                if self.has_index(self._current_index+1):
+                    for i in range(self._current_index+1, len(self.injections)):
+                        eval_c = self.injections[i]
+                        # check if start_t is greater or equal to curr_t
+                        # NOTE: t is in terms of sigmas, not percent, so bigger number = earlier step in sampling
+                        if eval_c.start_t >= curr_t:
+                            self._current_index = i
+                            self._current_used_steps = 0
+                            to_inject = self.current_injection
+                            # if guarantee_steps greater than zero, stop searching for others
+                            if to_inject.guarantee_steps > 0:
+                                break
+                        # if eval_c is outside the percent range, stop looking further
+                        else: break
+            return to_inject
+        finally:
+            # update steps current image injection is present
+            self._current_used_steps += 1

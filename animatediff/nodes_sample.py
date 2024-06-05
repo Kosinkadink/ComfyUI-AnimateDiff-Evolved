@@ -1,10 +1,13 @@
 from typing import Union
 from torch import Tensor
 
+from comfy.sd import VAE
+
 from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
                               NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
-                              SeedNoiseGeneration, SampleSettings, CustomCFGKeyframeGroup, CustomCFGKeyframe)
+                              SeedNoiseGeneration, SampleSettings, CustomCFGKeyframeGroup, CustomCFGKeyframe,
+                              NoisedImageToInjectGroup, NoisedImageToInject)
 from .utils_model import BIGMIN, BIGMAX, SigmaSchedule
 
 
@@ -25,6 +28,7 @@ class SampleSettingsNode:
                 "adapt_denoise_steps": ("BOOLEAN", {"default": False},),
                 "custom_cfg": ("CUSTOM_CFG",),
                 "sigma_schedule": ("SIGMA_SCHEDULE",),
+                "image_inject": ("IMAGE_INJECT",),
             }
         }
 
@@ -35,10 +39,10 @@ class SampleSettingsNode:
 
     def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None,
                         iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False,
-                        custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None):
+                        custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None, image_inject: NoisedImageToInjectGroup=None):
         sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers,
                                            iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps,
-                                           custom_cfg=custom_cfg, sigma_schedule=sigma_schedule)
+                                           custom_cfg=custom_cfg, sigma_schedule=sigma_schedule, image_injection=image_inject)
         return (sampling_settings,)
 
 
@@ -253,3 +257,34 @@ class CustomCFGKeyframeNode:
         keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival, start_percent=start_percent, guarantee_steps=guarantee_steps)
         prev_custom_cfg.add(keyframe)
         return (prev_custom_cfg,)
+
+
+class NoisedImageInjectionNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE", ),
+                "vae": ("VAE", ),
+            },
+            "optional": {
+                "mask_opt": ("MASK", ),
+                "invert_mask": ("BOOLEAN", {"default": False}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "prev_image_inject": ("IMAGE_INJECT", ),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            }
+        }
+    
+    RETURN_TYPES = ("IMAGE_INJECT",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_image_inject"
+
+    def create_image_inject(self, image: Tensor, vae: VAE, invert_mask: bool, start_percent: float,
+                            mask_opt: Tensor=None, prev_image_inject: NoisedImageToInjectGroup=None, guarantee_steps=1):
+        if not prev_image_inject:
+            prev_image_inject = NoisedImageToInjectGroup()
+        prev_image_inject.clone()
+        to_inject = NoisedImageToInject(image=image, mask=mask_opt, vae=vae, invert_mask=invert_mask, start_percent=start_percent, guarantee_steps=guarantee_steps)
+        prev_image_inject.add(to_inject)
+        return (prev_image_inject,)

@@ -138,7 +138,6 @@ class ModelPatcherAndInjector(ModelPatcher):
         '''
         Based on add_patches, but for hooked weights.
         '''
-        # TODO: make this work with timestep scheduling
         current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook.hook_ref, {})
         p = set()
         for key in patches:
@@ -157,7 +156,6 @@ class ModelPatcherAndInjector(ModelPatcher):
         '''
         Based on add_hooked_patches, but intended for using a model's weights as lora hook.
         '''
-        # TODO: make this work with timestep scheduling
         current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook.hook_ref, {})
         p = set()
         for key in patches:
@@ -166,6 +164,7 @@ class ModelPatcherAndInjector(ModelPatcher):
                 p.add(key)
                 current_patches: list[tuple] = current_hooked_patches.get(key, [])
                 # take difference between desired weight and existing weight to get diff
+                # TODO: create fix for fp8
                 current_patches.append((strength_patch, (patches[key]-comfy.utils.get_attr(self.model, key),), strength_model))
                 current_hooked_patches[key] = current_patches
         self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
@@ -224,7 +223,7 @@ class ModelPatcherAndInjector(ModelPatcher):
                     self.model_params_lowvram_keys[f"{n}.weight"] = n
                 if getattr(m, "bias_function", None) is not None:
                     self.model_params_lowvram = True
-                    self.model_params_lowvram_keys[f"{n}.weight"] = n
+                    self.model_params_lowvram_keys[f"{n}.bias"] = n
 
     def unpatch_model(self, device_to=None, unpatch_weights=True):
         # first, eject motion model from unet
