@@ -21,9 +21,10 @@ except ImportError:
 import comfy.utils
 from comfy.controlnet import ControlBase
 from comfy.model_base import BaseModel
+import comfy.conds
 import comfy.ops
 
-from .conditioning import COND_CONST, LoraHookGroup
+from .conditioning import COND_CONST, LoraHookGroup, conditioning_set_values
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
 from .utils_model import ModelTypeSD
@@ -43,6 +44,7 @@ class AnimateDiffHelper_GlobalState:
         self.params: InjectionParams = None
         self.sample_settings: SampleSettings = None
         self.callback_output_dict: dict[str] = {}
+        self.function_injections: FunctionInjectionHolder = None
         self.reset()
 
     def initialize(self, model: BaseModel):
@@ -67,9 +69,9 @@ class AnimateDiffHelper_GlobalState:
                     hook.reset()
                     hook.initialize_timesteps(model)
 
-    def prepare_current_keyframes(self, timestep: Tensor):
+    def prepare_current_keyframes(self, x: Tensor, timestep: Tensor):
         if self.motion_models is not None:
-            self.motion_models.prepare_current_keyframe(t=timestep)
+            self.motion_models.prepare_current_keyframe(x=x, t=timestep)
         if self.params.context_options is not None:
             self.params.context_options.prepare_current_context(t=timestep)
         if self.sample_settings.custom_cfg is not None:
@@ -78,6 +80,19 @@ class AnimateDiffHelper_GlobalState:
     def prepare_hooks_current_keyframes(self, timestep: Tensor, hook_groups: list[LoraHookGroup]):
         if self.model_patcher is not None:
             self.model_patcher.prepare_hooked_patches_current_keyframe(t=timestep, hook_groups=hook_groups)
+
+    def perform_special_model_features(self, model: BaseModel, conds: list, x_in: Tensor):
+        if self.motion_models is not None:
+            pia_models = self.motion_models.get_pia_models()
+            if len(pia_models) > 0:
+                for pia_model in pia_models:
+                    if pia_model.model.is_in_effect():
+                        pia_model.model.apply_pia_conv_in(model)
+                        conds = get_conds_with_c_concat(conds,
+                                                        pia_model.get_pia_c_concat(model, x_in, self.function_injections.temp_uninjector))
+                    else:
+                        pia_model.model.apply_orig_conv_in(model)
+        return conds
 
     def reset(self):
         self.initialized = False
@@ -101,6 +116,9 @@ class AnimateDiffHelper_GlobalState:
         if self.sample_settings is not None:
             del self.sample_settings
             self.sample_settings = None
+        if self.function_injections is not None:
+            del self.function_injections
+            self.function_injections = None
 
     def update_with_inject_params(self, params: InjectionParams):
         self.params = params
@@ -248,7 +266,7 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
 
 class FunctionInjectionHolder:
     def __init__(self):
-        pass
+        self.temp_uninjector: GroupnormFunctionHelper = GroupnormFunctionHelper()
     
     def inject_functions(self, model: ModelPatcherAndInjector, params: InjectionParams):
         # Save Original Functions - order must match between here and restore_functions
@@ -270,7 +288,8 @@ class FunctionInjectionHolder:
         if model.motion_models is not None:
             # only apply groupnorm hack if not [v3 or ([not Hotshot] and SD1.5 and v2 and apply_v2_properly)]
             info: AnimateDiffInfo = model.motion_models[0].model.mm_info
-            if not (info.mm_version == AnimateDiffVersion.V3 or
+            # TODO: make this more intuitive
+            if not ((info.mm_version == AnimateDiffVersion.V3 and info.mm_format != AnimateDiffFormat.PIA) or
                     (info.mm_format not in [AnimateDiffFormat.HOTSHOTXL] and info.sd_type == ModelTypeSD.SD1_5 and info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
                 comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
@@ -292,6 +311,8 @@ class FunctionInjectionHolder:
             comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
         else:
             comfy.sampler_helpers.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
+        # create temp_uninjector to help facilitate uninjecting functions
+        self.temp_uninjector = GroupnormFunctionHelper(self)
 
     def restore_functions(self, model: ModelPatcherAndInjector):
         # Restoration
@@ -310,6 +331,33 @@ class FunctionInjectionHolder:
         except AttributeError:
             logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
                          "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
+
+
+class GroupnormFunctionHelper:
+    def __init__(self, holder: FunctionInjectionHolder=None):
+        self.holder = holder
+        self.previous_gn_forward = None
+        self.previous_dwi_gn_cast_weights = None
+    
+    def __enter__(self):
+        if self.holder is None:
+            return self
+        # backup current groupnorm funcs
+        self.previous_gn_forward = torch.nn.GroupNorm.forward
+        self.previous_dwi_gn_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
+        # restore groupnorm to default state
+        torch.nn.GroupNorm.forward = self.holder.orig_groupnorm_forward
+        comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.holder.orig_groupnorm_forward_comfy_cast_weights
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        if self.holder is None:
+            return
+        # bring groupnorm back to previous state
+        torch.nn.GroupNorm.forward = self.previous_gn_forward
+        comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.previous_dwi_gn_cast_weights
+        self.previous_gn_forward = None
+        self.previous_dwi_gn_cast_weights = None
 
 
 def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) -> Callable:
@@ -364,6 +412,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             ADGS.model_patcher = model
             ADGS.motion_models = model.motion_models
             ADGS.sample_settings = model.sample_settings
+            ADGS.function_injections = function_injections
 
             # apply adapt_denoise_steps
             args = list(args)
@@ -443,9 +492,10 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
     return motion_sample
 
 
-def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options: dict={}, seed=None):
+def evolved_sampling_function(model, x: Tensor, timestep, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS.initialize(model)
-    ADGS.prepare_current_keyframes(timestep=timestep)
+    ADGS.prepare_current_keyframes(x=x, timestep=timestep)
+    cond, uncond = ADGS.perform_special_model_features(model, [cond, uncond], x)
 
     # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
     if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
@@ -679,6 +729,30 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
             conds_final[i] /= counts_final[i]
         del counts_final
         return conds_final
+
+
+def get_conds_with_c_concat(conds: list[dict], c_concat: comfy.conds.CONDNoiseShape):
+    new_conds = []
+    for cond in conds:
+        resized_cond = None
+        if cond is not None:
+            # reuse or resize cond items to match context requirements
+            resized_cond = []
+            # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
+            for actual_cond in cond:
+                resized_actual_cond = actual_cond.copy()
+                # now we are in the inner dict - "pooled_output" is a tensor, "control" is a ControlBase object, "model_conds" is dictionary
+                for key in actual_cond:
+                    if key == "model_conds":
+                        new_model_conds = actual_cond[key].copy()
+                        if "c_concat" in new_model_conds:
+                            new_model_conds["c_concat"] = comfy.conds.CONDNoiseShape(torch.cat(new_model_conds["c_concat"].cond, c_concat.cond, dim=1))
+                        else:
+                            new_model_conds["c_concat"] = c_concat
+                        resized_actual_cond[key] = new_model_conds
+                resized_cond.append(resized_actual_cond)
+        new_conds.append(resized_cond)
+    return new_conds
 
 
 def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, timestep, model_options):

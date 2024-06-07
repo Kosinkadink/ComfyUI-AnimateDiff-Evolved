@@ -8,20 +8,23 @@ import torch
 import uuid
 import math
 
+import comfy.conds
 import comfy.lora
 import comfy.model_management
 import comfy.utils
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
-from comfy.sd import CLIP
+from comfy.sd import CLIP, VAE
 
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
+from .adapter_pia import InputPIA, InputPIA_Multival
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention,
                                has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
-from .utils_motion import ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, get_combined_multival, ade_broadcast_image_to, normalize_min_max
+from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError,
+                           get_combined_multival, ade_broadcast_image_to, normalize_min_max, extend_to_batch_size, prepare_mask_batch)
 from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type
@@ -692,7 +695,17 @@ class MotionModelPatcher(ModelPatcher):
         self.orig_camera_entries: list[CameraEntry] = None
         self.camera_features: list[Tensor] = None  # temporary
         self.camera_features_shape: tuple = None
-        self.cameractrl_multival = None
+        self.cameractrl_multival: Union[float, Tensor] = None
+
+        # PIA
+        self.orig_pia_images: Tensor = None
+        self.pia_vae: VAE = None
+        self.pia_input: InputPIA = None
+        self.cached_pia_c_concat: comfy.conds.CONDNoiseShape = None  # cached
+        self.prev_pia_latents_shape: tuple = None
+        self.prev_current_pia_input: InputPIA = None
+        self.pia_multival: Union[float, Tensor] = None
+        # TODO: add images + masks
 
         # temporary variables
         self.current_used_steps = 0
@@ -701,9 +714,11 @@ class MotionModelPatcher(ModelPatcher):
         self.current_scale: Union[float, Tensor] = None
         self.current_effect: Union[float, Tensor] = None
         self.current_cameractrl_effect: Union[float, Tensor] = None
+        self.current_pia_input: InputPIA = None
         self.combined_scale: Union[float, Tensor] = None
         self.combined_effect: Union[float, Tensor] = None
         self.combined_cameractrl_effect: Union[float, Tensor] = None
+        self.combined_pia_mask: Union[float, Tensor] = None
         self.was_within_range = False
         self.prev_sub_idxs = None
         self.prev_batched_number = None
@@ -745,7 +760,7 @@ class MotionModelPatcher(ModelPatcher):
             for keyframe in self.keyframes.keyframes:
                 keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
 
-    def prepare_current_keyframe(self, t: Tensor):
+    def prepare_current_keyframe(self, x: Tensor, t: Tensor):
         curr_t: float = t[0]
         prev_index = self.current_index
         # if met guaranteed steps, look for next keyframe in case need to switch
@@ -773,6 +788,10 @@ class MotionModelPatcher(ModelPatcher):
                             self.current_cameractrl_effect = self.current_keyframe.cameractrl_multival
                         elif not self.current_keyframe.inherit_missing:
                             self.current_cameractrl_effect = None
+                        if self.current_keyframe.has_pia_input():
+                            self.current_pia_input = self.current_keyframe.pia_input
+                        elif not self.current_keyframe.inherit_missing:
+                            self.current_pia_input = None
                         # if guarantee_steps greater than zero, stop searching for other keyframes
                         if self.current_keyframe.guarantee_steps > 0:
                             break
@@ -785,6 +804,8 @@ class MotionModelPatcher(ModelPatcher):
             self.combined_scale = get_combined_multival(self.scale_multival, self.current_scale)
             self.combined_effect = get_combined_multival(self.effect_multival, self.current_effect)
             self.combined_cameractrl_effect = get_combined_multival(self.cameractrl_multival, self.current_cameractrl_effect)
+            usable_current_pia_input = self.current_pia_input if self.current_pia_input is not None else InputPIA_Multival(1.0)
+            self.combined_pia_mask = get_combined_multival(self.pia_input.get_mask(x), usable_current_pia_input.get_mask(x))
             # apply scale and effect
             self.model.set_scale(self.combined_scale)
             self.model.set_effect(self.combined_effect)
@@ -860,6 +881,60 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
 
+    def get_pia_c_concat(self, model: BaseModel, x: Tensor, uninjector) -> Tensor:
+        # if have cached shape, check if matches - if so, return cached pia_latents
+        if self.prev_pia_latents_shape is not None:
+            if self.prev_pia_latents_shape[0] == x.shape[0] and self.prev_pia_latents_shape[2] == x.shape[2] and self.prev_pia_latents_shape[3] == x.shape[3]:
+                # if mask is also the same for this timestep, then return cached
+                if self.prev_current_pia_input == self.current_pia_input:
+                    return self.cached_pia_c_concat
+                # otherwise, adjust new mask, and create new cached_pia_c_concat
+                b, c, h ,w = x.shape
+                mask = prepare_mask_batch(self.combined_pia_mask, x.shape)
+                mask = extend_to_batch_size(mask, b)
+                # make sure to update prev_current_pia_input to know when is changed
+                self.prev_current_pia_input = self.current_pia_input
+                # the first index in dim=1 is the mask that needs to be updated - update in place
+                self.cached_pia_c_concat.cond[:, :1, :, :] = mask
+                return self.cached_pia_c_concat
+        self.prev_pia_latents_shape = None
+        # otherwise, x shape should be the cached pia_latents_shape
+        # get currently used models so they can be properly reloaded after perfoming VAE Encoding
+        if hasattr(comfy.model_management, "loaded_models"):
+            cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
+        else:
+            cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
+        try:
+            b, c, h ,w = x.shape
+            usable_ref = self.orig_pia_images[:b]
+            # in diffusers, the image is scaled from [-1, 1] instead of default [0, 1],
+            # but form my testing, that blows out the images here, so I skip it
+            # usable_images = usable_images * 2 - 1
+            # resize images to latent's dims
+            usable_ref = usable_ref.movedim(-1,1)
+            usable_ref = comfy.utils.common_upscale(samples=usable_ref, width=w*self.pia_vae.downscale_ratio, height=h*self.pia_vae.downscale_ratio,
+                                                    upscale_method="bilinear", crop="center")
+            usable_ref = usable_ref.movedim(1,-1)
+            # VAE encode images
+            with uninjector:  # use injector to temporarily remove potential function hacks that could break vae behavior
+                usable_ref = model.process_latent_in(self.pia_vae.encode(usable_ref))
+            # make pia_latents match expected length
+            usable_ref = extend_to_batch_size(usable_ref, b)
+            self.prev_pia_latents_shape = x.shape
+            # now, take care of the mask
+            mask = prepare_mask_batch(self.combined_pia_mask, x.shape)
+            mask = extend_to_batch_size(mask, b)
+            #mask = mask.unsqueeze(1)
+            self.prev_current_pia_input = self.current_pia_input
+            # cache pia c_concat
+            self.cached_pia_c_concat = comfy.conds.CONDNoiseShape(torch.cat([mask, usable_ref], dim=1))
+            return self.cached_pia_c_concat
+        finally:
+            comfy.model_management.load_models_gpu(cached_loaded_models)
+
+    def is_pia(self):
+        return self.model.mm_info.mm_format == AnimateDiffFormat.PIA and self.orig_pia_images is not None
+
     def cleanup(self):
         if self.model is not None:
             self.model.cleanup()
@@ -871,6 +946,9 @@ class MotionModelPatcher(ModelPatcher):
         del self.camera_features
         self.camera_features = None
         self.camera_features_shape = None
+        # PIA
+        # del self.pia_latents
+        # self.pia_latents = None
         # Default
         self.current_used_steps = 0
         self.current_keyframe = None
@@ -914,6 +992,11 @@ class MotionModelPatcher(ModelPatcher):
         # CameraCtrl
         n.orig_camera_entries = self.orig_camera_entries
         n.cameractrl_multival = self.cameractrl_multival
+        # PIA
+        n.orig_pia_images = self.orig_pia_images
+        n.pia_vae = self.pia_vae
+        n.pia_input = self.pia_input
+        n.pia_multival = self.pia_multival
         return n
 
 
@@ -966,9 +1049,16 @@ class MotionModelGroup:
         for motion_model in self.models:
             motion_model.cleanup()
     
-    def prepare_current_keyframe(self, t: Tensor):
+    def prepare_current_keyframe(self, x: Tensor, t: Tensor):
         for motion_model in self.models:
-            motion_model.prepare_current_keyframe(t=t)
+            motion_model.prepare_current_keyframe(x=x, t=t)
+
+    def get_pia_models(self):
+        pia_motion_models: list[MotionModelPatcher] = []
+        for motion_model in self.models:
+            if motion_model.is_pia():
+                pia_motion_models.append(motion_model)
+        return pia_motion_models
 
     def get_name_string(self, show_version=False):
         identifiers = []

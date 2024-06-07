@@ -9,6 +9,7 @@ from .nodes_animatelcmi2v import (ApplyAnimateLCMI2VModel, LoadAnimateLCMI2VMode
 from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, CameraCtrlADKeyframeNode, LoadCameraPoses,
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
+from .nodes_pia import (ApplyAnimateDiffPIAModel, InputPIA_MultivalNode, PIA_ADKeyframeNode)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
 from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
                                  SetModelLoraHook, SetClipLoraHook,
@@ -133,8 +134,10 @@ NODE_CLASS_MAPPINGS = {
     "ADE_CameraManualPoseAppend": CameraCtrlManualAppendPose,
     "ADE_ReplaceCameraParameters": CameraCtrlReplaceCameraParameters,
     "ADE_ReplaceOriginalPoseAspectRatio": CameraCtrlSetOriginalAspectRatio,
-    # MaskedLoraLoader
-    #"ADE_MaskedLoadLora": MaskedLoraLoader,
+    # PIA Nodes
+    "ADE_ApplyAnimateDiffModelWithPIA": ApplyAnimateDiffPIAModel,
+    "ADE_InputPIA_Multival": InputPIA_MultivalNode,
+    "ADE_PIA_AnimateDiffKeyframe": PIA_ADKeyframeNode,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
@@ -239,8 +242,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_CameraManualPoseAppend": "Manual Append CameraCtrl Poses 🎭🅐🅓②",
     "ADE_ReplaceCameraParameters": "Replace Camera Parameters 🎭🅐🅓②",
     "ADE_ReplaceOriginalPoseAspectRatio": "Replace Orig. Pose Aspect Ratio 🎭🅐🅓②",
-    # MaskedLoraLoader
-    #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
+    # PIA Nodes
+    "ADE_ApplyAnimateDiffModelWithPIA": "Apply AnimateDiff-PIA Model 🎭🅐🅓②",
+    "ADE_InputPIA_Multival": "PIA Input [Multival] 🎭🅐🅓②",
+    "ADE_PIA_AnimateDiffKeyframe": "AnimateDiff-PIA Keyframe 🎭🅐🅓",
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "🚫AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",

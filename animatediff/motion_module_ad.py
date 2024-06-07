@@ -8,6 +8,7 @@ from torch import Tensor, nn
 
 from comfy.ldm.modules.attention import FeedForward, SpatialTransformer
 from comfy.model_patcher import ModelPatcher
+from comfy.model_base import BaseModel
 from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
 from comfy.controlnet import broadcast_image_to
@@ -35,6 +36,7 @@ class AnimateDiffFormat:
     ANIMATEDIFF = "AnimateDiff"
     HOTSHOTXL = "HotshotXL"
     ANIMATELCM = "AnimateLCM"
+    PIA = "PIA"
 
 
 class AnimateDiffVersion:
@@ -68,6 +70,13 @@ def is_animatelcm(mm_state_dict: dict[str, Tensor]) -> bool:
         if "pos_encoder" in key:
             return False
     return True
+
+
+def is_pia(mm_state_dict: dict[str, Tensor]) -> bool:
+    # check if conv_in.weight and .bias are present
+    if "conv_in.weight" in mm_state_dict and "conv_in.bias" in mm_state_dict:
+        return True
+    return False
 
 
 def get_down_block_max(mm_state_dict: dict[str, Tensor]) -> int:
@@ -120,10 +129,10 @@ def has_img_encoder(mm_state_dict: dict[str, Tensor]):
 
 
 def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> Tuple[dict[str, Tensor], AnimateDiffInfo]:
-    # from pathlib import Path
-    # with open(Path(__file__).parent.parent.parent / f"keys_{mm_name}.txt", "w") as afile:
-    #     for key, value in mm_state_dict.items():
-    #         afile.write(f"{key}:\t{value.shape}\n")
+    from pathlib import Path
+    with open(Path(__file__).parent.parent.parent / f"keys_{mm_name}.txt", "w") as afile:
+        for key, value in mm_state_dict.items():
+            afile.write(f"{key}:\t{value.shape}\n")
     
     # determine what SD model the motion module is intended for
     sd_type: str = None
@@ -140,12 +149,16 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
         mm_format = AnimateDiffFormat.HOTSHOTXL
     if is_animatelcm(mm_state_dict):
         mm_format = AnimateDiffFormat.ANIMATELCM
+    if is_pia(mm_state_dict):
+        mm_format = AnimateDiffFormat.PIA
     # for AnimateLCM-I2V purposes, check for img_encoder keys
     contains_img_encoder = has_img_encoder(mm_state_dict)
     # remove all non-temporal keys (in case model has extra stuff in it)
     for key in list(mm_state_dict.keys()):
         if "temporal" not in key:
             if mm_format == AnimateDiffFormat.ANIMATELCM and contains_img_encoder and key.startswith("img_encoder."):
+                continue
+            if mm_format == AnimateDiffFormat.PIA and key.startswith("conv_in."):
                 continue
             del mm_state_dict[key]
     # determine the model's version
@@ -215,11 +228,19 @@ class AnimateDiffModel(nn.Module):
             self.mid_block = MotionModule(1280, temporal_pe=self.has_position_encoding,
                                           temporal_pe_max_len=self.encoding_max_len, block_type=BlockType.MID, ops=ops)
         self.AD_video_length: int = 24
-        # create AdapterEmbed if keys present for it
+        self.effect_model = 1.0
+        # AnimateLCM-I2V stuff - create AdapterEmbed if keys present for it
         self.img_encoder: AdapterEmbed = None
         if has_img_encoder(mm_state_dict):
             self.init_img_encoder()
+        # CameraCtrl stuff
         self.camera_encoder: 'CameraPoseEncoder' = None
+        # PIA stuff - create conv_in if keys are present for it
+        self.conv_in: comfy.ops.disable_weight_init.Conv2d = None
+        self.orig_conv_in: comfy.ops.disable_weight_init.Conv2d = None
+        self.pia_conv_in: comfy.ops.disable_weight_init.Conv2d = None
+        if is_pia(mm_state_dict):
+            self.init_conv_in(mm_state_dict)
 
     def init_img_encoder(self):
         del self.img_encoder
@@ -228,6 +249,20 @@ class AnimateDiffModel(nn.Module):
     def set_camera_encoder(self, camera_encoder: 'CameraPoseEncoder'):
         del self.camera_encoder
         self.camera_encoder = camera_encoder
+
+    def init_conv_in(self, mm_state_dict: dict[str, Tensor]):
+        '''
+        Used for PIA
+        '''
+        del self.conv_in
+        # hardcoded values, for now
+        # dim=2, in_channels=9, model_channels=320, kernel=3, padding=1,
+        # dtype=comfy.model_management.unet_dtype(), device=offload_device
+        in_channels = mm_state_dict["conv_in.weight"].size(1) # expected to be 9
+        model_channels = mm_state_dict["conv_in.weight"].size(0) # expected to be 320
+        # create conv_in with proper params
+        self.conv_in = self.ops.conv_nd(2, in_channels, model_channels, 3, padding=1,
+                                        dtype=comfy.model_management.unet_dtype(), device=comfy.model_management.unet_offload_device())
 
     def get_device_debug(self):
         return self.down_blocks[0].motion_modules[0].temporal_transformer.proj_in.weight.device
@@ -265,6 +300,9 @@ class AnimateDiffModel(nn.Module):
 
     def inject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = model.model.diffusion_model
+        # if PIA, need to replace first conv_in of unet (cache old value)
+        if self.conv_in is not None:
+            self._calculate_unet_conv_in_pia(unet.input_blocks, self.conv_in)
         # inject input (down) blocks
         # SD15 mm contains 4 downblocks, each with 2 TemporalTransformers - 8 in total
         # SDXL mm contains 3 downblocks, each with 2 TemporalTransformers - 6 in total
@@ -319,6 +357,8 @@ class AnimateDiffModel(nn.Module):
 
     def eject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = model.model.diffusion_model
+        # if PIA, restore unet's original conv_in, if needed
+        self._restore_unet_conv_in_pia(unet.input_blocks)
         # remove from input blocks (downblocks)
         self._eject(unet.input_blocks)
         # remove from output blocks (upblocks)
@@ -337,6 +377,47 @@ class AnimateDiffModel(nn.Module):
             # pop in backwards order, as to not disturb what the indeces refer to
             for idx in sorted(idx_to_pop, reverse=True):
                 block.pop(idx)
+
+    def _calculate_unet_conv_in_pia(self, unet_blocks: nn.ModuleList, new_conv_in: nn.Module):
+        # TODO: make sure works with lowvram
+        # expected conv_in is in the first input block, and is the first module
+        first_module = unet_blocks[0][0]
+        self.orig_conv_in = first_module
+
+        present_state_dict: dict[str, Tensor] = first_module.state_dict()
+        new_state_dict: dict[str, Tensor] = new_conv_in.state_dict()
+        del first_module
+        # bias stays the same, but weight needs to inherit first in_channels from model
+        combined_state_dict = {}
+        combined_state_dict["bias"] = present_state_dict["bias"]
+        combined_state_dict["weight"] = torch.cat([present_state_dict["weight"],
+                                                   new_state_dict["weight"][:, 4:, :, :].to(dtype=present_state_dict["weight"].dtype,
+                                                                                            device=present_state_dict["weight"].device)], dim=1)
+        # create combined_conv_in with proper params
+        in_channels = new_state_dict["weight"].size(1) # expected to be 9
+        model_channels = present_state_dict["weight"].size(0) # expected to be 320
+        combined_conv_in = self.ops.conv_nd(2, in_channels, model_channels, 3, padding=1,
+                                        dtype=present_state_dict["weight"].dtype, device=present_state_dict["weight"].device)
+        combined_conv_in.load_state_dict(combined_state_dict)
+        self.pia_conv_in = combined_conv_in
+        # now can apply combined_conv_in to unet block
+        #unet_blocks[0][0] = combined_conv_in
+    
+    def _restore_unet_conv_in_pia(self, unet_blocks: nn.ModuleList):
+        if self.orig_conv_in is not None:
+            unet_blocks[0][0] = self.orig_conv_in
+            self.orig_conv_in = None
+            self.pia_conv_in = None
+
+    def apply_pia_conv_in(self, model: BaseModel):
+        return self._apply_conv_in(model, self.pia_conv_in)
+
+    def apply_orig_conv_in(self, model: BaseModel):
+        return self._apply_conv_in(model, self.orig_conv_in)
+        
+    def _apply_conv_in(self, model: BaseModel, new_conv_in: nn.Module):
+        if new_conv_in is not None:
+            model.diffusion_model.input_blocks[0][0] = new_conv_in
 
     def set_video_length(self, video_length: int, full_length: int):
         self.AD_video_length = video_length
@@ -360,6 +441,12 @@ class AnimateDiffModel(nn.Module):
             self._set_scale_mask(None)
     
     def set_effect(self, multival: Union[float, Tensor]):
+        # keep track of if model is in effect
+        if multival is None:
+            self.effect_model = 1.0
+        else:
+            self.effect_model = multival
+        # pass down effect multival to all blocks
         if self.down_blocks is not None:
             for block in self.down_blocks:
                 block.set_effect(multival)
@@ -368,6 +455,11 @@ class AnimateDiffModel(nn.Module):
                 block.set_effect(multival)
         if self.mid_block is not None:
             self.mid_block.set_effect(multival)
+
+    def is_in_effect(self):
+        if type(self.effect_model) == Tensor:
+            return True
+        return not math.isclose(self.effect_model, 0.0)
 
     def set_cameractrl_effect(self, multival: Union[float, Tensor]):
         # cameractrl should only impact down and up blocks

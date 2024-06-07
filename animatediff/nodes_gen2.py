@@ -4,6 +4,7 @@ import torch
 from comfy.model_patcher import ModelPatcher
 
 from .ad_settings import AnimateDiffSettings
+from .adapter_pia import InputPIA
 from .context import ContextOptionsGroup
 from .logger import logger
 from .utils_model import BIGMAX, BetaSchedules, get_available_motion_models
@@ -203,13 +204,14 @@ class ADKeyframeNode:
     def load_keyframe(self,
                       start_percent: float, prev_ad_keyframes=None,
                       scale_multival: Union[float, torch.Tensor]=None, effect_multival: Union[float, torch.Tensor]=None,
-                      cameractrl_multival: Union[float, torch.Tensor]=None,
+                      cameractrl_multival: Union[float, torch.Tensor]=None, pia_input: InputPIA=None,
                       inherit_missing: bool=True, guarantee_steps: int=1):
         if not prev_ad_keyframes:
             prev_ad_keyframes = ADKeyframeGroup()
         prev_ad_keyframes = prev_ad_keyframes.clone()
         keyframe = ADKeyframe(start_percent=start_percent,
-                              scale_multival=scale_multival, effect_multival=effect_multival, cameractrl_multival=cameractrl_multival,
+                              scale_multival=scale_multival, effect_multival=effect_multival,
+                              cameractrl_multival=cameractrl_multival, pia_input=pia_input,
                               inherit_missing=inherit_missing, guarantee_steps=guarantee_steps)
         prev_ad_keyframes.add(keyframe)
         return (prev_ad_keyframes,)
