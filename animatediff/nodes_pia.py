@@ -81,7 +81,7 @@ class PIA_ADKeyframeNode:
     RETURN_TYPES = ("AD_KEYFRAMES", )
     FUNCTION = "load_keyframe"
 
-    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl"
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/PIA"
 
     def load_keyframe(self,
                       start_percent: float, prev_ad_keyframes=None,
