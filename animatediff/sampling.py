@@ -94,6 +94,13 @@ class AnimateDiffHelper_GlobalState:
                         pia_model.model.apply_orig_conv_in(model)
         return conds
 
+    def restore_special_model_features(self, model: BaseModel):
+        if self.motion_models is not None:
+            pia_models = self.motion_models.get_pia_models()
+            if len(pia_models) > 0:
+                for pia_model in pia_models:
+                    pia_model.model.apply_orig_conv_in(model)
+
     def reset(self):
         self.initialized = False
         self.hooks_initialized = False
@@ -104,6 +111,7 @@ class AnimateDiffHelper_GlobalState:
         self.callback_output_dict.clear()
         self.callback_output_dict = {}
         if self.model_patcher is not None:
+            self.restore_special_model_features(self.model_patcher.model)
             self.model_patcher.clean_hooks()
             del self.model_patcher
             self.model_patcher = None
