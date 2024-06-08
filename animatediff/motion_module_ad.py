@@ -409,22 +409,19 @@ class AnimateDiffModel(nn.Module):
     
     def _restore_unet_conv_in_pia(self, unet_blocks: nn.ModuleList):
         if self.orig_conv_in is not None:
-            unet_blocks[0][0] = self.orig_conv_in
+            unet_blocks[0][0] = self.orig_conv_in.to(unet_blocks[0][0].weight.device)
             self.orig_conv_in = None
             self.pia_conv_in = None
 
-    def apply_pia_conv_in(self, model: BaseModel, cast_device=False):
+    def apply_pia_conv_in(self, model: BaseModel, cast_device=True):
         return self._apply_conv_in(model, self.pia_conv_in, cast_device)
 
-    def apply_orig_conv_in(self, model: BaseModel, cast_device=False):
+    def apply_orig_conv_in(self, model: BaseModel, cast_device=True):
         return self._apply_conv_in(model, self.orig_conv_in, cast_device)
         
-    def _apply_conv_in(self, model: BaseModel, new_conv_in: nn.Module, cast_device=False):
+    def _apply_conv_in(self, model: BaseModel, new_conv_in: nn.Module, cast_device=True):
         if new_conv_in is not None:
-            model.diffusion_model.input_blocks[0][0] = new_conv_in
-            if cast_device:
-                device = model.diffusion_model.input_blocks[0][0].weight.device
-                model.diffusion_model.input_blocks[0][0] = model.diffusion_model.input_blocks[0][0].to(device)
+            model.diffusion_model.input_blocks[0][0] = new_conv_in if not cast_device else new_conv_in.to(device=model.diffusion_model.input_blocks[0][0].weight.device)
 
     def set_video_length(self, video_length: int, full_length: int):
         self.AD_video_length = video_length

@@ -99,7 +99,7 @@ class AnimateDiffHelper_GlobalState:
             pia_models = self.motion_models.get_pia_models()
             if len(pia_models) > 0:
                 for pia_model in pia_models:
-                    pia_model.model.apply_orig_conv_in(model, cast_device=True)
+                    pia_model.model.apply_orig_conv_in(model)
 
     def reset(self):
         self.initialized = False
