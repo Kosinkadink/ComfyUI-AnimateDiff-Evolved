@@ -294,11 +294,11 @@ class FunctionInjectionHolder:
         if params.unlimited_area_hack:
             model.model.memory_required = unlimited_memory_required
         if model.motion_models is not None:
-            # only apply groupnorm hack if not [v3 or ([not Hotshot] and SD1.5 and v2 and apply_v2_properly)]
+            # only apply groupnorm hack if PIA, v2 and not properly applied, or v1
             info: AnimateDiffInfo = model.motion_models[0].model.mm_info
-            # TODO: make this more intuitive
-            if not ((info.mm_version == AnimateDiffVersion.V3 and info.mm_format != AnimateDiffFormat.PIA) or
-                    (info.mm_format not in [AnimateDiffFormat.HOTSHOTXL] and info.sd_type == ModelTypeSD.SD1_5 and info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
+            if ((info.mm_format == AnimateDiffFormat.PIA) or
+                (info.mm_version == AnimateDiffVersion.V2 and not params.apply_v2_properly) or
+                (info.mm_version == AnimateDiffVersion.V1)):
                 torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
                 comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack

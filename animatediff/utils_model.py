@@ -338,6 +338,8 @@ class ModelTypeSD:
     SDXL_REFINER = "SDXL_Refiner"
     SVD = "SVD"
 
+    _LIST = [SD1_5, SD2_1, SDXL, SDXL_REFINER, SVD]
+
 
 def get_sd_model_type(model: ModelPatcher) -> str:
     if model is None:
