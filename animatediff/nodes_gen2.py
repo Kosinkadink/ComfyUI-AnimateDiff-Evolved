@@ -4,11 +4,10 @@ import torch
 from comfy.model_patcher import ModelPatcher
 
 from .ad_settings import AnimateDiffSettings
-from .adapter_pia import InputPIA
 from .context import ContextOptionsGroup
 from .logger import logger
 from .utils_model import BIGMAX, BetaSchedules, get_available_motion_models
-from .utils_motion import ADKeyframeGroup, ADKeyframe
+from .utils_motion import ADKeyframeGroup, ADKeyframe, InputPIA
 from .motion_lora import MotionLoraList
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module,
                               load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)

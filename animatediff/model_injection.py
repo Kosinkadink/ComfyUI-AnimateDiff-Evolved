@@ -18,13 +18,12 @@ from comfy.sd import CLIP, VAE
 
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
-from .adapter_pia import InputPIA, InputPIA_Multival
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention,
                                has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
-from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError,
-                           get_combined_multival, ade_broadcast_image_to, normalize_min_max, extend_to_batch_size, prepare_mask_batch)
+from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, InputPIA,
+                           get_combined_multival, get_combined_input, ade_broadcast_image_to, extend_to_batch_size, prepare_mask_batch)
 from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type
@@ -804,8 +803,7 @@ class MotionModelPatcher(ModelPatcher):
             self.combined_scale = get_combined_multival(self.scale_multival, self.current_scale)
             self.combined_effect = get_combined_multival(self.effect_multival, self.current_effect)
             self.combined_cameractrl_effect = get_combined_multival(self.cameractrl_multival, self.current_cameractrl_effect)
-            usable_current_pia_input = self.current_pia_input if self.current_pia_input is not None else InputPIA_Multival(1.0)
-            self.combined_pia_mask = get_combined_multival(self.pia_input.get_mask(x), usable_current_pia_input.get_mask(x))
+            self.combined_pia_mask = get_combined_input(self.pia_input, self.current_pia_input, x)
             # apply scale and effect
             self.model.set_scale(self.combined_scale)
             self.model.set_effect(self.combined_effect)

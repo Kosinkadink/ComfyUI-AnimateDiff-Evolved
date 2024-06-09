@@ -2,6 +2,7 @@ from typing import Union
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+from abc import ABC, abstractmethod
 
 import comfy.model_management as model_management
 import comfy.ops
@@ -9,7 +10,6 @@ import comfy.utils
 from comfy.cli_args import args
 from comfy.ldm.modules.attention import attention_basic, attention_pytorch, attention_split, attention_sub_quad, default
 
-from .adapter_pia import InputPIA
 from .logger import logger
 
 
@@ -211,6 +211,28 @@ class MotionCompatibilityError(ValueError):
     pass
 
 
+class InputPIA(ABC):
+    def __init__(self):
+        pass
+
+    @abstractmethod
+    def get_mask(self, x: Tensor):
+        pass
+
+
+class InputPIA_Multival(InputPIA):
+    def __init__(self, multival: Union[float, Tensor]):
+        self.multival = multival
+
+    def get_mask(self, x: Tensor):
+        if type(self.multival) is Tensor:
+            return self.multival
+        # if not Tensor, then is float, and simply return a mask with the right dimensions + value
+        b, c, h, w = x.shape
+        mask = torch.ones(size=(b, h, w))
+        return mask * self.multival
+
+
 def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[float, Tensor]) -> Union[float, Tensor]:
     # if one is None, use the other
     if multivalA == None:
@@ -235,6 +257,14 @@ def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[floa
         return leader * follower
     # otherwise, just multiply them together - one of them is a float
     return multivalA * multivalB
+
+
+def get_combined_input(inputA: Union[InputPIA, None], inputB: Union[InputPIA, None], x: Tensor):
+    if inputA is None:
+        inputA = InputPIA_Multival(1.0)
+    if inputB is None:
+        inputB = InputPIA_Multival(1.0)
+    return get_combined_multival(inputA.get_mask(x), inputB.get_mask(x))
 
 
 class ADKeyframe:

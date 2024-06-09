@@ -87,19 +87,17 @@ class AnimateDiffHelper_GlobalState:
             if len(pia_models) > 0:
                 for pia_model in pia_models:
                     if pia_model.model.is_in_effect():
-                        pia_model.model.apply_pia_conv_in(model)
+                        pia_model.model.inject_unet_conv_in_pia(model)
                         conds = get_conds_with_c_concat(conds,
                                                         pia_model.get_pia_c_concat(model, x_in, self.function_injections.temp_uninjector))
-                    else:
-                        pia_model.model.apply_orig_conv_in(model)
         return conds
 
     def restore_special_model_features(self, model: BaseModel):
         if self.motion_models is not None:
             pia_models = self.motion_models.get_pia_models()
             if len(pia_models) > 0:
-                for pia_model in pia_models:
-                    pia_model.model.apply_orig_conv_in(model)
+                for pia_model in reversed(pia_models):
+                    pia_model.model.restore_unet_conv_in_pia(model)
 
     def reset(self):
         self.initialized = False
@@ -111,7 +109,6 @@ class AnimateDiffHelper_GlobalState:
         self.callback_output_dict.clear()
         self.callback_output_dict = {}
         if self.model_patcher is not None:
-            self.restore_special_model_features(self.model_patcher.model)
             self.model_patcher.clean_hooks()
             del self.model_patcher
             self.model_patcher = None
@@ -503,53 +500,56 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
 def evolved_sampling_function(model, x: Tensor, timestep, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS.initialize(model)
     ADGS.prepare_current_keyframes(x=x, timestep=timestep)
-    cond, uncond = ADGS.perform_special_model_features(model, [cond, uncond], x)
+    try:
+        cond, uncond = ADGS.perform_special_model_features(model, [cond, uncond], x)
 
-    # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
-    if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
-        uncond_ = None
-    else:
-        uncond_ = uncond
-
-    # add AD/evolved-sampling params to model_options (transformer_options)
-    model_options = model_options.copy()
-    if "tranformer_options" not in model_options:
-        model_options["tranformer_options"] = {}
-    model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
-
-    if not ADGS.is_using_sliding_context():
-        cond_pred, uncond_pred = calc_cond_uncond_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)
-    else:
-        cond_pred, uncond_pred = sliding_calc_conds_batch(model, [cond, uncond_], x, timestep, model_options)
-
-    if hasattr(comfy.samplers, "cfg_function"):
-        try:
-            cached_calc_cond_batch = comfy.samplers.calc_cond_batch
-            # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
-            comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
-            to_return = comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
-            if ADGS.sample_settings.image_injection is not None:
-                to_inject = ADGS.sample_settings.image_injection.prepare_injection(timestep)
-                # if have something to inject, do it
-                if to_inject is not None:
-                    to_return = perform_image_injection(to_return, to_inject)
-            return to_return
-        finally:
-            comfy.samplers.calc_cond_batch = cached_calc_cond_batch
-    else: # for backwards compatibility, for now
-        if "sampler_cfg_function" in model_options:
-            args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
-                    "cond_denoised": cond_pred, "uncond_denoised": uncond_pred, "model": model, "model_options": model_options}
-            cfg_result = x - model_options["sampler_cfg_function"](args)
+        # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
+        if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
+            uncond_ = None
         else:
-            cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
+            uncond_ = uncond
 
-        for fn in model_options.get("sampler_post_cfg_function", []):
-            args = {"denoised": cfg_result, "cond": cond, "uncond": uncond, "model": model, "uncond_denoised": uncond_pred, "cond_denoised": cond_pred,
-                    "sigma": timestep, "model_options": model_options, "input": x}
-            cfg_result = fn(args)
+        # add AD/evolved-sampling params to model_options (transformer_options)
+        model_options = model_options.copy()
+        if "tranformer_options" not in model_options:
+            model_options["tranformer_options"] = {}
+        model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
-        return cfg_result
+        if not ADGS.is_using_sliding_context():
+            cond_pred, uncond_pred = calc_cond_uncond_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)
+        else:
+            cond_pred, uncond_pred = sliding_calc_conds_batch(model, [cond, uncond_], x, timestep, model_options)
+
+        if hasattr(comfy.samplers, "cfg_function"):
+            try:
+                cached_calc_cond_batch = comfy.samplers.calc_cond_batch
+                # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
+                comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
+                to_return = comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
+                if ADGS.sample_settings.image_injection is not None:
+                    to_inject = ADGS.sample_settings.image_injection.prepare_injection(timestep)
+                    # if have something to inject, do it
+                    if to_inject is not None:
+                        to_return = perform_image_injection(to_return, to_inject)
+                return to_return
+            finally:
+                comfy.samplers.calc_cond_batch = cached_calc_cond_batch
+        else: # for backwards compatibility, for now
+            if "sampler_cfg_function" in model_options:
+                args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
+                        "cond_denoised": cond_pred, "uncond_denoised": uncond_pred, "model": model, "model_options": model_options}
+                cfg_result = x - model_options["sampler_cfg_function"](args)
+            else:
+                cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
+
+            for fn in model_options.get("sampler_post_cfg_function", []):
+                args = {"denoised": cfg_result, "cond": cond, "uncond": uncond, "model": model, "uncond_denoised": uncond_pred, "cond_denoised": cond_pred,
+                        "sigma": timestep, "model_options": model_options, "input": x}
+                cfg_result = fn(args)
+
+            return cfg_result
+    finally:
+        ADGS.restore_special_model_features(model)
 
 
 def perform_image_injection(latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:

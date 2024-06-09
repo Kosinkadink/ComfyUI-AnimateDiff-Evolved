@@ -4,10 +4,9 @@ from torch import Tensor
 
 from comfy.sd import VAE
 
-from .adapter_pia import InputPIA, InputPIA_Multival
 from .logger import logger
 from .utils_model import BIGMAX
-from .utils_motion import ADKeyframeGroup
+from .utils_motion import ADKeyframeGroup, InputPIA, InputPIA_Multival
 from .motion_lora import MotionLoraList
 from .model_injection import MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat

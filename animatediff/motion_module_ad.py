@@ -242,7 +242,6 @@ class AnimateDiffModel(nn.Module):
         # PIA stuff - create conv_in if keys are present for it
         self.conv_in: comfy.ops.disable_weight_init.Conv2d = None
         self.orig_conv_in: comfy.ops.disable_weight_init.Conv2d = None
-        self.pia_conv_in: comfy.ops.disable_weight_init.Conv2d = None
         if is_pia(mm_state_dict):
             self.init_conv_in(mm_state_dict)
 
@@ -304,9 +303,6 @@ class AnimateDiffModel(nn.Module):
 
     def inject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = model.model.diffusion_model
-        # if PIA, need to replace first conv_in of unet (cache old value)
-        if self.conv_in is not None:
-            self._calculate_unet_conv_in_pia(unet.input_blocks, self.conv_in)
         # inject input (down) blocks
         # SD15 mm contains 4 downblocks, each with 2 TemporalTransformers - 8 in total
         # SDXL mm contains 3 downblocks, each with 2 TemporalTransformers - 6 in total
@@ -361,8 +357,6 @@ class AnimateDiffModel(nn.Module):
 
     def eject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = model.model.diffusion_model
-        # if PIA, restore unet's original conv_in, if needed
-        self._restore_unet_conv_in_pia(unet.input_blocks)
         # remove from input blocks (downblocks)
         self._eject(unet.input_blocks)
         # remove from output blocks (upblocks)
@@ -382,15 +376,15 @@ class AnimateDiffModel(nn.Module):
             for idx in sorted(idx_to_pop, reverse=True):
                 block.pop(idx)
 
-    def _calculate_unet_conv_in_pia(self, unet_blocks: nn.ModuleList, new_conv_in: nn.Module):
+    def inject_unet_conv_in_pia(self, model: BaseModel):
+        if self.conv_in is None:
+            return
         # TODO: make sure works with lowvram
         # expected conv_in is in the first input block, and is the first module
-        first_module = unet_blocks[0][0]
-        self.orig_conv_in = first_module
+        self.orig_conv_in = model.diffusion_model.input_blocks[0][0]
 
-        present_state_dict: dict[str, Tensor] = first_module.state_dict()
-        new_state_dict: dict[str, Tensor] = new_conv_in.state_dict()
-        del first_module
+        present_state_dict: dict[str, Tensor] = self.orig_conv_in.state_dict()
+        new_state_dict: dict[str, Tensor] = self.conv_in.state_dict()
         # bias stays the same, but weight needs to inherit first in_channels from model
         combined_state_dict = {}
         combined_state_dict["bias"] = present_state_dict["bias"]
@@ -403,25 +397,13 @@ class AnimateDiffModel(nn.Module):
         combined_conv_in = self.ops.conv_nd(2, in_channels, model_channels, 3, padding=1,
                                         dtype=present_state_dict["weight"].dtype, device=present_state_dict["weight"].device)
         combined_conv_in.load_state_dict(combined_state_dict)
-        self.pia_conv_in = combined_conv_in
         # now can apply combined_conv_in to unet block
-        #unet_blocks[0][0] = combined_conv_in
+        model.diffusion_model.input_blocks[0][0] = combined_conv_in
     
-    def _restore_unet_conv_in_pia(self, unet_blocks: nn.ModuleList):
+    def restore_unet_conv_in_pia(self, model: BaseModel):
         if self.orig_conv_in is not None:
-            unet_blocks[0][0] = self.orig_conv_in.to(unet_blocks[0][0].weight.device)
+            model.diffusion_model.input_blocks[0][0] = self.orig_conv_in.to(model.diffusion_model.input_blocks[0][0].weight.device)
             self.orig_conv_in = None
-            self.pia_conv_in = None
-
-    def apply_pia_conv_in(self, model: BaseModel, cast_device=True):
-        return self._apply_conv_in(model, self.pia_conv_in, cast_device)
-
-    def apply_orig_conv_in(self, model: BaseModel, cast_device=True):
-        return self._apply_conv_in(model, self.orig_conv_in, cast_device)
-        
-    def _apply_conv_in(self, model: BaseModel, new_conv_in: nn.Module, cast_device=True):
-        if new_conv_in is not None:
-            model.diffusion_model.input_blocks[0][0] = new_conv_in if not cast_device else new_conv_in.to(device=model.diffusion_model.input_blocks[0][0].weight.device)
 
     def set_video_length(self, video_length: int, full_length: int):
         self.AD_video_length = video_length
