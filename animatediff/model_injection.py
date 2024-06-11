@@ -26,7 +26,7 @@ from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError
                            get_combined_multival, get_combined_input, ade_broadcast_image_to, extend_to_batch_size, prepare_mask_batch)
 from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type
+from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 
 
@@ -915,7 +915,9 @@ class MotionModelPatcher(ModelPatcher):
             usable_ref = usable_ref.movedim(1,-1)
             # VAE encode images
             with uninjector:  # use injector to temporarily remove potential function hacks that could break vae behavior
-                usable_ref = model.process_latent_in(self.pia_vae.encode(usable_ref))
+                logger.info("VAE Encoding PIA input images...")
+                usable_ref = model.process_latent_in(vae_encode_raw_batched(vae=self.pia_vae, pixels=usable_ref, show_pbar=False))
+                logger.info("VAE Encoding PIA input images complete.")
             # make pia_latents match expected length
             usable_ref = extend_to_batch_size(usable_ref, b)
             self.prev_pia_latents_shape = x.shape
