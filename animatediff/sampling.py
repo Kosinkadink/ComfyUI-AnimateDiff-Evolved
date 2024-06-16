@@ -675,7 +675,7 @@ def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: Noised
         # composite decoded_x0 with image to inject;
         # make sure to move dims to match expectation of (b,c,h,w)
         composited = composite_extend(destination=decoded_images.movedim(-1, 1), source=to_inject.image.movedim(-1, 1), x=opts.x, y=opts.y, mask=mask,
-                                      multiplier=to_inject.vae.downscale_ratio, resize_source=opts.resize_source).movedim(1, -1)
+                                      multiplier=to_inject.vae.downscale_ratio, resize_source=to_inject.resize_image).movedim(1, -1)
         # encode composited to get latent representation
         composited = vae_encode_raw_batched(to_inject.vae, composited)
         # add encoded_x0 diff to composited 

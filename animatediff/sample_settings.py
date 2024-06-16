@@ -565,22 +565,23 @@ class CustomCFGKeyframeGroup:
 
 
 class NoisedImageInjectOptions:
-    def __init__(self, x=0, y=0, resize_source=True):
+    def __init__(self, x=0, y=0):
         self.x = x
         self.y = y
-        self.resize_source = resize_source
     
     def clone(self):
-        return NoisedImageInjectOptions(x=self.x, y=self.y, resize_source=self.resize_source)
+        return NoisedImageInjectOptions(x=self.x, y=self.y)
 
 
 class NoisedImageToInject:
-    def __init__(self, image: Tensor, mask: Tensor, vae: VAE, start_percent: float, guarantee_steps: int=1, invert_mask=False,
+    def __init__(self, image: Tensor, mask: Tensor, vae: VAE, start_percent: float, guarantee_steps: int=1,
+                 invert_mask=False, resize_image=True,
                  img_inject_opts: NoisedImageInjectOptions=None):
         self.image = image
         self.mask = mask
         self.vae = vae
         self.invert_mask = invert_mask
+        self.resize_image = resize_image
         if img_inject_opts is None:
             img_inject_opts = NoisedImageInjectOptions()
         self.img_inject_opts = img_inject_opts
@@ -591,7 +592,9 @@ class NoisedImageToInject:
         self.guarantee_steps = guarantee_steps
 
     def clone(self):
-        cloned = NoisedImageToInject(image=self.image, vae=self.vae, start_percent=self.start_percent)
+        cloned = NoisedImageToInject(image=self.image, vae=self.vae, start_percent=self.start_percent,
+                                     guarantee_steps=self.guarantee_steps, invert_mask=self.invert_mask, resize_image=self.resize_image,
+                                     img_inject_opts=self.img_inject_opts)
         cloned.start_t = self.start_t
         cloned.start_timestep = self.start_timestep
         return cloned

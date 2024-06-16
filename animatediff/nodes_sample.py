@@ -270,6 +270,7 @@ class NoisedImageInjectionNode:
             "optional": {
                 "mask_opt": ("MASK", ),
                 "invert_mask": ("BOOLEAN", {"default": False}),
+                "resize_image": ("BOOLEAN", {"default": True}),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "guarantee_steps": ("INT", {"default": 1, "min": 1, "max": BIGMAX}),
                 "img_inject_opts": ("IMAGE_INJECT_OPTIONS", ),
@@ -281,13 +282,14 @@ class NoisedImageInjectionNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/image inject"
     FUNCTION = "create_image_inject"
 
-    def create_image_inject(self, image: Tensor, vae: VAE, invert_mask: bool, start_percent: float,
+    def create_image_inject(self, image: Tensor, vae: VAE, invert_mask: bool, resize_image: bool, start_percent: float,
                             mask_opt: Tensor=None, prev_image_inject: NoisedImageToInjectGroup=None, guarantee_steps=1,
                             img_inject_opts=None):
         if not prev_image_inject:
             prev_image_inject = NoisedImageToInjectGroup()
         prev_image_inject = prev_image_inject.clone()
-        to_inject = NoisedImageToInject(image=image, mask=mask_opt, vae=vae, invert_mask=invert_mask, start_percent=start_percent, guarantee_steps=guarantee_steps,
+        to_inject = NoisedImageToInject(image=image, mask=mask_opt, vae=vae, invert_mask=invert_mask, resize_image=resize_image,
+                                        start_percent=start_percent, guarantee_steps=guarantee_steps,
                                         img_inject_opts=img_inject_opts)
         prev_image_inject.add(to_inject)
         return (prev_image_inject,)
@@ -300,9 +302,8 @@ class NoisedImageInjectOptionsNode:
             "required": {
             },
             "optional": {
-                "x": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
-                "y": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
-                "resize_source": ("BOOLEAN", {"default": True}),
+                "composite_x": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
+                "composite_y": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
             }
         }
     
@@ -311,5 +312,5 @@ class NoisedImageInjectOptionsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/image inject"
     FUNCTION = "create_image_inject_opts"
 
-    def create_image_inject_opts(self, x=0, y=0, resize_source=True):
-        return (NoisedImageInjectOptions(x=x, y=y, resize_source=resize_source),)
+    def create_image_inject_opts(self, x=0, y=0):
+        return (NoisedImageInjectOptions(x=x, y=y),)
