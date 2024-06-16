@@ -7,8 +7,8 @@ from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
                               NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
                               SeedNoiseGeneration, SampleSettings, CustomCFGKeyframeGroup, CustomCFGKeyframe,
-                              NoisedImageToInjectGroup, NoisedImageToInject)
-from .utils_model import BIGMIN, BIGMAX, SigmaSchedule
+                              NoisedImageToInjectGroup, NoisedImageToInject, NoisedImageInjectOptions)
+from .utils_model import BIGMIN, BIGMAX, MAX_RESOLUTION, SigmaSchedule
 
 
 class SampleSettingsNode:
@@ -271,20 +271,45 @@ class NoisedImageInjectionNode:
                 "mask_opt": ("MASK", ),
                 "invert_mask": ("BOOLEAN", {"default": False}),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "guarantee_steps": ("INT", {"default": 1, "min": 1, "max": BIGMAX}),
+                "img_inject_opts": ("IMAGE_INJECT_OPTIONS", ),
                 "prev_image_inject": ("IMAGE_INJECT", ),
-                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
             }
         }
     
     RETURN_TYPES = ("IMAGE_INJECT",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/image inject"
     FUNCTION = "create_image_inject"
 
     def create_image_inject(self, image: Tensor, vae: VAE, invert_mask: bool, start_percent: float,
-                            mask_opt: Tensor=None, prev_image_inject: NoisedImageToInjectGroup=None, guarantee_steps=1):
+                            mask_opt: Tensor=None, prev_image_inject: NoisedImageToInjectGroup=None, guarantee_steps=1,
+                            img_inject_opts=None):
         if not prev_image_inject:
             prev_image_inject = NoisedImageToInjectGroup()
-        prev_image_inject.clone()
-        to_inject = NoisedImageToInject(image=image, mask=mask_opt, vae=vae, invert_mask=invert_mask, start_percent=start_percent, guarantee_steps=guarantee_steps)
+        prev_image_inject = prev_image_inject.clone()
+        to_inject = NoisedImageToInject(image=image, mask=mask_opt, vae=vae, invert_mask=invert_mask, start_percent=start_percent, guarantee_steps=guarantee_steps,
+                                        img_inject_opts=img_inject_opts)
         prev_image_inject.add(to_inject)
         return (prev_image_inject,)
+
+
+class NoisedImageInjectOptionsNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "x": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
+                "y": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
+                "resize_source": ("BOOLEAN", {"default": True}),
+            }
+        }
+    
+    RETURN_TYPES = ("IMAGE_INJECT_OPTIONS",)
+    RETURN_NAMES = ("IMG_INJECT_OPTS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/image inject"
+    FUNCTION = "create_image_inject_opts"
+
+    def create_image_inject_opts(self, x=0, y=0, resize_source=True):
+        return (NoisedImageInjectOptions(x=x, y=y, resize_source=resize_source),)

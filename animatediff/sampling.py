@@ -27,7 +27,7 @@ import comfy.ops
 from .conditioning import COND_CONST, LoraHookGroup, conditioning_set_values
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
-from .utils_model import ModelTypeSD
+from .utils_model import ModelTypeSD, vae_encode_raw_batched, vae_decode_raw_batched
 from .utils_motion import composite_extend
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
@@ -57,8 +57,6 @@ class AnimateDiffHelper_GlobalState:
                 self.params.context_options.initialize_timesteps(model)
             if self.sample_settings.custom_cfg is not None:
                 self.sample_settings.custom_cfg.initialize_timesteps(model)
-            if self.sample_settings.image_injection is not None:
-                self.sample_settings.image_injection.initialize_timesteps(model)
 
     def hooks_initialize(self, model: BaseModel, hook_groups: list[LoraHookGroup]):
         # this function is to be run the first time all gathered
@@ -409,7 +407,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                 if original_callback is not None:
                     original_callback(step, x0, x, total_steps)
                 # store denoised latents if image_injection will be used
-                if model.sample_settings.image_injection is not None:
+                if not model.sample_settings.image_injection.is_empty():
                     ADGS.callback_output_dict["x0"] = x0
                 # update GLOBALSTATE for next iteration
                 ADGS.current_step = ADGS.start_step + step + 1
@@ -479,7 +477,63 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                     model.motion_models.pre_run(model)
                 if model.sample_settings is not None:
                     model.sample_settings.pre_run(model)
-                latents = orig_comfy_sample(model, noise, *args, **kwargs)
+
+                if ADGS.sample_settings.image_injection.is_empty():
+                    latents = orig_comfy_sample(model, noise, *args, **kwargs)
+                else:
+                    ADGS.sample_settings.image_injection.initialize_timesteps(model.model)
+                    # separate handling for KSampler vs Custom KSampler
+                    if is_custom:
+                        sigmas = args[2]
+                        sigmas_list, injection_list = ADGS.sample_settings.image_injection.custom_ksampler_get_injections(model, sigmas)
+                        is_first = True
+                        new_noise = noise
+                        for i in range(len(sigmas_list)):
+                            args[2] = sigmas_list[i]
+                            args[-1] = latents
+                            latents = orig_comfy_sample(model, new_noise, *args, **kwargs)
+                            if is_first:
+                                new_noise = torch.zeros_like(latents)
+                            # if injection expected, perform injection
+                            if i < len(injection_list):
+                                to_inject = injection_list[i]
+                                latents = perform_image_injection(model.model, latents, to_inject)
+                    else:
+                        is_ksampler_advanced = kwargs.get("start_step", None) is not None
+                        total_steps = args[0]
+                        scheduler = args[-4]
+                        # force_full_denoise should be respected on final sampling - should be True for normal KSampler
+                        final_force_full_denoise = kwargs.get("force_full_denoise", False)
+                        new_kwargs = kwargs.copy()
+                        if not is_ksampler_advanced:
+                            final_force_full_denoise = True
+                            new_kwargs["start_step"] = 0
+                            new_kwargs["last_step"] = 10000
+
+                        steps_list, injection_list = ADGS.sample_settings.image_injection.ksampler_get_injections(model, scheduler, new_kwargs["start_step"], new_kwargs["last_step"], total_steps)
+                        is_first = True
+                        new_noise = noise
+                        for i in range(len(steps_list)):
+                            steps_range = steps_list[i]
+                            args[-1] = latents
+                            # first run will respect original disable_noise, but should have no effect on anything
+                            # as disable_noise only does something in the functions that call this one
+                            if not is_first:
+                                new_kwargs["disable_noise"] = True
+                            new_kwargs["start_step"] = steps_range[0]
+                            new_kwargs["last_step"] = steps_range[1]
+                            # if is last, respect original sampler's force_full_denoise
+                            if i == len(steps_list)-1:
+                                new_kwargs["force_full_denoise"] = final_force_full_denoise
+                            else:
+                                new_kwargs["force_full_denoise"] = False
+                            latents = orig_comfy_sample(model, new_noise, *args, **new_kwargs)
+                            if is_first:
+                                new_noise = torch.zeros_like(latents)
+                            # if injection expected, perform injection
+                            if i < len(injection_list):
+                                to_inject = injection_list[i]
+                                latents = perform_image_injection(model.model, latents, to_inject)
             return latents
         finally:
             del latents
@@ -497,7 +551,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
     return motion_sample
 
 
-def evolved_sampling_function(model, x: Tensor, timestep, uncond, cond, cond_scale, model_options: dict={}, seed=None):
+def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS.initialize(model)
     ADGS.prepare_current_keyframes(x=x, timestep=timestep)
     try:
@@ -525,13 +579,7 @@ def evolved_sampling_function(model, x: Tensor, timestep, uncond, cond, cond_sca
                 cached_calc_cond_batch = comfy.samplers.calc_cond_batch
                 # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
                 comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
-                to_return = comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
-                if ADGS.sample_settings.image_injection is not None:
-                    to_inject = ADGS.sample_settings.image_injection.prepare_injection(timestep)
-                    # if have something to inject, do it
-                    if to_inject is not None:
-                        to_return = perform_image_injection(to_return, to_inject)
-                return to_return
+                return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
             finally:
                 comfy.samplers.calc_cond_batch = cached_calc_cond_batch
         else: # for backwards compatibility, for now
@@ -552,41 +600,48 @@ def evolved_sampling_function(model, x: Tensor, timestep, uncond, cond, cond_sca
         ADGS.restore_special_model_features(model)
 
 
-def perform_image_injection(latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:
+def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:
+    # NOTE: the latents here have already been process_latent_out'ed
+    # get currently used models so they can be properly reloaded after perfoming VAE Encoding
+    if hasattr(comfy.model_management, "loaded_models"):
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
+    else:
+        cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
     try:
         orig_device = latents.device
         orig_dtype = latents.dtype
-        # NOTE: current_loaded_models is a list of LoadedModel
-        cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
         # follow same steps as in KSampler Custom to get same denoised_x0 value
-        decoded_x0 = ADGS.model_patcher.model.process_latent_out(ADGS.callback_output_dict.get("x0", torch.zeros_like(latents, device="cpu")).cpu())
-        # VAE decode to get the image representation of denoised_x0
-        decoded_x0 = to_inject.vae.decode(decoded_x0)
-        # VAE encode to get back latent representation
-        encoded_x0 = to_inject.vae.encode(decoded_x0)
-        # get difference between original latents and encoded_x0 to get 'noise'
-        x_combo: Tensor = ADGS.model_patcher.model.process_latent_out(latents.to(encoded_x0.device)) - encoded_x0
-        #x_combo: Tensor = latents.to(encoded_x0.device) - encoded_x0
+        x0 = ADGS.callback_output_dict.get("x0", None)
+        if x0 is None:
+            return latents
+        # x0 should be process_latent_out'ed to match expected state of latents between nodes
+        x0 = model.process_latent_out(x0)
+    
+        # first, decode x0 into images, and then re-encode
+        decoded_images = vae_decode_raw_batched(to_inject.vae, x0)
+        encoded_x0 = vae_encode_raw_batched(to_inject.vae, decoded_images)
+
+        # get difference between sampled latents and encoded_x0
+        encoded_x0 = latents - encoded_x0
+
         # get mask, or default to full mask
         mask = to_inject.mask
-        b, c, h, w = x_combo.shape
+        b, c, h, w = encoded_x0.shape
         # need to resize images and masks to match expected dims
         if mask is None:
             mask = torch.ones(1, h, w)
         if to_inject.invert_mask:
             mask = 1.0 - mask
+        opts = to_inject.img_inject_opts
         # composite decoded_x0 with image to inject;
         # make sure to move dims to match expectation of (b,c,h,w)
-        composited = composite_extend(destination=decoded_x0.movedim(-1, 1), source=to_inject.image.movedim(-1, 1), x=0, y=0, mask=mask,
-                                      multiplier=to_inject.vae.downscale_ratio, resize_source=True).movedim(1, -1)
+        composited = composite_extend(destination=decoded_images.movedim(-1, 1), source=to_inject.image.movedim(-1, 1), x=opts.x, y=opts.y, mask=mask,
+                                      multiplier=to_inject.vae.downscale_ratio, resize_source=opts.resize_source).movedim(1, -1)
         # encode composited to get latent representation
-        composited = to_inject.vae.encode(composited)
-        # add composited to x_diff to get noise mixed with composited latent
-        x_combo += composited * 1.0
-        # clean mem and return on proper device and dtype
-        del decoded_x0
-        del encoded_x0
-        return ADGS.model_patcher.model.process_latent_in(x_combo).to(dtype=orig_dtype, device=orig_device)
+        composited = vae_encode_raw_batched(to_inject.vae, composited)
+        # add encoded_x0 diff to composited 
+        composited += encoded_x0
+        return composited.to(dtype=orig_dtype, device=orig_device)
     finally:
         comfy.model_management.load_models_gpu(cached_loaded_models)
 

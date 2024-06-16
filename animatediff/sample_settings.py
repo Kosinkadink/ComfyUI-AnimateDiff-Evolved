@@ -564,20 +564,36 @@ class CustomCFGKeyframeGroup:
         return None
 
 
+class NoisedImageInjectOptions:
+    def __init__(self, x=0, y=0, resize_source=True):
+        self.x = x
+        self.y = y
+        self.resize_source = resize_source
+    
+    def clone(self):
+        return NoisedImageInjectOptions(x=self.x, y=self.y, resize_source=self.resize_source)
+
+
 class NoisedImageToInject:
-    def __init__(self, image: Tensor, mask: Tensor, vae: VAE, start_percent: float, guarantee_steps: int=1, invert_mask=False):
+    def __init__(self, image: Tensor, mask: Tensor, vae: VAE, start_percent: float, guarantee_steps: int=1, invert_mask=False,
+                 img_inject_opts: NoisedImageInjectOptions=None):
         self.image = image
         self.mask = mask
         self.vae = vae
         self.invert_mask = invert_mask
+        if img_inject_opts is None:
+            img_inject_opts = NoisedImageInjectOptions()
+        self.img_inject_opts = img_inject_opts
         # scheduling
         self.start_percent = float(start_percent)
         self.start_t = 999999999.9
+        self.start_timestep = 999
         self.guarantee_steps = guarantee_steps
 
     def clone(self):
         cloned = NoisedImageToInject(image=self.image, vae=self.vae, start_percent=self.start_percent)
         cloned.start_t = self.start_t
+        cloned.start_timestep = self.start_timestep
         return cloned
 
 
@@ -615,33 +631,83 @@ class NoisedImageToInjectGroup:
     def initialize_timesteps(self, model: BaseModel):
         for to_inject in self.injections:
             to_inject.start_t = model.model_sampling.percent_to_sigma(to_inject.start_percent)
+            to_inject.start_timestep = model.model_sampling.timestep(torch.tensor(to_inject.start_t))
 
-    def prepare_injection(self, t: Tensor) -> Union[NoisedImageToInject, None]:
-        curr_t: float = t[0]
-        prev_index = self._current_index
-        # if nothing to inject, return input latents
+    def ksampler_get_injections(self, model: ModelPatcher, scheduler: str, start_step: int, last_step: int, total_steps: int) -> tuple[list[list[int]], list[NoisedImageToInject]]:
+        actual_last_step = min(last_step, total_steps)
+        steps = list(range(start_step, actual_last_step+1))
+        # get the relative percentage location of each step
+        percentages = [step/total_steps for step in steps]
+        # get the sigmas, and then the timesteps based on these percentages
+        model_sampling = model.get_model_object("model_sampling")
+        sigmas = [model_sampling.percent_to_sigma(x) for x in percentages]
+        timesteps = [model_sampling.timestep(torch.tensor(x)) for x in sigmas]
+        # get actual ranges + injections
+        ranges, injections = self._prepare_injections(timesteps=timesteps)
+        # ranges are given with end-exclusive index, so subtract by 1 to get real step value
+        steps_list = [[steps[x[0]],steps[x[1]-1]] for x in ranges]
+        return steps_list, injections
+
+    def custom_ksampler_get_injections(self, model: ModelPatcher, sigmas: Tensor) -> tuple[list[list[Tensor]], list[NoisedImageToInject]]:
+        model_sampling = model.get_model_object("model_sampling")
+        timesteps = []
+        for i in range(sigmas.shape[0]):
+            timesteps.append(model_sampling.timestep(sigmas[i]))
+        # get actual ranges + injections
+        ranges, injections = self._prepare_injections(timesteps=timesteps)
+        sigmas_list = [sigmas[x[0]:x[1]] for x in ranges]
+        return sigmas_list, injections
+
+    def _prepare_injections(self, timesteps: list[Tensor]) -> tuple[list[list[Tensor]], list[NoisedImageToInject]]:
+        range_start = timesteps[0]
+        range_end = timesteps[-1]
+        # if nothing to inject, return all indexes of timesteps and no injections
         if self.is_empty():
-            return None
-        try:
-            to_inject = None
-            if self._current_index >= 0 and self._current_used_steps < self.current_injection.guarantee_steps:
-                to_inject = self.current_injection
-            else:
-                if self.has_index(self._current_index+1):
-                    for i in range(self._current_index+1, len(self.injections)):
-                        eval_c = self.injections[i]
-                        # check if start_t is greater or equal to curr_t
-                        # NOTE: t is in terms of sigmas, not percent, so bigger number = earlier step in sampling
-                        if eval_c.start_t >= curr_t:
-                            self._current_index = i
-                            self._current_used_steps = 0
-                            to_inject = self.current_injection
-                            # if guarantee_steps greater than zero, stop searching for others
-                            if to_inject.guarantee_steps > 0:
-                                break
-                        # if eval_c is outside the percent range, stop looking further
-                        else: break
-            return to_inject
-        finally:
-            # update steps current image injection is present
-            self._current_used_steps += 1
+            return ([(0, len(timesteps))], [])
+        # otherwise, need to populate lists
+        timesteps_list: list[list[Tensor]] = []
+        injection_list: list[NoisedImageToInject] = []
+        remaining_timesteps = timesteps.copy()
+        remaining_offset = 0
+        # NOTE: timesteps start at 999 and end at 0; the smaller the timestep, the 'later' the step
+        for eval_c in self.injections:
+            if len(remaining_timesteps) <= 2:
+                break
+            current_used_steps = 0
+            # if start_timestep is greater than range_start, ignore it
+            if eval_c.start_timestep > range_start:
+                continue
+            # if start_timestep is less than range_end, ignore it
+            if eval_c.start_timestep < range_end:
+                continue
+            while current_used_steps < eval_c.guarantee_steps:
+                if len(remaining_timesteps) <= 2:
+                    break
+                # otherwise, make a split in timesteps
+                broken_nicely = False
+                for i in range(1, len(remaining_timesteps)-1):
+                    # if smaller than timestep, look at next timestep
+                    if eval_c.start_timestep < remaining_timesteps[i]:
+                        continue
+                    # if only one timestep would be leftover, then end
+                    if len(remaining_timesteps[i:]) < 2:
+                        broken_nicely = True
+                        break
+                    new_timestep_range = (remaining_offset, remaining_offset+i+1)
+                    timesteps_list.append(new_timestep_range)
+                    injection_list.append(eval_c)
+                    current_used_steps += 1
+                    remaining_timesteps = remaining_timesteps[i:]
+                    remaining_offset += i
+                    # expected break
+                    broken_nicely = True
+                    break
+                # did not find a match for the timestep, so should break out of while loop
+                if not broken_nicely:
+                    break
+
+        # add remaining timestep range
+        timesteps_list.append((remaining_offset, remaining_offset+len(remaining_timesteps)))
+        # return lists - timesteps list len should be one greater than injection list len (fenceposts problem)
+        assert len(timesteps_list) == len(injection_list) + 1
+        return timesteps_list, injection_list
