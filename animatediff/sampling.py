@@ -497,7 +497,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                             # if injection expected, perform injection
                             if i < len(injection_list):
                                 to_inject = injection_list[i]
-                                latents = perform_image_injection(model.model, latents, to_inject)
+                                with ADGS.function_injections.temp_uninjector:
+                                    latents = perform_image_injection(model.model, latents, to_inject)
                     else:
                         is_ksampler_advanced = kwargs.get("start_step", None) is not None
                         total_steps = args[0]
@@ -509,7 +510,6 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                             final_force_full_denoise = True
                             new_kwargs["start_step"] = 0
                             new_kwargs["last_step"] = 10000
-
                         steps_list, injection_list = ADGS.sample_settings.image_injection.ksampler_get_injections(model, scheduler, new_kwargs["start_step"], new_kwargs["last_step"], total_steps)
                         is_first = True
                         new_noise = noise
@@ -533,7 +533,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                             # if injection expected, perform injection
                             if i < len(injection_list):
                                 to_inject = injection_list[i]
-                                latents = perform_image_injection(model.model, latents, to_inject)
+                                with ADGS.function_injections.temp_uninjector:
+                                    latents = perform_image_injection(model.model, latents, to_inject)
             return latents
         finally:
             del latents
