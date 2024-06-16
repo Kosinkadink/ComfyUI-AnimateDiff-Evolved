@@ -879,7 +879,7 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
 
-    def get_pia_c_concat(self, model: BaseModel, x: Tensor, uninjector) -> Tensor:
+    def get_pia_c_concat(self, model: BaseModel, x: Tensor) -> Tensor:
         # if have cached shape, check if matches - if so, return cached pia_latents
         if self.prev_pia_latents_shape is not None:
             if self.prev_pia_latents_shape[0] == x.shape[0] and self.prev_pia_latents_shape[2] == x.shape[2] and self.prev_pia_latents_shape[3] == x.shape[3]:
@@ -914,10 +914,9 @@ class MotionModelPatcher(ModelPatcher):
                                                     upscale_method="bilinear", crop="center")
             usable_ref = usable_ref.movedim(1,-1)
             # VAE encode images
-            with uninjector:  # use injector to temporarily remove potential function hacks that could break vae behavior
-                logger.info("VAE Encoding PIA input images...")
-                usable_ref = model.process_latent_in(vae_encode_raw_batched(vae=self.pia_vae, pixels=usable_ref, show_pbar=False))
-                logger.info("VAE Encoding PIA input images complete.")
+            logger.info("VAE Encoding PIA input images...")
+            usable_ref = model.process_latent_in(vae_encode_raw_batched(vae=self.pia_vae, pixels=usable_ref, show_pbar=False))
+            logger.info("VAE Encoding PIA input images complete.")
             # make pia_latents match expected length
             usable_ref = extend_to_batch_size(usable_ref, b)
             self.prev_pia_latents_shape = x.shape

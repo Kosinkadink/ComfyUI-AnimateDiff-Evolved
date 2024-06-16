@@ -87,7 +87,7 @@ class AnimateDiffHelper_GlobalState:
                     if pia_model.model.is_in_effect():
                         pia_model.model.inject_unet_conv_in_pia(model)
                         conds = get_conds_with_c_concat(conds,
-                                                        pia_model.get_pia_c_concat(model, x_in, self.function_injections.temp_uninjector))
+                                                        pia_model.get_pia_c_concat(model, x_in))
         return conds
 
     def restore_special_model_features(self, model: BaseModel):
@@ -223,6 +223,14 @@ def apply_model_factory(orig_apply_model: Callable):
         del x
         return orig_apply_model(*args, **kwargs)
     return apply_model_ade_wrapper
+
+def diffusion_model_forward_groupnormed_factory(orig_diffusion_model_forward: Callable, inject_helper: 'GroupnormInjectHelper'):
+    def diffusion_model_forward_groupnormed(*args, **kwargs):
+        with inject_helper:
+            return orig_diffusion_model_forward(*args, **kwargs)
+    return diffusion_model_forward_groupnormed
+
+
 ######################################################################
 ##################################################################################
 
@@ -269,7 +277,8 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
 
 class FunctionInjectionHolder:
     def __init__(self):
-        self.temp_uninjector: GroupnormFunctionHelper = GroupnormFunctionHelper()
+        self.temp_uninjector: GroupnormUninjectHelper = GroupnormUninjectHelper()
+        self.groupnorm_injector: GroupnormInjectHelper = GroupnormInjectHelper()
     
     def inject_functions(self, model: ModelPatcherAndInjector, params: InjectionParams):
         # Save Original Functions - order must match between here and restore_functions
@@ -277,6 +286,7 @@ class FunctionInjectionHolder:
         self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_forward_comfy_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
+        self.orig_diffusion_model_forward = model.model.diffusion_model.forward
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
         self.orig_get_area_and_mult = comfy.samplers.get_area_and_mult
         if SAMPLE_FALLBACK:  # for backwards compatibility, for now
@@ -294,8 +304,10 @@ class FunctionInjectionHolder:
             if ((info.mm_format == AnimateDiffFormat.PIA) or
                 (info.mm_version == AnimateDiffVersion.V2 and not params.apply_v2_properly) or
                 (info.mm_version == AnimateDiffVersion.V1)):
-                torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
-                comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
+                self.inject_groupnorm_forward = groupnorm_mm_factory(params)
+                self.inject_groupnorm_forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
+                self.groupnorm_injector = GroupnormInjectHelper(self)
+                model.model.diffusion_model.forward = diffusion_model_forward_groupnormed_factory(self.orig_diffusion_model_forward, self.groupnorm_injector)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
                 try:
                     if model.load_device.type == "mps":
@@ -315,7 +327,7 @@ class FunctionInjectionHolder:
         else:
             comfy.sampler_helpers.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
         # create temp_uninjector to help facilitate uninjecting functions
-        self.temp_uninjector = GroupnormFunctionHelper(self)
+        self.temp_uninjector = GroupnormUninjectHelper(self)
 
     def restore_functions(self, model: ModelPatcherAndInjector):
         # Restoration
@@ -324,6 +336,7 @@ class FunctionInjectionHolder:
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_forward_comfy_cast_weights
+            model.model.diffusion_model.forward = self.orig_diffusion_model_forward
             comfy.samplers.sampling_function = self.orig_sampling_function
             comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             if SAMPLE_FALLBACK:  # for backwards compatibility, for now
@@ -336,7 +349,7 @@ class FunctionInjectionHolder:
                          "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
 
 
-class GroupnormFunctionHelper:
+class GroupnormUninjectHelper:
     def __init__(self, holder: FunctionInjectionHolder=None):
         self.holder = holder
         self.previous_gn_forward = None
@@ -361,6 +374,33 @@ class GroupnormFunctionHelper:
         comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.previous_dwi_gn_cast_weights
         self.previous_gn_forward = None
         self.previous_dwi_gn_cast_weights = None
+
+
+class GroupnormInjectHelper:
+    def __init__(self, holder: FunctionInjectionHolder=None):
+        self.holder = holder
+        self.previous_gn_forward = None
+        self.previous_dwi_gn_cast_weights = None
+    
+    def __enter__(self):
+        if self.holder is None:
+            return self
+        # store previous gn_forward
+        self.previous_gn_forward = torch.nn.GroupNorm.forward
+        self.previous_dwi_gn_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
+        # inject groupnorm functions
+        torch.nn.GroupNorm.forward = self.holder.inject_groupnorm_forward
+        comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.holder.inject_groupnorm_forward_comfy_cast_weights
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        if self.holder is None:
+            return
+        # bring groupnorm back to previous state
+        torch.nn.GroupNorm.forward = self.previous_gn_forward
+        comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.previous_dwi_gn_cast_weights
+        self.previous_gn_forward = None
+        self.previous_dwi_gn_cast_weights = None     
 
 
 def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) -> Callable:
@@ -497,8 +537,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                             # if injection expected, perform injection
                             if i < len(injection_list):
                                 to_inject = injection_list[i]
-                                with ADGS.function_injections.temp_uninjector:
-                                    latents = perform_image_injection(model.model, latents, to_inject)
+                                latents = perform_image_injection(model.model, latents, to_inject)
                     else:
                         is_ksampler_advanced = kwargs.get("start_step", None) is not None
                         total_steps = args[0]
@@ -533,8 +572,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                             # if injection expected, perform injection
                             if i < len(injection_list):
                                 to_inject = injection_list[i]
-                                with ADGS.function_injections.temp_uninjector:
-                                    latents = perform_image_injection(model.model, latents, to_inject)
+                                latents = perform_image_injection(model.model, latents, to_inject)
             return latents
         finally:
             del latents
