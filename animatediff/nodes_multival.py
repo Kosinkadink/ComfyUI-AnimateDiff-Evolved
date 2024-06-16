@@ -134,3 +134,26 @@ class MultivalFloatNode:
 
     def create_multival(self, float_val: Union[float, list[float]]=None):
         return MultivalDynamicNode.create_multival(self, float_val=float_val)
+
+
+class MultivalConvertToMaskNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "multival": ("MULTIVAL",)
+            }
+        }
+    
+    RETURN_TYPES = ("MASK",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/multival"
+    FUNCTION = "convert_multival_to_mask"
+
+    def convert_multival_to_mask(self, multival: Union[float, Tensor]):
+        # if already tensor, assume is a valid mask
+        if type(multival) == Tensor:
+            return (multival,)
+        # otherwise, make a single 1x1 mask with the proper value
+        shape = (1,1,1)
+        converted_multival = torch.ones(shape) * multival
+        return (converted_multival,)
