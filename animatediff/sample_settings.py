@@ -575,13 +575,14 @@ class NoisedImageInjectOptions:
 
 class NoisedImageToInject:
     def __init__(self, image: Tensor, mask: Tensor, vae: VAE, start_percent: float, guarantee_steps: int=1,
-                 invert_mask=False, resize_image=True,
+                 invert_mask=False, resize_image=True, strength_multival=None,
                  img_inject_opts: NoisedImageInjectOptions=None):
         self.image = image
         self.mask = mask
         self.vae = vae
         self.invert_mask = invert_mask
         self.resize_image = resize_image
+        self.strength_multival = 1.0 if strength_multival is None else strength_multival
         if img_inject_opts is None:
             img_inject_opts = NoisedImageInjectOptions()
         self.img_inject_opts = img_inject_opts

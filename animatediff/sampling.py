@@ -28,7 +28,7 @@ from .conditioning import COND_CONST, LoraHookGroup, conditioning_set_values
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
 from .utils_model import ModelTypeSD, vae_encode_raw_batched, vae_decode_raw_batched
-from .utils_motion import composite_extend
+from .utils_motion import composite_extend, get_combined_multival, prepare_mask_batch, extend_to_batch_size
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
 from .logger import logger
@@ -680,7 +680,12 @@ def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: Noised
         composited = vae_encode_raw_batched(to_inject.vae, composited)
         # add encoded_x0 diff to composited 
         composited += encoded_x0
-        return composited.to(dtype=orig_dtype, device=orig_device)
+        if type(to_inject.strength_multival) == float and math.isclose(1.0, to_inject.strength_multival):
+            return composited.to(dtype=orig_dtype, device=orig_device)
+        strength = to_inject.strength_multival
+        if type(strength) == Tensor:
+            strength = extend_to_batch_size(prepare_mask_batch(strength, composited.shape), b)
+        return composited * strength + latents * (1.0 - strength)
     finally:
         comfy.model_management.load_models_gpu(cached_loaded_models)
 

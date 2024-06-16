@@ -274,6 +274,7 @@ class NoisedImageInjectionNode:
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "guarantee_steps": ("INT", {"default": 1, "min": 1, "max": BIGMAX}),
                 "img_inject_opts": ("IMAGE_INJECT_OPTIONS", ),
+                "strength_multival": ("MULTIVAL", ),
                 "prev_image_inject": ("IMAGE_INJECT", ),
             }
         }
@@ -283,12 +284,12 @@ class NoisedImageInjectionNode:
     FUNCTION = "create_image_inject"
 
     def create_image_inject(self, image: Tensor, vae: VAE, invert_mask: bool, resize_image: bool, start_percent: float,
-                            mask_opt: Tensor=None, prev_image_inject: NoisedImageToInjectGroup=None, guarantee_steps=1,
+                            mask_opt: Tensor=None, strength_multival: Union[float, Tensor]=None, prev_image_inject: NoisedImageToInjectGroup=None, guarantee_steps=1,
                             img_inject_opts=None):
         if not prev_image_inject:
             prev_image_inject = NoisedImageToInjectGroup()
         prev_image_inject = prev_image_inject.clone()
-        to_inject = NoisedImageToInject(image=image, mask=mask_opt, vae=vae, invert_mask=invert_mask, resize_image=resize_image,
+        to_inject = NoisedImageToInject(image=image, mask=mask_opt, vae=vae, invert_mask=invert_mask, resize_image=resize_image, strength_multival=strength_multival,
                                         start_percent=start_percent, guarantee_steps=guarantee_steps,
                                         img_inject_opts=img_inject_opts)
         prev_image_inject.add(to_inject)
