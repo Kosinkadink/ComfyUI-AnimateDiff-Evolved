@@ -9,7 +9,7 @@ from .nodes_animatelcmi2v import (ApplyAnimateLCMI2VModel, LoadAnimateLCMI2VMode
 from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, CameraCtrlADKeyframeNode, LoadCameraPoses,
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
-from .nodes_pia import (ApplyAnimateDiffPIAModel, InputPIA_MultivalNode, PIA_ADKeyframeNode)
+from .nodes_pia import (ApplyAnimateDiffPIAModel, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalConvertToMaskNode
 from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
                                  SetModelLoraHook, SetClipLoraHook,
@@ -140,6 +140,7 @@ NODE_CLASS_MAPPINGS = {
     # PIA Nodes
     "ADE_ApplyAnimateDiffModelWithPIA": ApplyAnimateDiffPIAModel,
     "ADE_InputPIA_Multival": InputPIA_MultivalNode,
+    "ADE_InputPIA_PaperPresets": InputPIA_PaperPresetsNode,
     "ADE_PIA_AnimateDiffKeyframe": PIA_ADKeyframeNode,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
@@ -251,6 +252,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # PIA Nodes
     "ADE_ApplyAnimateDiffModelWithPIA": "Apply AnimateDiff-PIA Model 🎭🅐🅓②",
     "ADE_InputPIA_Multival": "PIA Input [Multival] 🎭🅐🅓②",
+    "ADE_InputPIA_PaperPresets": "PIA Input [Paper Presets] 🎭🅐🅓②",
     "ADE_PIA_AnimateDiffKeyframe": "AnimateDiff-PIA Keyframe 🎭🅐🅓",
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",

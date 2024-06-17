@@ -23,7 +23,8 @@ from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyA
                                has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, InputPIA,
-                           get_combined_multival, get_combined_input, ade_broadcast_image_to, extend_to_batch_size, prepare_mask_batch)
+                           get_combined_multival, get_combined_input, get_combined_input_effect_multival,
+                           ade_broadcast_image_to, extend_to_batch_size, prepare_mask_batch)
 from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched
@@ -746,6 +747,7 @@ class MotionModelPatcher(ModelPatcher):
         self.combined_effect: Union[float, Tensor] = None
         self.combined_cameractrl_effect: Union[float, Tensor] = None
         self.combined_pia_mask: Union[float, Tensor] = None
+        self.combined_pia_effect: Union[float, Tensor] = None
         self.was_within_range = False
         self.prev_sub_idxs = None
         self.prev_batched_number = None
@@ -832,6 +834,7 @@ class MotionModelPatcher(ModelPatcher):
             self.combined_effect = get_combined_multival(self.effect_multival, self.current_effect)
             self.combined_cameractrl_effect = get_combined_multival(self.cameractrl_multival, self.current_cameractrl_effect)
             self.combined_pia_mask = get_combined_input(self.pia_input, self.current_pia_input, x)
+            self.combined_pia_effect = get_combined_input_effect_multival(self.pia_input, self.current_pia_input)
             # apply scale and effect
             self.model.set_scale(self.combined_scale)
             self.model.set_effect(self.combined_effect)
@@ -920,6 +923,7 @@ class MotionModelPatcher(ModelPatcher):
                 mask = extend_to_batch_size(mask, b)
                 # make sure to update prev_current_pia_input to know when is changed
                 self.prev_current_pia_input = self.current_pia_input
+                # TODO: handle self.combined_pia_effect eventually (feature hidden for now)
                 # the first index in dim=1 is the mask that needs to be updated - update in place
                 self.cached_pia_c_concat.cond[:, :1, :, :] = mask
                 return self.cached_pia_c_concat
@@ -953,6 +957,16 @@ class MotionModelPatcher(ModelPatcher):
             mask = extend_to_batch_size(mask, b)
             #mask = mask.unsqueeze(1)
             self.prev_current_pia_input = self.current_pia_input
+            if type(self.combined_pia_effect) == Tensor or not math.isclose(self.combined_pia_effect, 1.0):
+                real_pia_effect = self.combined_pia_effect
+                if type(self.combined_pia_effect) == Tensor:
+                    real_pia_effect = extend_to_batch_size(prepare_mask_batch(self.combined_pia_effect, x.shape), b)
+                zero_mask = torch.zeros_like(mask)
+                mask = mask * real_pia_effect + zero_mask * (1.0 - real_pia_effect)
+                del zero_mask
+                zero_usable_ref = torch.zeros_like(usable_ref)
+                usable_ref = usable_ref * real_pia_effect + zero_usable_ref * (1.0 - real_pia_effect)
+                del zero_usable_ref
             # cache pia c_concat
             self.cached_pia_c_concat = comfy.conds.CONDNoiseShape(torch.cat([mask, usable_ref], dim=1))
             return self.cached_pia_c_concat

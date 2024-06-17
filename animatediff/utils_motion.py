@@ -216,8 +216,8 @@ class MotionCompatibilityError(ValueError):
 
 
 class InputPIA(ABC):
-    def __init__(self):
-        pass
+    def __init__(self, effect_multival: Union[float, Tensor]=None):
+        self.effect_multival = effect_multival if effect_multival is not None else 1.0
 
     @abstractmethod
     def get_mask(self, x: Tensor):
@@ -225,7 +225,8 @@ class InputPIA(ABC):
 
 
 class InputPIA_Multival(InputPIA):
-    def __init__(self, multival: Union[float, Tensor]):
+    def __init__(self, multival: Union[float, Tensor], effect_multival: Union[float, Tensor]=None):
+        super().__init__(effect_multival=effect_multival)
         self.multival = multival
 
     def get_mask(self, x: Tensor):
@@ -269,6 +270,14 @@ def get_combined_input(inputA: Union[InputPIA, None], inputB: Union[InputPIA, No
     if inputB is None:
         inputB = InputPIA_Multival(1.0)
     return get_combined_multival(inputA.get_mask(x), inputB.get_mask(x))
+
+
+def get_combined_input_effect_multival(inputA: Union[InputPIA, None], inputB: Union[InputPIA, None]):
+    if inputA is None:
+        inputA = InputPIA_Multival(1.0)
+    if inputB is None:
+        inputB = InputPIA_Multival(1.0)
+    return get_combined_multival(inputA.effect_multival, inputB.effect_multival)
 
 
 class ADKeyframe:
