@@ -81,6 +81,7 @@ NOTE: you can also use custom locations for models/motion loras by making use of
 - [UniCtrl](https://github.com/XuweiyiChen/UniCtrl) support
 - Unet-Ref support so that a bunch of papers can be ported over
 - [StoryDiffusion](https://github.com/HVision-NKU/StoryDiffusion) implementation
+- Merging motion model weights/components, including per block customization
 - Maskable Motion LoRA
 - Timestep schedulable GLIGEN coordinates
 - Dynamic memory management for motion models that load/unload at different start/end_percents
