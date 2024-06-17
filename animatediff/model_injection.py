@@ -447,7 +447,7 @@ class ModelPatcherCLIPHooks(ModelPatcher):
         if hasattr(m, "object_patches_backup"):
             self.object_patches_backup = m.object_patches_backup
         # lora hook stuff
-        self.hooked_patches = {} # binds LoraHook to specific keys
+        self.hooked_patches: dict[HookRef] = {} # binds LoraHook to specific keys
         self.patches_backup = {}
         self.hooked_backup: dict[str, tuple[Tensor, torch.device]] = {}
 
@@ -554,7 +554,7 @@ class ModelPatcherCLIPHooks(ModelPatcher):
         combined_patches = {}
         if lora_hooks is not None:
             for hook in lora_hooks.hooks:
-                hook_patches: dict = self.hooked_patches.get(hook, {})
+                hook_patches: dict = self.hooked_patches.get(hook.hook_ref, {})
                 for key in hook_patches.keys():
                     current_patches: list[tuple] = combined_patches.get(key, [])
                     current_patches.extend(hook_patches[key])
