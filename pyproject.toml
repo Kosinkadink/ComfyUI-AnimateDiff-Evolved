@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-animatediff-evolved"
 description = "Improved AnimateDiff integration for ComfyUI."
-version = "1.0.4"
+version = "1.0.5"
 license = "LICENSE"
 dependencies = []
 
