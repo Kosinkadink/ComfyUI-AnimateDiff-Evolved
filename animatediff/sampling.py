@@ -526,6 +526,12 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                     if is_custom:
                         sigmas = args[2]
                         sigmas_list, injection_list = ADGS.sample_settings.image_injection.custom_ksampler_get_injections(model, sigmas)
+                        # useful logging
+                        if len(injection_list) > 0:
+                            inj_str = "s" if len(injection_list) > 1 else ""
+                            logger.info(f"Found {len(injection_list)} applicable image injection{inj_str}; sampling will be split into {len(sigmas_list)}.")
+                        else:
+                            logger.info(f"Found 0 applicable image injections within the step bounds of this sampler; sampling unaffected.")
                         is_first = True
                         new_noise = noise
                         for i in range(len(sigmas_list)):
@@ -549,6 +555,12 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                             new_kwargs["last_step"] = 10000
                         steps_list, injection_list = ADGS.sample_settings.image_injection.ksampler_get_injections(model, scheduler=args[-4], sampler_name=args[-5], denoise=kwargs["denoise"], force_full_denoise=final_force_full_denoise,
                                                                                                                   start_step=new_kwargs["start_step"], last_step=new_kwargs["last_step"], total_steps=args[0])
+                        # useful logging
+                        if len(injection_list) > 0:
+                            inj_str = "s" if len(injection_list) > 1 else ""
+                            logger.info(f"Found {len(injection_list)} applicable image injection{inj_str}; sampling will be split into {len(steps_list)}.")
+                        else:
+                            logger.info(f"Found 0 applicable image injections within the step bounds of this sampler; sampling unaffected.")
                         is_first = True
                         new_noise = noise
                         for i in range(len(steps_list)):
