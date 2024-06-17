@@ -1262,6 +1262,14 @@ def inject_img_encoder_into_model(motion_model: MotionModelPatcher, w_encoder: M
     motion_model.model.img_encoder.load_state_dict(w_encoder.model.img_encoder.state_dict())
 
 
+def inject_pia_conv_in_into_model(motion_model: MotionModelPatcher, w_pia: MotionModelPatcher):
+    motion_model.model.init_conv_in(w_pia.model.state_dict())
+    motion_model.model.conv_in.to(comfy.model_management.unet_dtype())
+    motion_model.model.conv_in.to(comfy.model_management.unet_offload_device())
+    motion_model.model.conv_in.load_state_dict(w_pia.model.conv_in.state_dict())
+    motion_model.model.mm_info.mm_format = AnimateDiffFormat.PIA
+
+
 def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ctrl_name: str):
     camera_ctrl_path = get_motion_model_path(camera_ctrl_name)
     full_state_dict = comfy.utils.load_torch_file(camera_ctrl_path, safe_load=True)

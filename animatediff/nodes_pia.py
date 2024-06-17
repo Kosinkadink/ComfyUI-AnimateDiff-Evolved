@@ -5,11 +5,12 @@ import math
 
 from comfy.sd import VAE
 
+from .ad_settings import AnimateDiffSettings
 from .logger import logger
-from .utils_model import BIGMIN, BIGMAX
+from .utils_model import BIGMIN, BIGMAX, get_available_motion_models
 from .utils_motion import ADKeyframeGroup, InputPIA, InputPIA_Multival, extend_list_to_batch_size, extend_to_batch_size, prepare_mask_batch
 from .motion_lora import MotionLoraList
-from .model_injection import MotionModelGroup, MotionModelPatcher
+from .model_injection import MotionModelGroup, MotionModelPatcher, load_motion_module_gen2, inject_pia_conv_in_into_model
 from .motion_module_ad import AnimateDiffFormat
 from .nodes_gen2 import ApplyAnimateDiffModelNode, ADKeyframeNode
 
@@ -151,6 +152,35 @@ class ApplyAnimateDiffPIAModel:
         curr_model.pia_input = pia_input
         #curr_model.pia_multival = ref_multival
         return new_m_models
+
+
+class LoadAnimateDiffAndInjectPIANode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model_name": (get_available_motion_models(),),
+                "motion_model": ("MOTION_MODEL_ADE",),
+            },
+            "optional": {
+                "ad_settings": ("AD_SETTINGS",),
+            }
+        }
+    
+    RETURN_TYPES = ("MOTION_MODEL_ADE",)
+    RETURN_NAMES = ("MOTION_MODEL",)
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/PIA/🧪experimental"
+    FUNCTION = "load_motion_model"
+    
+    def load_motion_model(self, model_name: str, motion_model: MotionModelPatcher, ad_settings: AnimateDiffSettings=None):
+        # make sure model actually has PIA conv_in
+        if motion_model.model.conv_in is None:
+            raise Exception("Passed-in motion model was expected to be PIA (contain conv_in), but did not.")
+        # load motion module and motion settings, if included
+        loaded_motion_model = load_motion_module_gen2(model_name=model_name, motion_model_settings=ad_settings)
+        inject_pia_conv_in_into_model(motion_model=loaded_motion_model, w_pia=motion_model)
+        return (loaded_motion_model,)
 
 
 class PIA_ADKeyframeNode:
