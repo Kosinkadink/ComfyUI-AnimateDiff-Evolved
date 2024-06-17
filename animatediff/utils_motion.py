@@ -97,15 +97,11 @@ class GroupNormAD(torch.nn.GroupNorm):
 
 # applies min-max normalization, from:
 # https://stackoverflow.com/questions/68791508/min-max-normalization-of-a-tensor-in-pytorch
-def normalize_min_max(x: Tensor, new_min = 0.0, new_max = 1.0):
+def normalize_min_max(x: Tensor, new_min=0.0, new_max=1.0):
     return linear_conversion(x, x_min=x.min(), x_max=x.max(), new_min=new_min, new_max=new_max)
 
 
 def linear_conversion(x, x_min=0.0, x_max=1.0, new_min=0.0, new_max=1.0):
-    x_min = float(x_min)
-    x_max = float(x_max)
-    new_min = float(new_min)
-    new_max = float(new_max)
     return (((x - x_min)/(x_max - x_min)) * (new_max - new_min)) + new_min
 
 
@@ -125,6 +121,14 @@ def extend_to_batch_size(tensor: Tensor, batch_size: int):
         remainder = batch_size-tensor.shape[0]
         return torch.cat([tensor] + [tensor[-1:]]*remainder, dim=0)
     return tensor
+
+
+def extend_list_to_batch_size(_list: list, batch_size: int):
+    if len(_list) > batch_size:
+        return _list[:batch_size]
+    elif len(_list) < batch_size:
+        return _list + _list[-1:]*(batch_size-len(_list))
+    return _list.copy()
 
 
 # from comfy/controlnet.py
