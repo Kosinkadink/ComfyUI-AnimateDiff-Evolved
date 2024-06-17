@@ -65,6 +65,8 @@ NOTE: you can also use custom locations for models/motion loras by making use of
      - NOTE: Requires same settings as described for AnimateLCM above. Requires ```Apply AnimateLCM-I2V Model``` Gen2 node usage so that ```ref_latent``` can be provided; use ```Scale Ref Image and VAE Encode``` node to preprocess input images. While this was intended as an img2video model, I found it works best for vid2vid purposes with ```ref_drift=0.0```, and to use it for only at least 1 step before switching over to other models via chaining with toher Apply AnimateDiff Model (Adv.) nodes. The ```apply_ref_when_disabled``` can be set to True to allow the img_encoder to do its thing even when the ```end_percent``` is reached. AnimateLCM-I2V is also extremely useful for maintaining coherence at higher resolutions (with ControlNet and SD LoRAs active, I could easily upscale from 512x512 source to 1024x1024 in a single pass). TODO: add examples
 - [CameraCtrl](https://github.com/hehao13/CameraCtrl) support, with the pruned model you must use here: [CameraCtrl_pruned.safetensors](https://huggingface.co/Kosinkadink/CameraCtrl/tree/main)
      - NOTE: Requires AnimateDiff SD1.5 models, and was specifically trained for v3 model. Gen2 only, with helper nodes provided under Gen2/CameraCtrl submenu.
+- [PIA](https://github.com/open-mmlab/PIA) support, with the model [pia.ckpt](https://huggingface.co/Leoxing/PIA/tree/main)
+     - NOTE: You will need to use ```autoselect``` or ```sqrt_linear (AnimateDiff)``` beta_schedule. Requires ```Apply AnimateDiff-PIA Model``` Gen2 node usage if you want to actually provide input images. The ```pia_input``` can be provided via the paper's presets (```PIA Input [Paper Presets]```) or by manually entering values (```PIA Input [Multival]```).
 - AnimateDiff Keyframes to change Scale and Effect at different points in the sampling process.
 - fp8 support; requires newest ComfyUI and torch >= 2.1 (decreases VRAM usage, but changes outputs)
 - Mac M1/M2/M3 support
@@ -72,14 +74,16 @@ NOTE: you can also use custom locations for models/motion loras by making use of
 - Maskable and Schedulable SD LoRA (and Models as LoRA) for both AnimateDiff and StableDiffusion usage via LoRA Hooks
 - Per-frame GLIGEN coordinates control
      - Currently requires GLIGENTextBoxApplyBatch from KJNodes to do so, but I will add native nodes to do this soon.
+- Image Injection mid-sampling
 
 ## Upcoming Features
-- Example workflows for **every feature** in AnimateDiff-Evolved repo, and hopefully a long Youtube video showing all features (Goal: mid-May)
-- Maskable Motion LoRA (Goal: end of May/beginning of June)
+- Example workflows for **every feature** in AnimateDiff-Evolved repo, and hopefully a long Youtube video showing all features (Goal: before Elden Ring DLC releases. Working on it right now.)
+- [UniCtrl](https://github.com/XuweiyiChen/UniCtrl) support
+- Unet-Ref support so that a bunch of papers can be ported over
+- [StoryDiffusion](https://github.com/HVision-NKU/StoryDiffusion) implementation
+- Maskable Motion LoRA
 - Timestep schedulable GLIGEN coordinates
 - Dynamic memory management for motion models that load/unload at different start/end_percents
-- [PIA](https://github.com/open-mmlab/PIA) support
-- [UniCtrl](https://github.com/XuweiyiChen/UniCtrl) support
 - Built-in prompt travel implementation
 - Anything else AnimateDiff-related that comes out
 
