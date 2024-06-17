@@ -637,15 +637,25 @@ class NoisedImageToInjectGroup:
             to_inject.start_t = model.model_sampling.percent_to_sigma(to_inject.start_percent)
             to_inject.start_timestep = model.model_sampling.timestep(torch.tensor(to_inject.start_t))
 
-    def ksampler_get_injections(self, model: ModelPatcher, scheduler: str, start_step: int, last_step: int, total_steps: int) -> tuple[list[list[int]], list[NoisedImageToInject]]:
+    def ksampler_get_injections(self, model: ModelPatcher, scheduler: str, sampler_name: str, denoise: float, force_full_denoise: bool, start_step: int, last_step: int, total_steps: int) -> tuple[list[list[int]], list[NoisedImageToInject]]:
         actual_last_step = min(last_step, total_steps)
         steps = list(range(start_step, actual_last_step+1))
-        # get the relative percentage location of each step
-        percentages = [step/total_steps for step in steps]
-        # get the sigmas, and then the timesteps based on these percentages
+        # create sampler that will be used to get sigmas
+        sampler = comfy.samplers.KSampler(model, steps=total_steps, device=model.load_device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
+        # replicate KSampler.sample function to get the exact sigmas
+        sigmas = sampler.sigmas
+        if last_step is not None and last_step < (len(sigmas) - 1):
+            sigmas = sigmas[:last_step + 1]
+            if force_full_denoise:
+                sigmas[-1] = 0
+        if start_step is not None:
+            if start_step < (len(sigmas) - 1):
+                sigmas = sigmas[start_step:]
+            else:
+                return [[start_step,actual_last_step], []]
+        assert len(steps) == len(sigmas)
         model_sampling = model.get_model_object("model_sampling")
-        sigmas = [model_sampling.percent_to_sigma(x) for x in percentages]
-        timesteps = [model_sampling.timestep(torch.tensor(x)) for x in sigmas]
+        timesteps = [model_sampling.timestep(x) for x in sigmas]
         # get actual ranges + injections
         ranges, injections = self._prepare_injections(timesteps=timesteps)
         # ranges are given with end-exclusive index, so subtract by 1 to get real step value

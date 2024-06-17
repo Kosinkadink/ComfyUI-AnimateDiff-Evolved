@@ -540,8 +540,6 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                                 latents = perform_image_injection(model.model, latents, to_inject)
                     else:
                         is_ksampler_advanced = kwargs.get("start_step", None) is not None
-                        total_steps = args[0]
-                        scheduler = args[-4]
                         # force_full_denoise should be respected on final sampling - should be True for normal KSampler
                         final_force_full_denoise = kwargs.get("force_full_denoise", False)
                         new_kwargs = kwargs.copy()
@@ -549,7 +547,8 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                             final_force_full_denoise = True
                             new_kwargs["start_step"] = 0
                             new_kwargs["last_step"] = 10000
-                        steps_list, injection_list = ADGS.sample_settings.image_injection.ksampler_get_injections(model, scheduler, new_kwargs["start_step"], new_kwargs["last_step"], total_steps)
+                        steps_list, injection_list = ADGS.sample_settings.image_injection.ksampler_get_injections(model, scheduler=args[-4], sampler_name=args[-5], denoise=kwargs["denoise"], force_full_denoise=final_force_full_denoise,
+                                                                                                                  start_step=new_kwargs["start_step"], last_step=new_kwargs["last_step"], total_steps=args[0])
                         is_first = True
                         new_noise = noise
                         for i in range(len(steps_list)):
