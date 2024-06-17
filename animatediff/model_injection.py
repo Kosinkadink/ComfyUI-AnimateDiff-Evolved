@@ -733,7 +733,6 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_pia_latents_shape: tuple = None
         self.prev_current_pia_input: InputPIA = None
         self.pia_multival: Union[float, Tensor] = None
-        # TODO: add images + masks
 
         # temporary variables
         self.current_used_steps = 0
@@ -988,8 +987,8 @@ class MotionModelPatcher(ModelPatcher):
         self.camera_features = None
         self.camera_features_shape = None
         # PIA
-        # del self.pia_latents
-        # self.pia_latents = None
+        self.combined_pia_mask = None
+        self.combined_pia_effect = None
         # Default
         self.current_used_steps = 0
         self.current_keyframe = None

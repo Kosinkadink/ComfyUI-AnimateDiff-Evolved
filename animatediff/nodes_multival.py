@@ -84,7 +84,6 @@ class MultivalScaledMaskNode:
     FUNCTION = "create_multival"
 
     def create_multival(self, min_float_val: float, max_float_val: float, mask: Tensor, scaling: str=ScaleType.ABSOLUTE):
-        # TODO: allow min_float_val and max_float_val to be list[float]
         lengths = [mask.shape[0]]
         iterable_inputs = [False, False]
         val_inputs = [min_float_val, max_float_val]
