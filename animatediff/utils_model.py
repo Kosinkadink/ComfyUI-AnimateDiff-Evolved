@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from time import time
 import copy
 
+from torch import Tensor
 import torch
 import numpy as np
 
@@ -12,13 +13,59 @@ import folder_paths
 from comfy.model_base import SD21UNCLIP, SDXL, BaseModel, SDXLRefiner, SVD_img2vid, model_sampling, ModelType
 from comfy.model_management import xformers_enabled
 from comfy.model_patcher import ModelPatcher
+from comfy.sd import VAE
+from comfy.utils import ProgressBar
 
 import comfy.model_sampling
 import comfy_extras.nodes_model_advanced
 
+from .logger import logger
 
 BIGMIN = -(2**53-1)
 BIGMAX = (2**53-1)
+
+MAX_RESOLUTION = 16384  # mirrors ComfyUI's nodes.py MAX_RESOLUTION
+
+
+def vae_encode_raw_dynamic_batched(vae: VAE, pixels: Tensor, max_batch=16, min_batch=1, max_size=512*512, show_pbar=False):
+    b, h, w, c = pixels.shape
+    actual_size = h*w
+    actual_batch_size = int(max(min_batch, min(max_batch, max_batch // max((actual_size / max_size), 1.0))))
+    logger.info(f"actual_batch_size: {actual_batch_size}")
+    return vae_encode_raw_batched(vae=vae, pixels=pixels, per_batch=actual_batch_size, show_pbar=show_pbar)
+
+
+def vae_decode_raw_dynamic_batched(vae: VAE, latents: Tensor, max_batch=16, min_batch=1, max_size=512*512, show_pbar=False):
+    b, c, h, w = latents.shape
+    actual_size = (h*vae.downscale_ratio)*(w*vae.downscale_ratio)
+    actual_batch_size = int(max(min_batch, min(max_batch, max_batch // max((actual_size / max_size), 1.0))))
+    return vae_decode_raw_batched(vae=vae, latents=latents, per_batch=actual_batch_size, show_pbar=show_pbar)
+
+
+def vae_encode_raw_batched(vae: VAE, pixels: Tensor, per_batch=16, show_pbar=False):
+    encoded = []
+    pbar = None
+    if show_pbar:
+        pbar = ProgressBar(pixels.shape[0])
+    for start_idx in range(0, pixels.shape[0], per_batch):
+        sub_encoded = vae.encode(pixels[start_idx:start_idx+per_batch][:,:,:,:3])
+        encoded.append(sub_encoded)
+        if pbar is not None:
+            pbar.update(sub_encoded.shape[0])
+    return torch.cat(encoded, dim=0)
+
+
+def vae_decode_raw_batched(vae: VAE, latents: Tensor, per_batch=16, show_pbar=False):
+    decoded = []
+    pbar = None
+    if show_pbar:
+        pbar = ProgressBar(latents.shape[0])
+    for start_idx in range(0, latents.shape[0], per_batch):
+        sub_decoded = vae.decode(latents[start_idx:start_idx+per_batch])
+        decoded.append(sub_decoded)
+        if pbar is not None:
+            pbar.update(sub_decoded.shape[0])
+    return torch.cat(decoded, dim=0)
 
 
 class ModelSamplingConfig:
@@ -337,6 +384,8 @@ class ModelTypeSD:
     SDXL = "SDXL"
     SDXL_REFINER = "SDXL_Refiner"
     SVD = "SVD"
+
+    _LIST = [SD1_5, SD2_1, SDXL, SDXL_REFINER, SVD]
 
 
 def get_sd_model_type(model: ModelPatcher) -> str:

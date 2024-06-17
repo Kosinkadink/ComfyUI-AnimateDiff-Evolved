@@ -9,7 +9,8 @@ from .nodes_animatelcmi2v import (ApplyAnimateLCMI2VModel, LoadAnimateLCMI2VMode
 from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, CameraCtrlADKeyframeNode, LoadCameraPoses,
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
-from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode
+from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
+from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalConvertToMaskNode
 from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
                                  SetModelLoraHook, SetClipLoraHook,
                                  CombineLoraHooks, CombineLoraHookFourOptional, CombineLoraHookEightOptional,
@@ -19,7 +20,7 @@ from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly
                                  ConditioningTimestepsNode, SetLoraHookKeyframes,
                                  CreateLoraHookKeyframe, CreateLoraHookKeyframeInterpolation, CreateLoraHookKeyframeFromStrengthList)
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
-                           CustomCFGNode, CustomCFGKeyframeNode)
+                           CustomCFGNode, CustomCFGKeyframeNode, NoisedImageInjectionNode, NoisedImageInjectOptionsNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode)
@@ -45,7 +46,9 @@ NODE_CLASS_MAPPINGS = {
     "ADE_AnimateDiffKeyframe": ADKeyframeNode,
     # Multival Nodes
     "ADE_MultivalDynamic": MultivalDynamicNode,
+    "ADE_MultivalDynamicFloatInput": MultivalDynamicFloatInputNode,
     "ADE_MultivalScaledMask": MultivalScaledMaskNode,
+    "ADE_MultivalConvertToMask": MultivalConvertToMaskNode,
     # Context Opts
     "ADE_StandardStaticContextOptions": StandardStaticContextOptionsNode,
     "ADE_StandardUniformContextOptions": StandardUniformContextOptionsNode,
@@ -104,6 +107,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_SigmaScheduleWeightedAverage": WeightedAverageSigmaScheduleNode,
     "ADE_SigmaScheduleWeightedAverageInterp": InterpolatedWeightedAverageSigmaScheduleNode,
     "ADE_SigmaScheduleSplitAndCombine": SplitAndCombineSigmaScheduleNode,
+    "ADE_NoisedImageInjection": NoisedImageInjectionNode,
+    "ADE_NoisedImageInjectOptions": NoisedImageInjectOptionsNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -132,8 +137,12 @@ NODE_CLASS_MAPPINGS = {
     "ADE_CameraManualPoseAppend": CameraCtrlManualAppendPose,
     "ADE_ReplaceCameraParameters": CameraCtrlReplaceCameraParameters,
     "ADE_ReplaceOriginalPoseAspectRatio": CameraCtrlSetOriginalAspectRatio,
-    # MaskedLoraLoader
-    #"ADE_MaskedLoadLora": MaskedLoraLoader,
+    # PIA Nodes
+    "ADE_ApplyAnimateDiffModelWithPIA": ApplyAnimateDiffPIAModel,
+    "ADE_InputPIA_Multival": InputPIA_MultivalNode,
+    "ADE_InputPIA_PaperPresets": InputPIA_PaperPresetsNode,
+    "ADE_PIA_AnimateDiffKeyframe": PIA_ADKeyframeNode,
+    "ADE_InjectPIAIntoAnimateDiffModel": LoadAnimateDiffAndInjectPIANode,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
@@ -150,7 +159,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffKeyframe": "AnimateDiff Keyframe 🎭🅐🅓",
     # Multival Nodes
     "ADE_MultivalDynamic": "Multival Dynamic 🎭🅐🅓",
+    "ADE_MultivalDynamicFloatInput": "Multival Dynamic [Float List] 🎭🅐🅓",
     "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",
+    "ADE_MultivalConvertToMask": "Multival to Mask 🎭🅐🅓",
     # Context Opts
     "ADE_StandardStaticContextOptions": "Context Options◆Standard Static 🎭🅐🅓",
     "ADE_StandardUniformContextOptions": "Context Options◆Standard Uniform 🎭🅐🅓",
@@ -209,6 +220,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SigmaScheduleWeightedAverage": "Sigma Schedule Weighted Mean 🎭🅐🅓",
     "ADE_SigmaScheduleWeightedAverageInterp": "Sigma Schedule Interpolated Mean 🎭🅐🅓",
     "ADE_SigmaScheduleSplitAndCombine": "Sigma Schedule Split Combine 🎭🅐🅓",
+    "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",
+    "ADE_NoisedImageInjectOptions": "Image Injection Options 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
@@ -237,8 +250,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_CameraManualPoseAppend": "Manual Append CameraCtrl Poses 🎭🅐🅓②",
     "ADE_ReplaceCameraParameters": "Replace Camera Parameters 🎭🅐🅓②",
     "ADE_ReplaceOriginalPoseAspectRatio": "Replace Orig. Pose Aspect Ratio 🎭🅐🅓②",
-    # MaskedLoraLoader
-    #"ADE_MaskedLoadLora": "Load LoRA (Masked) 🎭🅐🅓",
+    # PIA Nodes
+    "ADE_ApplyAnimateDiffModelWithPIA": "Apply AnimateDiff-PIA Model 🎭🅐🅓②",
+    "ADE_InputPIA_Multival": "PIA Input [Multival] 🎭🅐🅓②",
+    "ADE_InputPIA_PaperPresets": "PIA Input [Paper Presets] 🎭🅐🅓②",
+    "ADE_PIA_AnimateDiffKeyframe": "AnimateDiff-PIA Keyframe 🎭🅐🅓",
+    "ADE_InjectPIAIntoAnimateDiffModel": "🧪Inject PIA into AnimateDiff Model 🎭🅐🅓②",
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "🚫AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",

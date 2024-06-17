@@ -2,6 +2,7 @@ from typing import Union
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+from abc import ABC, abstractmethod
 
 import comfy.model_management as model_management
 import comfy.ops
@@ -96,15 +97,11 @@ class GroupNormAD(torch.nn.GroupNorm):
 
 # applies min-max normalization, from:
 # https://stackoverflow.com/questions/68791508/min-max-normalization-of-a-tensor-in-pytorch
-def normalize_min_max(x: Tensor, new_min = 0.0, new_max = 1.0):
+def normalize_min_max(x: Tensor, new_min=0.0, new_max=1.0):
     return linear_conversion(x, x_min=x.min(), x_max=x.max(), new_min=new_min, new_max=new_max)
 
 
 def linear_conversion(x, x_min=0.0, x_max=1.0, new_min=0.0, new_max=1.0):
-    x_min = float(x_min)
-    x_max = float(x_max)
-    new_min = float(new_min)
-    new_max = float(new_max)
     return (((x - x_min)/(x_max - x_min)) * (new_max - new_min)) + new_min
 
 
@@ -126,6 +123,14 @@ def extend_to_batch_size(tensor: Tensor, batch_size: int):
     return tensor
 
 
+def extend_list_to_batch_size(_list: list, batch_size: int):
+    if len(_list) > batch_size:
+        return _list[:batch_size]
+    elif len(_list) < batch_size:
+        return _list + _list[-1:]*(batch_size-len(_list))
+    return _list.copy()
+
+
 # from comfy/controlnet.py
 def ade_broadcast_image_to(tensor, target_batch_size, batched_number):
     current_batch_size = tensor.shape[0]
@@ -144,6 +149,42 @@ def ade_broadcast_image_to(tensor, target_batch_size, batched_number):
         return tensor
     else:
         return torch.cat([tensor] * batched_number, dim=0)
+
+
+# originally from comfy_extras/nodes_mask.py::composite function
+def composite_extend(destination: Tensor, source: Tensor, x: int, y: int, mask: Tensor = None, multiplier = 8, resize_source = False):
+    source = source.to(destination.device)
+    if resize_source:
+        source = torch.nn.functional.interpolate(source, size=(destination.shape[2], destination.shape[3]), mode="bilinear")
+
+    source = extend_to_batch_size(source, destination.shape[0])
+
+    x = max(-source.shape[3] * multiplier, min(x, destination.shape[3] * multiplier))
+    y = max(-source.shape[2] * multiplier, min(y, destination.shape[2] * multiplier))
+
+    left, top = (x // multiplier, y // multiplier)
+    right, bottom = (left + source.shape[3], top + source.shape[2],)
+
+    if mask is None:
+        mask = torch.ones_like(source)
+    else:
+        mask = mask.to(destination.device, copy=True)
+        mask = torch.nn.functional.interpolate(mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1])), size=(source.shape[2], source.shape[3]), mode="bilinear")
+        mask = extend_to_batch_size(mask, source.shape[0])
+
+    # calculate the bounds of the source that will be overlapping the destination
+    # this prevents the source trying to overwrite latent pixels that are out of bounds
+    # of the destination
+    visible_width, visible_height = (destination.shape[3] - left + min(0, x), destination.shape[2] - top + min(0, y),)
+
+    mask = mask[:, :, :visible_height, :visible_width]
+    inverse_mask = torch.ones_like(mask) - mask
+
+    source_portion = mask * source[:, :, :visible_height, :visible_width]
+    destination_portion = inverse_mask  * destination[:, :, top:bottom, left:right]
+
+    destination[:, :, top:bottom, left:right] = source_portion + destination_portion
+    return destination
 
 
 def get_sorted_list_via_attr(objects: list, attr: str) -> list:
@@ -174,6 +215,29 @@ class MotionCompatibilityError(ValueError):
     pass
 
 
+class InputPIA(ABC):
+    def __init__(self, effect_multival: Union[float, Tensor]=None):
+        self.effect_multival = effect_multival if effect_multival is not None else 1.0
+
+    @abstractmethod
+    def get_mask(self, x: Tensor):
+        pass
+
+
+class InputPIA_Multival(InputPIA):
+    def __init__(self, multival: Union[float, Tensor], effect_multival: Union[float, Tensor]=None):
+        super().__init__(effect_multival=effect_multival)
+        self.multival = multival
+
+    def get_mask(self, x: Tensor):
+        if type(self.multival) is Tensor:
+            return self.multival
+        # if not Tensor, then is float, and simply return a mask with the right dimensions + value
+        b, c, h, w = x.shape
+        mask = torch.ones(size=(b, h, w))
+        return mask * self.multival
+
+
 def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[float, Tensor]) -> Union[float, Tensor]:
     # if one is None, use the other
     if multivalA == None:
@@ -200,12 +264,29 @@ def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[floa
     return multivalA * multivalB
 
 
+def get_combined_input(inputA: Union[InputPIA, None], inputB: Union[InputPIA, None], x: Tensor):
+    if inputA is None:
+        inputA = InputPIA_Multival(1.0)
+    if inputB is None:
+        inputB = InputPIA_Multival(1.0)
+    return get_combined_multival(inputA.get_mask(x), inputB.get_mask(x))
+
+
+def get_combined_input_effect_multival(inputA: Union[InputPIA, None], inputB: Union[InputPIA, None]):
+    if inputA is None:
+        inputA = InputPIA_Multival(1.0)
+    if inputB is None:
+        inputB = InputPIA_Multival(1.0)
+    return get_combined_multival(inputA.effect_multival, inputB.effect_multival)
+
+
 class ADKeyframe:
     def __init__(self,
                  start_percent: float = 0.0,
                  scale_multival: Union[float, Tensor]=None,
                  effect_multival: Union[float, Tensor]=None,
                  cameractrl_multival: Union[float, Tensor]=None,
+                 pia_input: InputPIA=None,
                  inherit_missing: bool=True,
                  guarantee_steps: int=1,
                  default: bool=False,
@@ -215,6 +296,7 @@ class ADKeyframe:
         self.scale_multival = scale_multival
         self.effect_multival = effect_multival
         self.cameractrl_multival = cameractrl_multival
+        self.pia_input = pia_input
         self.inherit_missing = inherit_missing
         self.guarantee_steps = guarantee_steps
         self.default = default
@@ -227,6 +309,9 @@ class ADKeyframe:
 
     def has_cameractrl_effect(self):
         return self.cameractrl_multival is not None
+    
+    def has_pia_input(self):
+        return self.pia_input is not None
 
 
 class ADKeyframeGroup:

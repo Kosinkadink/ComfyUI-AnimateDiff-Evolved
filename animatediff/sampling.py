@@ -21,12 +21,14 @@ except ImportError:
 import comfy.utils
 from comfy.controlnet import ControlBase
 from comfy.model_base import BaseModel
+import comfy.conds
 import comfy.ops
 
-from .conditioning import COND_CONST, LoraHookGroup
+from .conditioning import COND_CONST, LoraHookGroup, conditioning_set_values
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
-from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration
-from .utils_model import ModelTypeSD
+from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
+from .utils_model import ModelTypeSD, vae_encode_raw_batched, vae_decode_raw_batched
+from .utils_motion import composite_extend, get_combined_multival, prepare_mask_batch, extend_to_batch_size
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
 from .logger import logger
@@ -41,6 +43,8 @@ class AnimateDiffHelper_GlobalState:
         self.motion_models: MotionModelGroup = None
         self.params: InjectionParams = None
         self.sample_settings: SampleSettings = None
+        self.callback_output_dict: dict[str] = {}
+        self.function_injections: FunctionInjectionHolder = None
         self.reset()
 
     def initialize(self, model: BaseModel):
@@ -63,9 +67,9 @@ class AnimateDiffHelper_GlobalState:
                     hook.reset()
                     hook.initialize_timesteps(model)
 
-    def prepare_current_keyframes(self, timestep: Tensor):
+    def prepare_current_keyframes(self, x: Tensor, timestep: Tensor):
         if self.motion_models is not None:
-            self.motion_models.prepare_current_keyframe(t=timestep)
+            self.motion_models.prepare_current_keyframe(x=x, t=timestep)
         if self.params.context_options is not None:
             self.params.context_options.prepare_current_context(t=timestep)
         if self.sample_settings.custom_cfg is not None:
@@ -75,6 +79,24 @@ class AnimateDiffHelper_GlobalState:
         if self.model_patcher is not None:
             self.model_patcher.prepare_hooked_patches_current_keyframe(t=timestep, hook_groups=hook_groups)
 
+    def perform_special_model_features(self, model: BaseModel, conds: list, x_in: Tensor):
+        if self.motion_models is not None:
+            pia_models = self.motion_models.get_pia_models()
+            if len(pia_models) > 0:
+                for pia_model in pia_models:
+                    if pia_model.model.is_in_effect():
+                        pia_model.model.inject_unet_conv_in_pia(model)
+                        conds = get_conds_with_c_concat(conds,
+                                                        pia_model.get_pia_c_concat(model, x_in))
+        return conds
+
+    def restore_special_model_features(self, model: BaseModel):
+        if self.motion_models is not None:
+            pia_models = self.motion_models.get_pia_models()
+            if len(pia_models) > 0:
+                for pia_model in reversed(pia_models):
+                    pia_model.model.restore_unet_conv_in_pia(model)
+
     def reset(self):
         self.initialized = False
         self.hooks_initialized = False
@@ -82,6 +104,8 @@ class AnimateDiffHelper_GlobalState:
         self.last_step: int = 0
         self.current_step: int = 0
         self.total_steps: int = 0
+        self.callback_output_dict.clear()
+        self.callback_output_dict = {}
         if self.model_patcher is not None:
             self.model_patcher.clean_hooks()
             del self.model_patcher
@@ -95,6 +119,9 @@ class AnimateDiffHelper_GlobalState:
         if self.sample_settings is not None:
             del self.sample_settings
             self.sample_settings = None
+        if self.function_injections is not None:
+            del self.function_injections
+            self.function_injections = None
 
     def update_with_inject_params(self, params: InjectionParams):
         self.params = params
@@ -196,6 +223,14 @@ def apply_model_factory(orig_apply_model: Callable):
         del x
         return orig_apply_model(*args, **kwargs)
     return apply_model_ade_wrapper
+
+def diffusion_model_forward_groupnormed_factory(orig_diffusion_model_forward: Callable, inject_helper: 'GroupnormInjectHelper'):
+    def diffusion_model_forward_groupnormed(*args, **kwargs):
+        with inject_helper:
+            return orig_diffusion_model_forward(*args, **kwargs)
+    return diffusion_model_forward_groupnormed
+
+
 ######################################################################
 ##################################################################################
 
@@ -242,7 +277,8 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
 
 class FunctionInjectionHolder:
     def __init__(self):
-        pass
+        self.temp_uninjector: GroupnormUninjectHelper = GroupnormUninjectHelper()
+        self.groupnorm_injector: GroupnormInjectHelper = GroupnormInjectHelper()
     
     def inject_functions(self, model: ModelPatcherAndInjector, params: InjectionParams):
         # Save Original Functions - order must match between here and restore_functions
@@ -250,6 +286,7 @@ class FunctionInjectionHolder:
         self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_forward_comfy_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
+        self.orig_diffusion_model_forward = model.model.diffusion_model.forward
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
         self.orig_get_area_and_mult = comfy.samplers.get_area_and_mult
         if SAMPLE_FALLBACK:  # for backwards compatibility, for now
@@ -262,12 +299,15 @@ class FunctionInjectionHolder:
         if params.unlimited_area_hack:
             model.model.memory_required = unlimited_memory_required
         if model.motion_models is not None:
-            # only apply groupnorm hack if not [v3 or ([not Hotshot] and SD1.5 and v2 and apply_v2_properly)]
+            # only apply groupnorm hack if PIA, v2 and not properly applied, or v1
             info: AnimateDiffInfo = model.motion_models[0].model.mm_info
-            if not (info.mm_version == AnimateDiffVersion.V3 or
-                    (info.mm_format not in [AnimateDiffFormat.HOTSHOTXL] and info.sd_type == ModelTypeSD.SD1_5 and info.mm_version == AnimateDiffVersion.V2 and params.apply_v2_properly)):
-                torch.nn.GroupNorm.forward = groupnorm_mm_factory(params)
-                comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
+            if ((info.mm_format == AnimateDiffFormat.PIA) or
+                (info.mm_version == AnimateDiffVersion.V2 and not params.apply_v2_properly) or
+                (info.mm_version == AnimateDiffVersion.V1)):
+                self.inject_groupnorm_forward = groupnorm_mm_factory(params)
+                self.inject_groupnorm_forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
+                self.groupnorm_injector = GroupnormInjectHelper(self)
+                model.model.diffusion_model.forward = diffusion_model_forward_groupnormed_factory(self.orig_diffusion_model_forward, self.groupnorm_injector)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
                 try:
                     if model.load_device.type == "mps":
@@ -286,6 +326,8 @@ class FunctionInjectionHolder:
             comfy.sample.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
         else:
             comfy.sampler_helpers.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
+        # create temp_uninjector to help facilitate uninjecting functions
+        self.temp_uninjector = GroupnormUninjectHelper(self)
 
     def restore_functions(self, model: ModelPatcherAndInjector):
         # Restoration
@@ -294,6 +336,7 @@ class FunctionInjectionHolder:
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_forward_comfy_cast_weights
+            model.model.diffusion_model.forward = self.orig_diffusion_model_forward
             comfy.samplers.sampling_function = self.orig_sampling_function
             comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
             if SAMPLE_FALLBACK:  # for backwards compatibility, for now
@@ -304,6 +347,60 @@ class FunctionInjectionHolder:
         except AttributeError:
             logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
                          "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
+
+
+class GroupnormUninjectHelper:
+    def __init__(self, holder: FunctionInjectionHolder=None):
+        self.holder = holder
+        self.previous_gn_forward = None
+        self.previous_dwi_gn_cast_weights = None
+    
+    def __enter__(self):
+        if self.holder is None:
+            return self
+        # backup current groupnorm funcs
+        self.previous_gn_forward = torch.nn.GroupNorm.forward
+        self.previous_dwi_gn_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
+        # restore groupnorm to default state
+        torch.nn.GroupNorm.forward = self.holder.orig_groupnorm_forward
+        comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.holder.orig_groupnorm_forward_comfy_cast_weights
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        if self.holder is None:
+            return
+        # bring groupnorm back to previous state
+        torch.nn.GroupNorm.forward = self.previous_gn_forward
+        comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.previous_dwi_gn_cast_weights
+        self.previous_gn_forward = None
+        self.previous_dwi_gn_cast_weights = None
+
+
+class GroupnormInjectHelper:
+    def __init__(self, holder: FunctionInjectionHolder=None):
+        self.holder = holder
+        self.previous_gn_forward = None
+        self.previous_dwi_gn_cast_weights = None
+    
+    def __enter__(self):
+        if self.holder is None:
+            return self
+        # store previous gn_forward
+        self.previous_gn_forward = torch.nn.GroupNorm.forward
+        self.previous_dwi_gn_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
+        # inject groupnorm functions
+        torch.nn.GroupNorm.forward = self.holder.inject_groupnorm_forward
+        comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.holder.inject_groupnorm_forward_comfy_cast_weights
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        if self.holder is None:
+            return
+        # bring groupnorm back to previous state
+        torch.nn.GroupNorm.forward = self.previous_gn_forward
+        comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.previous_dwi_gn_cast_weights
+        self.previous_gn_forward = None
+        self.previous_dwi_gn_cast_weights = None     
 
 
 def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) -> Callable:
@@ -349,12 +446,16 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             def ad_callback(step, x0, x, total_steps):
                 if original_callback is not None:
                     original_callback(step, x0, x, total_steps)
+                # store denoised latents if image_injection will be used
+                if not model.sample_settings.image_injection.is_empty():
+                    ADGS.callback_output_dict["x0"] = x0
                 # update GLOBALSTATE for next iteration
                 ADGS.current_step = ADGS.start_step + step + 1
             kwargs["callback"] = ad_callback
             ADGS.model_patcher = model
             ADGS.motion_models = model.motion_models
             ADGS.sample_settings = model.sample_settings
+            ADGS.function_injections = function_injections
 
             # apply adapt_denoise_steps
             args = list(args)
@@ -416,7 +517,73 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                     model.motion_models.pre_run(model)
                 if model.sample_settings is not None:
                     model.sample_settings.pre_run(model)
-                latents = orig_comfy_sample(model, noise, *args, **kwargs)
+
+                if ADGS.sample_settings.image_injection.is_empty():
+                    latents = orig_comfy_sample(model, noise, *args, **kwargs)
+                else:
+                    ADGS.sample_settings.image_injection.initialize_timesteps(model.model)
+                    # separate handling for KSampler vs Custom KSampler
+                    if is_custom:
+                        sigmas = args[2]
+                        sigmas_list, injection_list = ADGS.sample_settings.image_injection.custom_ksampler_get_injections(model, sigmas)
+                        # useful logging
+                        if len(injection_list) > 0:
+                            inj_str = "s" if len(injection_list) > 1 else ""
+                            logger.info(f"Found {len(injection_list)} applicable image injection{inj_str}; sampling will be split into {len(sigmas_list)}.")
+                        else:
+                            logger.info(f"Found 0 applicable image injections within the step bounds of this sampler; sampling unaffected.")
+                        is_first = True
+                        new_noise = noise
+                        for i in range(len(sigmas_list)):
+                            args[2] = sigmas_list[i]
+                            args[-1] = latents
+                            latents = orig_comfy_sample(model, new_noise, *args, **kwargs)
+                            if is_first:
+                                new_noise = torch.zeros_like(latents)
+                            # if injection expected, perform injection
+                            if i < len(injection_list):
+                                to_inject = injection_list[i]
+                                latents = perform_image_injection(model.model, latents, to_inject)
+                    else:
+                        is_ksampler_advanced = kwargs.get("start_step", None) is not None
+                        # force_full_denoise should be respected on final sampling - should be True for normal KSampler
+                        final_force_full_denoise = kwargs.get("force_full_denoise", False)
+                        new_kwargs = kwargs.copy()
+                        if not is_ksampler_advanced:
+                            final_force_full_denoise = True
+                            new_kwargs["start_step"] = 0
+                            new_kwargs["last_step"] = 10000
+                        steps_list, injection_list = ADGS.sample_settings.image_injection.ksampler_get_injections(model, scheduler=args[-4], sampler_name=args[-5], denoise=kwargs["denoise"], force_full_denoise=final_force_full_denoise,
+                                                                                                                  start_step=new_kwargs["start_step"], last_step=new_kwargs["last_step"], total_steps=args[0])
+                        # useful logging
+                        if len(injection_list) > 0:
+                            inj_str = "s" if len(injection_list) > 1 else ""
+                            logger.info(f"Found {len(injection_list)} applicable image injection{inj_str}; sampling will be split into {len(steps_list)}.")
+                        else:
+                            logger.info(f"Found 0 applicable image injections within the step bounds of this sampler; sampling unaffected.")
+                        is_first = True
+                        new_noise = noise
+                        for i in range(len(steps_list)):
+                            steps_range = steps_list[i]
+                            args[-1] = latents
+                            # first run will respect original disable_noise, but should have no effect on anything
+                            # as disable_noise only does something in the functions that call this one
+                            if not is_first:
+                                new_kwargs["disable_noise"] = True
+                            new_kwargs["start_step"] = steps_range[0]
+                            new_kwargs["last_step"] = steps_range[1]
+                            # if is last, respect original sampler's force_full_denoise
+                            if i == len(steps_list)-1:
+                                new_kwargs["force_full_denoise"] = final_force_full_denoise
+                            else:
+                                new_kwargs["force_full_denoise"] = False
+                            latents = orig_comfy_sample(model, new_noise, *args, **new_kwargs)
+                            if is_first:
+                                new_noise = torch.zeros_like(latents)
+                            # if injection expected, perform injection
+                            if i < len(injection_list):
+                                to_inject = injection_list[i]
+                                latents = perform_image_injection(model.model, latents, to_inject)
             return latents
         finally:
             del latents
@@ -434,49 +601,104 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
     return motion_sample
 
 
-def evolved_sampling_function(model, x, timestep, uncond, cond, cond_scale, model_options: dict={}, seed=None):
+def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS.initialize(model)
-    ADGS.prepare_current_keyframes(timestep=timestep)
+    ADGS.prepare_current_keyframes(x=x, timestep=timestep)
+    try:
+        cond, uncond = ADGS.perform_special_model_features(model, [cond, uncond], x)
 
-    # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
-    if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
-        uncond_ = None
-    else:
-        uncond_ = uncond
-
-    # add AD/evolved-sampling params to model_options (transformer_options)
-    model_options = model_options.copy()
-    if "tranformer_options" not in model_options:
-        model_options["tranformer_options"] = {}
-    model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
-
-    if not ADGS.is_using_sliding_context():
-        cond_pred, uncond_pred = calc_cond_uncond_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)
-    else:
-        cond_pred, uncond_pred = sliding_calc_conds_batch(model, [cond, uncond_], x, timestep, model_options)
-
-    if hasattr(comfy.samplers, "cfg_function"):
-        try:
-            cached_calc_cond_batch = comfy.samplers.calc_cond_batch
-            # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
-            comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
-            return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
-        finally:
-            comfy.samplers.calc_cond_batch = cached_calc_cond_batch
-    else: # for backwards compatibility, for now
-        if "sampler_cfg_function" in model_options:
-            args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
-                    "cond_denoised": cond_pred, "uncond_denoised": uncond_pred, "model": model, "model_options": model_options}
-            cfg_result = x - model_options["sampler_cfg_function"](args)
+        # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
+        if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
+            uncond_ = None
         else:
-            cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
+            uncond_ = uncond
 
-        for fn in model_options.get("sampler_post_cfg_function", []):
-            args = {"denoised": cfg_result, "cond": cond, "uncond": uncond, "model": model, "uncond_denoised": uncond_pred, "cond_denoised": cond_pred,
-                    "sigma": timestep, "model_options": model_options, "input": x}
-            cfg_result = fn(args)
+        # add AD/evolved-sampling params to model_options (transformer_options)
+        model_options = model_options.copy()
+        if "tranformer_options" not in model_options:
+            model_options["tranformer_options"] = {}
+        model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
-        return cfg_result
+        if not ADGS.is_using_sliding_context():
+            cond_pred, uncond_pred = calc_cond_uncond_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)
+        else:
+            cond_pred, uncond_pred = sliding_calc_conds_batch(model, [cond, uncond_], x, timestep, model_options)
+
+        if hasattr(comfy.samplers, "cfg_function"):
+            try:
+                cached_calc_cond_batch = comfy.samplers.calc_cond_batch
+                # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
+                comfy.samplers.calc_cond_batch = wrapped_cfg_sliding_calc_cond_batch_factory(cached_calc_cond_batch)
+                return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
+            finally:
+                comfy.samplers.calc_cond_batch = cached_calc_cond_batch
+        else: # for backwards compatibility, for now
+            if "sampler_cfg_function" in model_options:
+                args = {"cond": x - cond_pred, "uncond": x - uncond_pred, "cond_scale": cond_scale, "timestep": timestep, "input": x, "sigma": timestep,
+                        "cond_denoised": cond_pred, "uncond_denoised": uncond_pred, "model": model, "model_options": model_options}
+                cfg_result = x - model_options["sampler_cfg_function"](args)
+            else:
+                cfg_result = uncond_pred + (cond_pred - uncond_pred) * cond_scale
+
+            for fn in model_options.get("sampler_post_cfg_function", []):
+                args = {"denoised": cfg_result, "cond": cond, "uncond": uncond, "model": model, "uncond_denoised": uncond_pred, "cond_denoised": cond_pred,
+                        "sigma": timestep, "model_options": model_options, "input": x}
+                cfg_result = fn(args)
+
+            return cfg_result
+    finally:
+        ADGS.restore_special_model_features(model)
+
+
+def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:
+    # NOTE: the latents here have already been process_latent_out'ed
+    # get currently used models so they can be properly reloaded after perfoming VAE Encoding
+    if hasattr(comfy.model_management, "loaded_models"):
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
+    else:
+        cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
+    try:
+        orig_device = latents.device
+        orig_dtype = latents.dtype
+        # follow same steps as in KSampler Custom to get same denoised_x0 value
+        x0 = ADGS.callback_output_dict.get("x0", None)
+        if x0 is None:
+            return latents
+        # x0 should be process_latent_out'ed to match expected state of latents between nodes
+        x0 = model.process_latent_out(x0)
+    
+        # first, decode x0 into images, and then re-encode
+        decoded_images = vae_decode_raw_batched(to_inject.vae, x0)
+        encoded_x0 = vae_encode_raw_batched(to_inject.vae, decoded_images)
+
+        # get difference between sampled latents and encoded_x0
+        encoded_x0 = latents - encoded_x0
+
+        # get mask, or default to full mask
+        mask = to_inject.mask
+        b, c, h, w = encoded_x0.shape
+        # need to resize images and masks to match expected dims
+        if mask is None:
+            mask = torch.ones(1, h, w)
+        if to_inject.invert_mask:
+            mask = 1.0 - mask
+        opts = to_inject.img_inject_opts
+        # composite decoded_x0 with image to inject;
+        # make sure to move dims to match expectation of (b,c,h,w)
+        composited = composite_extend(destination=decoded_images.movedim(-1, 1), source=to_inject.image.movedim(-1, 1), x=opts.x, y=opts.y, mask=mask,
+                                      multiplier=to_inject.vae.downscale_ratio, resize_source=to_inject.resize_image).movedim(1, -1)
+        # encode composited to get latent representation
+        composited = vae_encode_raw_batched(to_inject.vae, composited)
+        # add encoded_x0 diff to composited 
+        composited += encoded_x0
+        if type(to_inject.strength_multival) == float and math.isclose(1.0, to_inject.strength_multival):
+            return composited.to(dtype=orig_dtype, device=orig_device)
+        strength = to_inject.strength_multival
+        if type(strength) == Tensor:
+            strength = extend_to_batch_size(prepare_mask_batch(strength, composited.shape), b)
+        return composited * strength + latents * (1.0 - strength)
+    finally:
+        comfy.model_management.load_models_gpu(cached_loaded_models)
 
 
 def wrapped_cfg_sliding_calc_cond_batch_factory(orig_calc_cond_batch):
@@ -625,6 +847,30 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
             conds_final[i] /= counts_final[i]
         del counts_final
         return conds_final
+
+
+def get_conds_with_c_concat(conds: list[dict], c_concat: comfy.conds.CONDNoiseShape):
+    new_conds = []
+    for cond in conds:
+        resized_cond = None
+        if cond is not None:
+            # reuse or resize cond items to match context requirements
+            resized_cond = []
+            # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
+            for actual_cond in cond:
+                resized_actual_cond = actual_cond.copy()
+                # now we are in the inner dict - "pooled_output" is a tensor, "control" is a ControlBase object, "model_conds" is dictionary
+                for key in actual_cond:
+                    if key == "model_conds":
+                        new_model_conds = actual_cond[key].copy()
+                        if "c_concat" in new_model_conds:
+                            new_model_conds["c_concat"] = comfy.conds.CONDNoiseShape(torch.cat(new_model_conds["c_concat"].cond, c_concat.cond, dim=1))
+                        else:
+                            new_model_conds["c_concat"] = c_concat
+                        resized_actual_cond[key] = new_model_conds
+                resized_cond.append(resized_actual_cond)
+        new_conds.append(resized_cond)
+    return new_conds
 
 
 def calc_cond_uncond_batch_wrapper(model, conds: list[dict], x_in: Tensor, timestep, model_options):

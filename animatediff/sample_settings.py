@@ -5,8 +5,10 @@ from torch import Tensor
 
 import comfy.sample
 import comfy.samplers
+import comfy.model_management
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
+from comfy.sd import VAE
 
 from . import freeinit
 from .conditioning import LoraHookMode
@@ -54,7 +56,7 @@ class NoiseNormalize:
 class SampleSettings:
     def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None,
                  iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False,
-                 custom_cfg: 'CustomCFGKeyframeGroup'=None, sigma_schedule: SigmaSchedule=None):
+                 custom_cfg: 'CustomCFGKeyframeGroup'=None, sigma_schedule: SigmaSchedule=None, image_injection: 'NoisedImageToInjectGroup'=None):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
@@ -66,6 +68,7 @@ class SampleSettings:
         self.adapt_denoise_steps = adapt_denoise_steps
         self.custom_cfg = custom_cfg.clone() if custom_cfg else custom_cfg
         self.sigma_schedule = sigma_schedule
+        self.image_injection = image_injection.clone() if image_injection else NoisedImageToInjectGroup()
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
@@ -93,15 +96,20 @@ class SampleSettings:
     def pre_run(self, model: ModelPatcher):
         if self.custom_cfg is not None:
             self.custom_cfg.reset()
+        if self.image_injection is not None:
+            self.image_injection.reset()
     
     def cleanup(self):
         if self.custom_cfg is not None:
             self.custom_cfg.reset()
+        if self.image_injection is not None:
+            self.image_injection.reset()
 
     def clone(self):
         return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
                            noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
-                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg, sigma_schedule=self.sigma_schedule)
+                           negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg,
+                           sigma_schedule=self.sigma_schedule, image_injection=self.image_injection)
 
 
 class NoiseLayer:
@@ -554,3 +562,166 @@ class CustomCFGKeyframeGroup:
         if self._current_keyframe != None:
             return self._current_keyframe.cfg_multival
         return None
+
+
+class NoisedImageInjectOptions:
+    def __init__(self, x=0, y=0):
+        self.x = x
+        self.y = y
+    
+    def clone(self):
+        return NoisedImageInjectOptions(x=self.x, y=self.y)
+
+
+class NoisedImageToInject:
+    def __init__(self, image: Tensor, mask: Tensor, vae: VAE, start_percent: float, guarantee_steps: int=1,
+                 invert_mask=False, resize_image=True, strength_multival=None,
+                 img_inject_opts: NoisedImageInjectOptions=None):
+        self.image = image
+        self.mask = mask
+        self.vae = vae
+        self.invert_mask = invert_mask
+        self.resize_image = resize_image
+        self.strength_multival = 1.0 if strength_multival is None else strength_multival
+        if img_inject_opts is None:
+            img_inject_opts = NoisedImageInjectOptions()
+        self.img_inject_opts = img_inject_opts
+        # scheduling
+        self.start_percent = float(start_percent)
+        self.start_t = 999999999.9
+        self.start_timestep = 999
+        self.guarantee_steps = guarantee_steps
+
+    def clone(self):
+        cloned = NoisedImageToInject(image=self.image, vae=self.vae, start_percent=self.start_percent,
+                                     guarantee_steps=self.guarantee_steps, invert_mask=self.invert_mask, resize_image=self.resize_image,
+                                     img_inject_opts=self.img_inject_opts)
+        cloned.start_t = self.start_t
+        cloned.start_timestep = self.start_timestep
+        return cloned
+
+
+class NoisedImageToInjectGroup:
+    def __init__(self):
+        self.injections: list[NoisedImageToInject] = []
+        self._current_index: int = -1
+        self._current_used_steps: int = 0
+    
+    @property
+    def current_injection(self):
+        return self.injections[self._current_index]
+
+    def reset(self):
+        self._current_index = -1
+        self._current_used_steps: int = 0
+
+    def add(self, to_inject: NoisedImageToInject):
+        # add to end of list, then sort
+        self.injections.append(to_inject)
+        self.injections = get_sorted_list_via_attr(self.injections, "start_percent")
+
+    def is_empty(self) -> bool:
+        return len(self.injections) == 0
+
+    def has_index(self, index: int) -> int:
+        return index >=0 and index < len(self.injections)
+
+    def clone(self):
+        cloned = NoisedImageToInjectGroup()
+        for to_inject in self.injections:
+            cloned.injections.append(to_inject)
+        return cloned
+    
+    def initialize_timesteps(self, model: BaseModel):
+        for to_inject in self.injections:
+            to_inject.start_t = model.model_sampling.percent_to_sigma(to_inject.start_percent)
+            to_inject.start_timestep = model.model_sampling.timestep(torch.tensor(to_inject.start_t))
+
+    def ksampler_get_injections(self, model: ModelPatcher, scheduler: str, sampler_name: str, denoise: float, force_full_denoise: bool, start_step: int, last_step: int, total_steps: int) -> tuple[list[list[int]], list[NoisedImageToInject]]:
+        actual_last_step = min(last_step, total_steps)
+        steps = list(range(start_step, actual_last_step+1))
+        # create sampler that will be used to get sigmas
+        sampler = comfy.samplers.KSampler(model, steps=total_steps, device=model.load_device, sampler=sampler_name, scheduler=scheduler, denoise=denoise, model_options=model.model_options)
+        # replicate KSampler.sample function to get the exact sigmas
+        sigmas = sampler.sigmas
+        if last_step is not None and last_step < (len(sigmas) - 1):
+            sigmas = sigmas[:last_step + 1]
+            if force_full_denoise:
+                sigmas[-1] = 0
+        if start_step is not None:
+            if start_step < (len(sigmas) - 1):
+                sigmas = sigmas[start_step:]
+            else:
+                return [[start_step,actual_last_step], []]
+        assert len(steps) == len(sigmas)
+        model_sampling = model.get_model_object("model_sampling")
+        timesteps = [model_sampling.timestep(x) for x in sigmas]
+        # get actual ranges + injections
+        ranges, injections = self._prepare_injections(timesteps=timesteps)
+        # ranges are given with end-exclusive index, so subtract by 1 to get real step value
+        steps_list = [[steps[x[0]],steps[x[1]-1]] for x in ranges]
+        return steps_list, injections
+
+    def custom_ksampler_get_injections(self, model: ModelPatcher, sigmas: Tensor) -> tuple[list[list[Tensor]], list[NoisedImageToInject]]:
+        model_sampling = model.get_model_object("model_sampling")
+        timesteps = []
+        for i in range(sigmas.shape[0]):
+            timesteps.append(model_sampling.timestep(sigmas[i]))
+        # get actual ranges + injections
+        ranges, injections = self._prepare_injections(timesteps=timesteps)
+        sigmas_list = [sigmas[x[0]:x[1]] for x in ranges]
+        return sigmas_list, injections
+
+    def _prepare_injections(self, timesteps: list[Tensor]) -> tuple[list[list[Tensor]], list[NoisedImageToInject]]:
+        range_start = timesteps[0]
+        range_end = timesteps[-1]
+        # if nothing to inject, return all indexes of timesteps and no injections
+        if self.is_empty():
+            return ([(0, len(timesteps))], [])
+        # otherwise, need to populate lists
+        timesteps_list: list[list[Tensor]] = []
+        injection_list: list[NoisedImageToInject] = []
+        remaining_timesteps = timesteps.copy()
+        remaining_offset = 0
+        # NOTE: timesteps start at 999 and end at 0; the smaller the timestep, the 'later' the step
+        for eval_c in self.injections:
+            if len(remaining_timesteps) <= 2:
+                break
+            current_used_steps = 0
+            # if start_timestep is greater than range_start, ignore it
+            if eval_c.start_timestep > range_start:
+                continue
+            # if start_timestep is less than range_end, ignore it
+            if eval_c.start_timestep < range_end:
+                continue
+            while current_used_steps < eval_c.guarantee_steps:
+                if len(remaining_timesteps) <= 2:
+                    break
+                # otherwise, make a split in timesteps
+                broken_nicely = False
+                for i in range(1, len(remaining_timesteps)-1):
+                    # if smaller than timestep, look at next timestep
+                    if eval_c.start_timestep < remaining_timesteps[i]:
+                        continue
+                    # if only one timestep would be leftover, then end
+                    if len(remaining_timesteps[i:]) < 2:
+                        broken_nicely = True
+                        break
+                    new_timestep_range = (remaining_offset, remaining_offset+i+1)
+                    timesteps_list.append(new_timestep_range)
+                    injection_list.append(eval_c)
+                    current_used_steps += 1
+                    remaining_timesteps = remaining_timesteps[i:]
+                    remaining_offset += i
+                    # expected break
+                    broken_nicely = True
+                    break
+                # did not find a match for the timestep, so should break out of while loop
+                if not broken_nicely:
+                    break
+
+        # add remaining timestep range
+        timesteps_list.append((remaining_offset, remaining_offset+len(remaining_timesteps)))
+        # return lists - timesteps list len should be one greater than injection list len (fenceposts problem)
+        assert len(timesteps_list) == len(injection_list) + 1
+        return timesteps_list, injection_list

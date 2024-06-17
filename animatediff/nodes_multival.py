@@ -4,7 +4,7 @@ from typing import Union
 import torch
 from torch import Tensor
 
-from .utils_motion import linear_conversion, normalize_min_max, extend_to_batch_size
+from .utils_motion import linear_conversion, normalize_min_max, extend_to_batch_size, extend_list_to_batch_size
 
 
 class ScaleType:
@@ -40,7 +40,7 @@ class MultivalDynamicNode:
             if mask_optional is not None:
                 if len(float_val) < mask_optional.shape[0]:
                     # copies last entry enough times to match mask shape
-                    float_val = float_val + float_val[-1]*(mask_optional.shape[0]-len(float_val))
+                    float_val = extend_list_to_batch_size(float_val, mask_optional.shape[0])
                 if mask_optional.shape[0] < len(float_val):
                     mask_optional = extend_to_batch_size(mask_optional, len(float_val))
                 float_val = float_val[:mask_optional.shape[0]]
@@ -84,12 +84,25 @@ class MultivalScaledMaskNode:
     FUNCTION = "create_multival"
 
     def create_multival(self, min_float_val: float, max_float_val: float, mask: Tensor, scaling: str=ScaleType.ABSOLUTE):
-        # TODO: allow min_float_val and max_float_val to be list[float]
+        lengths = [mask.shape[0]]
+        iterable_inputs = [False, False]
+        val_inputs = [min_float_val, max_float_val]
         if isinstance(min_float_val, Iterable):
-            raise ValueError(f"min_float_val must be type float (no lists allowed here), not {type(min_float_val).__name__}.")
+            iterable_inputs[0] = True
+            val_inputs[0] = list(min_float_val)
+            lengths.append(len(min_float_val))
         if isinstance(max_float_val, Iterable):
-            raise ValueError(f"max_float_val must be type float (no lists allowed here), not {type(max_float_val).__name__}.")
-        
+            iterable_inputs[1] = True
+            val_inputs[1] = list(max_float_val)
+            lengths.append(len(max_float_val))
+        # make sure mask and any iterable float_vals match max length
+        max_length = max(lengths)
+        mask = extend_to_batch_size(mask, max_length)
+        for i in range(len(iterable_inputs)):
+            if iterable_inputs[i] == True:
+                # make sure tensors will match dimensions of mask
+                val_inputs[i] = torch.tensor(extend_list_to_batch_size(val_inputs[i], max_length)).unsqueeze(-1).unsqueeze(-1)
+        min_float_val, max_float_val = val_inputs
         if scaling == ScaleType.ABSOLUTE:
             mask = linear_conversion(mask.clone(), new_min=min_float_val, new_max=max_float_val)
         elif scaling == ScaleType.RELATIVE:
@@ -134,3 +147,26 @@ class MultivalFloatNode:
 
     def create_multival(self, float_val: Union[float, list[float]]=None):
         return MultivalDynamicNode.create_multival(self, float_val=float_val)
+
+
+class MultivalConvertToMaskNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "multival": ("MULTIVAL",)
+            }
+        }
+    
+    RETURN_TYPES = ("MASK",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/multival"
+    FUNCTION = "convert_multival_to_mask"
+
+    def convert_multival_to_mask(self, multival: Union[float, Tensor]):
+        # if already tensor, assume is a valid mask
+        if type(multival) == Tensor:
+            return (multival,)
+        # otherwise, make a single 1x1 mask with the proper value
+        shape = (1,1,1)
+        converted_multival = torch.ones(shape) * multival
+        return (converted_multival,)
