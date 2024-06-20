@@ -146,16 +146,19 @@ class ModelPatcherAndInjector(ModelPatcher):
         model_sd = self.model.state_dict()
         for k in patches:
             offset = None
+            function = None
             if isinstance(k, str):
                 key = k
             else:
                 offset = k[1]
                 key = k[0]
+                if len(k) > 2:
+                    function = k[2]
             
             if key in model_sd:
                 p.add(k)
                 current_patches: list[tuple] = current_hooked_patches.get(key, [])
-                current_patches.append((strength_patch, patches[k], strength_model, offset))
+                current_patches.append((strength_patch, patches[k], strength_model, offset, function))
                 current_hooked_patches[key] = current_patches
         self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
         # since should care about these patches too to determine if same model, reroll patches_uuid
@@ -171,18 +174,21 @@ class ModelPatcherAndInjector(ModelPatcher):
         model_sd = self.model.state_dict()
         for k in patches:
             offset = None
+            function = None
             if isinstance(k, str):
                 key = k
             else:
                 offset = k[1]
                 key = k[0]
+                if len(k) > 2:
+                    function = k[2]
             
             if key in model_sd:
                 p.add(k)
                 current_patches: list[tuple] = current_hooked_patches.get(key, [])
                 # take difference between desired weight and existing weight to get diff
                 # TODO: create fix for fp8
-                current_patches.append((strength_patch, (patches[k]-comfy.utils.get_attr(self.model, key),), strength_model, offset))
+                current_patches.append((strength_patch, (patches[k]-comfy.utils.get_attr(self.model, key),), strength_model, offset, function))
                 current_hooked_patches[key] = current_patches
         self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
         # since should care about these patches too to determine if same model, reroll patches_uuid
@@ -506,23 +512,26 @@ class ModelPatcherCLIPHooks(ModelPatcher):
         model_sd = self.model.state_dict()
         for k in patches:
             offset = None
+            function = None
             if isinstance(k, str):
                 key = k
             else:
                 offset = k[1]
                 key = k[0]
+                if len(k) > 2:
+                    function = k[2]
             
             if key in model_sd:
                 p.add(k)
                 current_patches: list[tuple] = current_hooked_patches.get(key, [])
-                current_patches.append((strength_patch, patches[k], strength_model, offset))
+                current_patches.append((strength_patch, patches[k], strength_model, offset, function))
                 current_hooked_patches[key] = current_patches
         self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
         # since should care about these patches too to determine if same model, reroll patches_uuid
         self.patches_uuid = uuid.uuid4()
         return list(p)
     
-    def add_hooked_patches_as_diffs(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
+    def add_hooked_patches_as_diffs(self, lora_hook: LoraHook, patches: dict, strength_patch=1.0, strength_model=1.0):
         '''
         Based on add_hooked_patches, but intended for using a model's weights as lora hook.
         '''
@@ -531,17 +540,21 @@ class ModelPatcherCLIPHooks(ModelPatcher):
         model_sd = self.model.state_dict()
         for k in patches:
             offset = None
+            function = None
             if isinstance(k, str):
                 key = k
             else:
                 offset = k[1]
                 key = k[0]
+                if len(k) > 2:
+                    function = k[2]
             
             if key in model_sd:
                 p.add(k)
                 current_patches: list[tuple] = current_hooked_patches.get(key, [])
                 # take difference between desired weight and existing weight to get diff
-                current_patches.append((strength_patch, (patches[k]-comfy.utils.get_attr(self.model, key),), strength_model, offset))
+                # TODO: create fix for fp8
+                current_patches.append((strength_patch, (patches[k]-comfy.utils.get_attr(self.model, key),), strength_model, offset, function))
                 current_hooked_patches[key] = current_patches
         self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
         # since should care about these patches too to determine if same model, reroll patches_uuid
