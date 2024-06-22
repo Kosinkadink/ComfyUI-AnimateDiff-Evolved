@@ -54,7 +54,7 @@ const deprecate_nodes = {
                         }
 
                     },
-                    options : {}
+                    options : {"serialize": false}
                 }
                 if (!node.widgets) {
                     node.widgets = []
