@@ -28,6 +28,7 @@ const deprecate_nodes = {
         }
         app.graph.filter = "shown"
     },
+    async refreshComboInNodes: () => app.graph.filter = "shown",
     async getCustomWidgets() {
         return {
             ADEWARN(node, inputName, inputData) {
