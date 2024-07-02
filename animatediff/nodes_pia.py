@@ -164,7 +164,7 @@ class LoadAnimateDiffAndInjectPIANode:
             },
             "optional": {
                 "ad_settings": ("AD_SETTINGS",),
-                "deprecation_warning": ("ADEWARN", {"text": "Experimental. Don't expect to work", "warn_type": "experimental", "color": "#CFC"}),
+                "deprecation_warning": ("ADEWARN", {"text": "Experimental. Don't expect to work.", "warn_type": "experimental", "color": "#CFC"}),
             }
         }
     

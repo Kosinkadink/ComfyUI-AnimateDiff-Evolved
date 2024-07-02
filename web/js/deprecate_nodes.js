@@ -2,7 +2,7 @@ import { app } from '../../../scripts/app.js'
 
 app.ui.settings.addSetting({
     id: "ADE.ShowExperimental",
-    name: "🎭🅐🅓 show experimental nodes",
+    name: "🎭🅐🅓 Show experimental nodes",
     type: "boolean",
     defaultValue: false,
 });

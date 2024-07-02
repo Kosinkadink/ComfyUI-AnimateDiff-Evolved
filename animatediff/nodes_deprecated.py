@@ -292,6 +292,7 @@ class AnimateDiffModelSettings:
             },
             "optional": {
                 "mask_motion_scale": ("MASK",),
+                "optional": {"deprecation_warning": ("ADEWARN", {"text": "Deprecated"})},
             }
         }
     
@@ -320,6 +321,7 @@ class AnimateDiffModelSettingsSimple:
                 "mask_motion_scale": ("MASK",),
                 "min_motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
                 "max_motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
+                "optional": {"deprecation_warning": ("ADEWARN", {"text": "Deprecated"})},
             }
         }
     
@@ -358,6 +360,7 @@ class AnimateDiffModelSettingsAdvanced:
                 "mask_motion_scale": ("MASK",),
                 "min_motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
                 "max_motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
+                "optional": {"deprecation_warning": ("ADEWARN", {"text": "Deprecated"})},
             }
         }
     
@@ -412,6 +415,7 @@ class AnimateDiffModelSettingsAdvancedAttnStrengths:
                 "mask_motion_scale": ("MASK",),
                 "min_motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
                 "max_motion_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001}),
+                "optional": {"deprecation_warning": ("ADEWARN", {"text": "Deprecated"})},
             }
         }
     
