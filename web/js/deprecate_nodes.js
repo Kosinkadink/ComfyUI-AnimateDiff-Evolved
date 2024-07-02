@@ -1,34 +1,46 @@
 import { app } from '../../../scripts/app.js'
 
+app.ui.settings.addSetting({
+    id: "ADE.ShowExperimental",
+    name: "🎭🅐🅓 show experimental nodes",
+    type: "boolean",
+    defaultValue: false,
+});
+app.ui.settings.addSetting({
+    id: "ADE.ShowDeprecated",
+    name: "🎭🅐🅓 Show deprecated nodes",
+    type: "boolean",
+    defaultValue: false,
+});
+
 const deprecate_nodes = {
     name: 'AnimateDiff.deprecate_nodes',
-    async setup() {
-        if (app.graph.filter) {
-            //Someone else is doing a thing. Give up
-            return
-        }
-        for (let k in LiteGraph.registered_node_types) {
-            let n = LiteGraph.registered_node_types[k]
-            let warnWidget = false
-            if (n?.nodeData?.input?.optional) {
-                for (let w in n.nodeData.input.optional) {
-                    if (n.nodeData.input.optional[w][0] == "ADEWARN") {
-                        warnWidget = true
-                        break
-                    }
+    async beforeRegisterNodeDef(nodeType, nodeData, app) {
+        let showDeprecated = app.ui.settings.getSettingValue("ADE.ShowDeprecated", false)
+        let showExperimental = app.ui.settings.getSettingValue("ADE.ShowExperimental", false)
+        let warnWidget = false
+        if (nodeData?.input?.optional) {
+            for (let w in nodeData.input.optional) {
+                if (nodeData.input.optional[w][0] == "ADEWARN") {
+                    warnWidget = nodeData.input.optional[w]
+                    break
                 }
             }
-            if (warnWidget) {
-                n.filter = "hidden"
-                continue
-            }
-            if (!n.filter) {
-                n.filter = "shown"
+        }
+        if (warnWidget) {
+            if (!((warnWidget[1].warn_type || "deprecated") == "deprecated" && showDeprecated) &&
+                !(warnWidget[1].warn_type == "experimental" && showExperimental)) {
+                nodeType.filter = "hidden"
             }
         }
-        app.graph.filter = "shown"
+        if (!nodeType.filter) {
+            nodeType.filter = app.graph.filter
+        }
+
     },
-    async refreshComboInNodes: () => app.graph.filter = "shown",
+    async init() {
+        app.graph.filter = app.graph.filter || "shown"
+    },
     async getCustomWidgets() {
         return {
             ADEWARN(node, inputName, inputData) {
@@ -39,7 +51,7 @@ const deprecate_nodes = {
                     draw : function(ctx, node, widget_width, y, H) {
                         var show_text = app.canvas.ds.scale > 0.5;
                         var margin = 15;
-                        var text_color = "#FCC"
+                        var text_color = inputData[1]['color'] || "#FCC"
                         ctx.textAlign = "center";
                         if (show_text) {
                             if(!this.disabled)
@@ -50,12 +62,19 @@ const deprecate_nodes = {
                             ctx.clip();
                             ctx.fillStyle = text_color;
                             let disp_text = inputData[1]['text']
-                            ctx.fillText(disp_text, widget_width/2, y + H * 0.7); //30 chars max
+                            ctx.fillText(disp_text, widget_width/2, y + H * 0.7);
                             ctx.restore();
                         }
 
                     },
-                    options : {"serialize": false}
+                    options : {"serialize": false},
+                    computeSize : function(width) {
+                        if (inputData[1]['text']) {
+                            return [width, 20]
+                        }
+                        return [0, -4]
+
+                    }
                 }
                 if (!node.widgets) {
                     node.widgets = []
