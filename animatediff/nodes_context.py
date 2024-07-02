@@ -77,6 +77,7 @@ class LegacyLoopedUniformContextOptionsNode:
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
                 "prev_context": ("CONTEXT_OPTIONS",),
                 "view_opts": ("VIEW_OPTS",),
+                "deprecation_warning": ("ADEWARN", {"text": ""}),
             }
         }
     
