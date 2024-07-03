@@ -41,6 +41,14 @@ const deprecate_nodes = {
     async init() {
         app.graph.filter = app.graph.filter || "shown"
     },
+    async setup() {
+        for (let k in LiteGraph.registered_node_types) {
+            let nodeType = LiteGraph.registered_node_types[k]
+            if (!nodeType.filter) {
+                nodeType.filter = app.graph.filter
+            }
+        }
+    },
     async getCustomWidgets() {
         return {
             ADEWARN(node, inputName, inputData) {
