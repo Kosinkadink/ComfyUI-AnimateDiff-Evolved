@@ -231,6 +231,23 @@ class CustomCFGNode:
         return (cfg_custom,)
 
 
+class CustomCFGSimpleNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+            },
+        }
+    
+    RETURN_TYPES = ("CUSTOM_CFG",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_custom_cfg"
+
+    def create_custom_cfg(self, cfg: float):
+        return CustomCFGNode.create_custom_cfg(self, cfg_multival=cfg)
+
+
 class CustomCFGKeyframeNode:
     @classmethod
     def INPUT_TYPES(s):
@@ -257,6 +274,30 @@ class CustomCFGKeyframeNode:
         keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival, start_percent=start_percent, guarantee_steps=guarantee_steps)
         prev_custom_cfg.add(keyframe)
         return (prev_custom_cfg,)
+
+
+class CustomCFGKeyframeSimpleNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            },
+            "optional": {
+                "prev_custom_cfg": ("CUSTOM_CFG",),
+            }
+        }
+    
+    RETURN_TYPES = ("CUSTOM_CFG",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_custom_cfg"
+
+    def create_custom_cfg(self, cfg: float, start_percent: float=0.0, guarantee_steps: int=1,
+                          prev_custom_cfg: CustomCFGKeyframeGroup=None):
+        return CustomCFGKeyframeNode.create_custom_cfg(self, cfg_multival=cfg, start_percent=start_percent,
+                                                       guarantee_steps=guarantee_steps, prev_custom_cfg=prev_custom_cfg)
 
 
 class NoisedImageInjectionNode:

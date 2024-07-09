@@ -1,5 +1,8 @@
 from typing import Callable, Optional, Union
 
+import torchvision
+import PIL
+
 import numpy as np
 from torch import Tensor
 
@@ -473,3 +476,31 @@ def shift_window_to_end(window: list[int], num_frames: int):
     for i in range(len(window)):
         # 2) add end_delta to each val to slide windows to end
         window[i] = window[i] + end_delta
+
+
+##########################
+# Context Visualization
+##########################
+class Colors:
+    BLACK = (0, 0, 0)
+    WHITE = (255, 255, 255)
+    RED = (255, 0, 0)
+    GREEN = (0, 255, 0)
+    BLUE = (0, 0, 255)
+    YELLOW = (255, 255, 0)
+    MAGENTA = (255, 0, 255)
+    CYAN = (0, 255, 255)
+
+
+class VisualizeSettings:
+    def __init__(self, img_width, img_height, video_length):
+        self.img_width = img_width
+        self.img_height = img_height
+        self.video_length = video_length
+        self.grid = img_width // video_length
+        self.pil_to_tensor = torchvision.transforms.Compose([torchvision.transforms.PILToTensor()])
+
+
+def generate_context_visualization(context_opts: ContextOptionsGroup, model: BaseModel, width=1440, height=200, video_length=32, start_step=0, end_step=20):
+    vs = VisualizeSettings(width, height, video_length)
+    pass
