@@ -583,7 +583,16 @@ class CustomCFGKeyframeGroup:
         # update steps current context is used
         self._current_used_steps += 1
 
+    def get_cfg_scale(self, cond: Tensor):
+        cond_scale = self.cfg_multival
+        if isinstance(cond_scale, Tensor):
+            cond_scale = prepare_mask_batch(cond_scale.to(cond.dtype).to(cond.device), cond.shape)
+            cond_scale = extend_to_batch_size(cond_scale, cond.shape[0])
+        return cond_scale
+
     def patch_model(self, model: ModelPatcher) -> ModelPatcher:
+        # NOTE: no longer used at the moment, as most sampler_cfg_function patches should work with tensor cfg_scales,
+        # meaning get_cfg_scale is a direct replacement
         def evolved_custom_cfg(args):
             cond: Tensor = args["cond"]
             uncond: Tensor = args["uncond"]

@@ -414,8 +414,6 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
         cached_noise = None
         function_injections = FunctionInjectionHolder()
         try:
-            if model.sample_settings.custom_cfg is not None:
-                model = model.sample_settings.custom_cfg.patch_model(model)
             # clone params from model
             params = model.motion_injection_params.clone()
             # get amount of latents passed in, and store in params
@@ -629,6 +627,8 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
             cond_pred, uncond_pred = sliding_calc_conds_batch(model, [cond, uncond_], x, timestep, model_options)
 
         if hasattr(comfy.samplers, "cfg_function"):
+            if ADGS.sample_settings.custom_cfg is not None:
+                cond_scale = ADGS.sample_settings.custom_cfg.get_cfg_scale(cond_pred)
             try:
                 cached_calc_cond_batch = comfy.samplers.calc_cond_batch
                 # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch
