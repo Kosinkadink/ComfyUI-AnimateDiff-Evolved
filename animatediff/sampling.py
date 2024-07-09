@@ -607,11 +607,15 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
     try:
         cond, uncond = ADGS.perform_special_model_features(model, [cond, uncond], x)
 
-        # never use cfg1 optimization if using custom_cfg (since can have timesteps and such)
+        # only use cfg1_optimization if not using custom_cfg or explicitly set to 1.0
+        uncond_ = uncond
         if ADGS.sample_settings.custom_cfg is None and math.isclose(cond_scale, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
             uncond_ = None
-        else:
-            uncond_ = uncond
+        elif ADGS.sample_settings.custom_cfg is not None:
+            cfg_multival = ADGS.sample_settings.custom_cfg.cfg_multival
+            if type(cfg_multival) != Tensor and math.isclose(cfg_multival, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
+                uncond_ = None
+            del cfg_multival 
 
         # add AD/evolved-sampling params to model_options (transformer_options)
         model_options = model_options.copy()
