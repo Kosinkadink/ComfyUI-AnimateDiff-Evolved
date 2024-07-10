@@ -629,6 +629,7 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
         if hasattr(comfy.samplers, "cfg_function"):
             if ADGS.sample_settings.custom_cfg is not None:
                 cond_scale = ADGS.sample_settings.custom_cfg.get_cfg_scale(cond_pred)
+                model_options = ADGS.sample_settings.custom_cfg.get_model_options(model_options)
             try:
                 cached_calc_cond_batch = comfy.samplers.calc_cond_batch
                 # support hooks and sliding context for PAG/other sampler_post_cfg_function tech that may use calc_cond_batch

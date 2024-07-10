@@ -21,6 +21,7 @@ from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly
                                  CreateLoraHookKeyframe, CreateLoraHookKeyframeInterpolation, CreateLoraHookKeyframeFromStrengthList)
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGSimpleNode, CustomCFGKeyframeNode, CustomCFGKeyframeSimpleNode,
+                           CFGExtrasPAGNode, CFGExtrasPAGSimpleNode, CFGExtrasRescaleCFGNode, CFGExtrasRescaleCFGSimpleNode,
                            NoisedImageInjectionNode, NoisedImageInjectOptionsNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
@@ -28,7 +29,7 @@ from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniform
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
                                 WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
-from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect, PerturbedAttentionGuidanceMultival
+from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect, PerturbedAttentionGuidanceMultival, RescaleCFGMultival
 from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated,
                                AnimateDiffModelSettings, AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
 from .nodes_lora import AnimateDiffLoraLoader
@@ -113,11 +114,16 @@ NODE_CLASS_MAPPINGS = {
     "ADE_SigmaScheduleSplitAndCombine": SplitAndCombineSigmaScheduleNode,
     "ADE_NoisedImageInjection": NoisedImageInjectionNode,
     "ADE_NoisedImageInjectOptions": NoisedImageInjectOptionsNode,
+    "ADE_CFGExtrasPAGSimple": CFGExtrasPAGSimpleNode,
+    "ADE_CFGExtrasPAG": CFGExtrasPAGNode,
+    "ADE_CFGExtrasRescaleCFGSimple": CFGExtrasRescaleCFGSimpleNode,
+    "ADE_CFGExtrasRescaleCFG": CFGExtrasRescaleCFGNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
     "CheckpointLoaderSimpleWithNoiseSelect": CheckpointLoaderSimpleWithNoiseSelect,
     "ADE_PerturbedAttentionGuidanceMultival": PerturbedAttentionGuidanceMultival,
+    "ADE_RescaleCFGMultival": RescaleCFGMultival,
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderGen1": AnimateDiffLoaderGen1,
     "ADE_AnimateDiffLoaderWithContext": LegacyAnimateDiffLoaderWithContext,
@@ -163,8 +169,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AnimateDiffSamplingSettings": "Sample Settings 🎭🅐🅓",
     "ADE_AnimateDiffKeyframe": "AnimateDiff Keyframe 🎭🅐🅓",
     # Multival Nodes
-    "ADE_MultivalDynamic": "Multival Dynamic 🎭🅐🅓",
-    "ADE_MultivalDynamicFloatInput": "Multival Dynamic [Float List] 🎭🅐🅓",
+    "ADE_MultivalDynamic": "Multival 🎭🅐🅓",
+    "ADE_MultivalDynamicFloatInput": "Multival [Float List] 🎭🅐🅓",
     "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",
     "ADE_MultivalConvertToMask": "Multival to Mask 🎭🅐🅓",
     # Context Opts
@@ -219,9 +225,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_AdjustWeightIndivAttnAdd": "Adjust Weight [Indiv-Attn◆Add] 🎭🅐🅓",
     "ADE_AdjustWeightIndivAttnMult": "Adjust Weight [Indiv-Attn◆Mult] 🎭🅐🅓",
     # Sample Settings
-    "ADE_CustomCFGSimple": "Custom CFG [Simple] 🎭🅐🅓",
+    "ADE_CustomCFGSimple": "Custom CFG 🎭🅐🅓",
     "ADE_CustomCFG": "Custom CFG [Multival] 🎭🅐🅓",
-    "ADE_CustomCFGKeyframeSimple": "Custom CFG Keyframe [Simple] 🎭🅐🅓",
+    "ADE_CustomCFGKeyframeSimple": "Custom CFG Keyframe 🎭🅐🅓",
     "ADE_CustomCFGKeyframe": "Custom CFG Keyframe [Multival] 🎭🅐🅓",
     "ADE_SigmaSchedule": "Create Sigma Schedule 🎭🅐🅓",
     "ADE_RawSigmaSchedule": "Create Raw Sigma Schedule 🎭🅐🅓",
@@ -230,11 +236,16 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SigmaScheduleSplitAndCombine": "Sigma Schedule Split Combine 🎭🅐🅓",
     "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",
     "ADE_NoisedImageInjectOptions": "Image Injection Options 🎭🅐🅓",
+    "ADE_CFGExtrasPAGSimple": "CFG Extras◆PAG 🎭🅐🅓",
+    "ADE_CFGExtrasPAG": "CFG Extras◆PAG [Multival] 🎭🅐🅓",
+    "ADE_CFGExtrasRescaleCFGSimple": "CFG Extras◆RescaleCFG 🎭🅐🅓",
+    "ADE_CFGExtrasRescaleCFG": "CFG Extras◆RescaleCFG [Multival] 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",
     "CheckpointLoaderSimpleWithNoiseSelect": "Load Checkpoint w/ Noise Select 🎭🅐🅓",
     "ADE_PerturbedAttentionGuidanceMultival": "PerturbedAttnGuide [Multival] 🎭🅐🅓",
+    "ADE_RescaleCFGMultival": "RescaleCFG [Multival] 🎭🅐🅓",
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderGen1": "AnimateDiff Loader 🎭🅐🅓①",
     "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader [Legacy] 🎭🅐🅓①",

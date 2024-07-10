@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from typing import Union
+from typing import Union, Callable
 import torch
 from torch import Tensor
 
@@ -503,9 +503,31 @@ class FreeInitOptions(IterationOptions):
             raise ValueError(f"FreeInit init_type '{self.init_type}' is not recognized.")
 
 
+class CFGExtras:
+    def __init__(self, call_fn: Callable):
+        self.call_fn = call_fn
+
+
+class CFGExtrasGroup:
+    def __init__(self):
+        self.extras: list[CFGExtras] = []
+    
+    def add(self, extra: CFGExtras):
+        self.extras.append(extra)
+    
+    def is_empty(self) -> bool:
+        return len(self.extras) == 0
+    
+    def clone(self):
+        cloned = CFGExtrasGroup()
+        cloned.extras = self.extras.copy()
+        return cloned
+
+
 class CustomCFGKeyframe:
-    def __init__(self, cfg_multival: Union[float, Tensor], start_percent=0.0, guarantee_steps=1):
+    def __init__(self, cfg_multival: Union[float, Tensor], start_percent=0.0, guarantee_steps=1, cfg_extras: CFGExtrasGroup=None):
         self.cfg_multival = cfg_multival
+        self.cfg_extras = cfg_extras
         # scheduling
         self.start_percent = float(start_percent)
         self.start_t = 999999999.9
@@ -589,6 +611,13 @@ class CustomCFGKeyframeGroup:
             cond_scale = prepare_mask_batch(cond_scale.to(cond.dtype).to(cond.device), cond.shape)
             cond_scale = extend_to_batch_size(cond_scale, cond.shape[0])
         return cond_scale
+    
+    def get_model_options(self, model_options: dict[str]):
+        cfg_extras = self.cfg_extras
+        if cfg_extras is not None:
+            for extra in cfg_extras.extras:
+                model_options = extra.call_fn(model_options)
+        return model_options
 
     def patch_model(self, model: ModelPatcher) -> ModelPatcher:
         # NOTE: no longer used at the moment, as most sampler_cfg_function patches should work with tensor cfg_scales,
@@ -612,6 +641,12 @@ class CustomCFGKeyframeGroup:
     def cfg_multival(self):
         if self._current_keyframe != None:
             return self._current_keyframe.cfg_multival
+        return None
+    
+    @property
+    def cfg_extras(self):
+        if self._current_keyframe != None:
+            return self._current_keyframe.cfg_extras
         return None
 
 

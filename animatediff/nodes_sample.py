@@ -2,13 +2,16 @@ from typing import Union
 from torch import Tensor
 
 from comfy.sd import VAE
+from comfy.model_patcher import set_model_options_post_cfg_function
 
 from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
                               NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
-                              SeedNoiseGeneration, SampleSettings, CustomCFGKeyframeGroup, CustomCFGKeyframe,
+                              SeedNoiseGeneration, SampleSettings,
+                              CustomCFGKeyframeGroup, CustomCFGKeyframe, CFGExtrasGroup, CFGExtras,
                               NoisedImageToInjectGroup, NoisedImageToInject, NoisedImageInjectOptions)
 from .utils_model import BIGMIN, BIGMAX, MAX_RESOLUTION, SigmaSchedule
+from .cfg_extras import perturbed_attention_guidance_patch, rescale_cfg_patch, set_model_options_sampler_cfg_function
 
 
 class SampleSettingsNode:
@@ -217,6 +220,9 @@ class CustomCFGNode:
         return {
             "required": {
                 "cfg_multival": ("MULTIVAL",),
+            },
+            "optional": {
+                "cfg_extras": ("CFG_EXTRAS",),
             }
         }
 
@@ -224,8 +230,8 @@ class CustomCFGNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
     FUNCTION = "create_custom_cfg"
 
-    def create_custom_cfg(self, cfg_multival: Union[float, Tensor]):
-        keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival)
+    def create_custom_cfg(self, cfg_multival: Union[float, Tensor], cfg_extras: CFGExtrasGroup=None):
+        keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival, cfg_extras=cfg_extras)
         cfg_custom = CustomCFGKeyframeGroup()
         cfg_custom.add(keyframe)
         return (cfg_custom,)
@@ -238,14 +244,17 @@ class CustomCFGSimpleNode:
             "required": {
                 "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step": 0.1}),
             },
+            "optional": {
+                "cfg_extras": ("CFG_EXTRAS",),
+            }
         }
     
     RETURN_TYPES = ("CUSTOM_CFG",)
     CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
     FUNCTION = "create_custom_cfg"
 
-    def create_custom_cfg(self, cfg: float):
-        return CustomCFGNode.create_custom_cfg(self, cfg_multival=cfg)
+    def create_custom_cfg(self, cfg: float, cfg_extras: CFGExtrasGroup=None):
+        return CustomCFGNode.create_custom_cfg(self, cfg_multival=cfg, cfg_extras=cfg_extras)
 
 
 class CustomCFGKeyframeNode:
@@ -259,6 +268,7 @@ class CustomCFGKeyframeNode:
             },
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
+                "cfg_extras": ("CFG_EXTRAS",),
             }
         }
 
@@ -267,11 +277,11 @@ class CustomCFGKeyframeNode:
     FUNCTION = "create_custom_cfg"
 
     def create_custom_cfg(self, cfg_multival: Union[float, Tensor], start_percent: float=0.0, guarantee_steps: int=1,
-                          prev_custom_cfg: CustomCFGKeyframeGroup=None):
+                          prev_custom_cfg: CustomCFGKeyframeGroup=None, cfg_extras: CFGExtrasGroup=None):
         if not prev_custom_cfg:
             prev_custom_cfg = CustomCFGKeyframeGroup()
         prev_custom_cfg = prev_custom_cfg.clone()
-        keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival, start_percent=start_percent, guarantee_steps=guarantee_steps)
+        keyframe = CustomCFGKeyframe(cfg_multival=cfg_multival, start_percent=start_percent, guarantee_steps=guarantee_steps, cfg_extras=cfg_extras)
         prev_custom_cfg.add(keyframe)
         return (prev_custom_cfg,)
 
@@ -287,6 +297,7 @@ class CustomCFGKeyframeSimpleNode:
             },
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
+                "cfg_extras": ("CFG_EXTRAS",),
             }
         }
     
@@ -295,9 +306,113 @@ class CustomCFGKeyframeSimpleNode:
     FUNCTION = "create_custom_cfg"
 
     def create_custom_cfg(self, cfg: float, start_percent: float=0.0, guarantee_steps: int=1,
-                          prev_custom_cfg: CustomCFGKeyframeGroup=None):
+                          prev_custom_cfg: CustomCFGKeyframeGroup=None, cfg_extras: CFGExtrasGroup=None):
         return CustomCFGKeyframeNode.create_custom_cfg(self, cfg_multival=cfg, start_percent=start_percent,
-                                                       guarantee_steps=guarantee_steps, prev_custom_cfg=prev_custom_cfg)
+                                                       guarantee_steps=guarantee_steps, prev_custom_cfg=prev_custom_cfg, cfg_extras=cfg_extras)
+
+
+class CFGExtrasPAGNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "scale_multival": ("MULTIVAL",),
+            },
+            "optional": {
+                "prev_extras": ("CFG_EXTRAS",),
+            }
+        }
+
+    RETURN_TYPES = ("CFG_EXTRAS",)
+    FUNCTION = "add_cfg_extras"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/cfg extras"
+
+    def add_cfg_extras(self, scale_multival: Union[float, Tensor], prev_extras: CFGExtrasGroup=None):
+        if prev_extras is None:
+            prev_extras = CFGExtrasGroup()
+        prev_extras = prev_extras.clone()
+
+        patch = perturbed_attention_guidance_patch(scale_multival)
+        def call_extras(model_options: dict[str]):
+            return set_model_options_post_cfg_function(model_options.copy(), patch)
+        
+        extra = CFGExtras(call_extras)
+        prev_extras.add(extra)
+        return (prev_extras,)
+
+
+class CFGExtrasPAGSimpleNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "scale": ("FLOAT", {"default": 3.0, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
+            },
+            "optional": {
+                "prev_extras": ("CFG_EXTRAS",),
+            }
+        }
+
+    RETURN_TYPES = ("CFG_EXTRAS",)
+    FUNCTION = "add_cfg_extras"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/cfg extras"
+
+    def add_cfg_extras(self, scale: float, prev_extras: CFGExtrasGroup=None):
+        return CFGExtrasPAGNode.add_cfg_extras(self, scale_multival=scale, prev_extras=prev_extras)
+
+
+class CFGExtrasRescaleCFGNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "mult_multival": ("MULTIVAL",),
+            },
+            "optional": {
+                "prev_extras": ("CFG_EXTRAS",),
+            }
+        }
+
+    RETURN_TYPES = ("CFG_EXTRAS",)
+    FUNCTION = "add_cfg_extras"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/cfg extras"
+
+    def add_cfg_extras(self, mult_multival: Union[float, Tensor], prev_extras: CFGExtrasGroup=None):
+        if prev_extras is None:
+            prev_extras = CFGExtrasGroup()
+        prev_extras = prev_extras.clone()
+
+        patch = rescale_cfg_patch(mult_multival)
+        def call_extras(model_options: dict[str]):
+            return set_model_options_sampler_cfg_function(model_options.copy(), patch)
+        
+        extra = CFGExtras(call_extras)
+        prev_extras.add(extra)
+        return (prev_extras,)
+
+
+class CFGExtrasRescaleCFGSimpleNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "multiplier": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.01}),
+            },
+            "optional": {
+                "prev_extras": ("CFG_EXTRAS",),
+            }
+        }
+
+    RETURN_TYPES = ("CFG_EXTRAS",)
+    FUNCTION = "add_cfg_extras"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/cfg extras"
+
+    def add_cfg_extras(self, multiplier: float, prev_extras: CFGExtrasGroup=None):
+        return CFGExtrasRescaleCFGNode.add_cfg_extras(self, mult_multival=multiplier, prev_extras=prev_extras)
 
 
 class NoisedImageInjectionNode:

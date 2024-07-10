@@ -14,6 +14,7 @@ from .logger import logger
 from .utils_model import BetaSchedules
 from .utils_motion import extend_to_batch_size, prepare_mask_batch
 from .model_injection import get_vanilla_model_patcher
+from .cfg_extras import perturbed_attention_guidance_patch, rescale_cfg_patch
 
 
 class AnimateDiffUnload:
@@ -84,7 +85,6 @@ class EmptyLatentImageLarge:
         return ({"samples":latent}, )
 
 
-# this is a modified copy of PerturbedAttentionGuidance node from comfy_extras/nodes_pag.py
 class PerturbedAttentionGuidanceMultival:
     @classmethod
     def INPUT_TYPES(s):
@@ -101,36 +101,28 @@ class PerturbedAttentionGuidanceMultival:
     CATEGORY = "Animate Diff 🎭🅐🅓/extras"
 
     def patch(self, model: ModelPatcher, scale_multival: Union[float, Tensor]):
-        unet_block = "middle"
-        unet_block_id = 0
         m = model.clone()
-
-        def perturbed_attention(q, k, v, extra_options, mask=None):
-            return v
-
-        def post_cfg_function(args):
-            model = args["model"]
-            cond_pred = args["cond_denoised"]
-            cond = args["cond"]
-            cfg_result = args["denoised"]
-            sigma = args["sigma"]
-            model_options = args["model_options"].copy()
-            x = args["input"]
-
-            if type(scale_multival) != Tensor and scale_multival == 0:
-                return cfg_result
-            
-            scale = scale_multival
-            if isinstance(scale, Tensor):
-                scale = prepare_mask_batch(scale.to(cond_pred.dtype).to(cond_pred.device), cond_pred.shape)
-                scale = extend_to_batch_size(scale, cond_pred.shape[0])
-
-            # Replace Self-attention with PAG
-            model_options = comfy.model_patcher.set_model_options_patch_replace(model_options, perturbed_attention, "attn1", unet_block, unet_block_id)
-            (pag,) = comfy.samplers.calc_cond_batch(model, [cond], x, sigma, model_options)
-
-            return cfg_result + (cond_pred - pag) * scale
-
-        m.set_model_sampler_post_cfg_function(post_cfg_function)
+        m.set_model_sampler_post_cfg_function(perturbed_attention_guidance_patch(scale_multival))
 
         return (m,)
+
+
+class RescaleCFGMultival:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "mult_multival": ("MULTIVAL",),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "patch"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/extras"
+
+    def patch(self, model: ModelPatcher, mult_multival: Union[float, Tensor]):
+        m = model.clone()
+        m.set_model_sampler_cfg_function(rescale_cfg_patch(mult_multival))
+        return (m, )
