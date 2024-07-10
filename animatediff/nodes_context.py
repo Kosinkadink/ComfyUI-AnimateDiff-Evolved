@@ -1,3 +1,8 @@
+import torch
+from torch import Tensor
+
+from comfy.model_patcher import ModelPatcher
+
 from .context import ContextFuseMethod, ContextOptions, ContextOptionsGroup, ContextSchedules
 from .utils_model import BIGMAX
 
@@ -346,3 +351,28 @@ class LoopedUniformViewOptionsNode:
             use_on_equal_length=use_on_equal_length,
             )
         return (view_options,)
+
+
+class VisualizeContextOptionsInt:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "context_opts": ("CONTEXT_OPTIONS",),
+            },
+            "optional": {
+                "latents_length": ("INT", {"min": 1, "max": BIGMAX, "default": 32}),
+                "start_step": ("INT", {"min": 0, "max": BIGMAX, "default": 0}),
+                "end_step": ("INT", {"min": 1, "max": BIGMAX, "default": 20}),
+            }
+        }
+    
+    RETURN_TYPES = ("IMAGE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/visualize"
+    FUNCTION = "visualize"
+
+    def visualize(self, model: ModelPatcher, context_opts: ContextOptionsGroup,
+                  latents_length=32, start_step=0, end_step=20):
+        images = torch.zeros((latents_length, 256, 256, 3))
+        return (images,)

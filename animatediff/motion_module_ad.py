@@ -134,10 +134,10 @@ def has_img_encoder(mm_state_dict: dict[str, Tensor]):
 
 def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> Tuple[dict[str, Tensor], AnimateDiffInfo]:
     # from pathlib import Path
-    # with open(Path(__file__).parent.parent.parent / f"keys_{mm_name}.txt", "w") as afile:
+    # log_name = mm_name.split('\\')[-1]
+    # with open(Path(__file__).parent.parent.parent / rf"keys_{log_name}.txt", "w") as afile:
     #     for key, value in mm_state_dict.items():
     #         afile.write(f"{key}:\t{value.shape}\n")
-    
     # determine what SD model the motion module is intended for
     sd_type: str = None
     down_block_max = get_down_block_max(mm_state_dict)

@@ -1,13 +1,20 @@
+from typing import Union
+
 import torch
+from torch import Tensor
 
 import folder_paths
 import nodes as comfy_nodes
 from comfy.model_patcher import ModelPatcher
+import comfy.model_patcher
+import comfy.samplers
 from comfy.sd import load_checkpoint_guess_config
 
 from .logger import logger
 from .utils_model import BetaSchedules
+from .utils_motion import extend_to_batch_size, prepare_mask_batch
 from .model_injection import get_vanilla_model_patcher
+from .cfg_extras import perturbed_attention_guidance_patch, rescale_cfg_patch
 
 
 class AnimateDiffUnload:
@@ -76,3 +83,46 @@ class EmptyLatentImageLarge:
     def generate(self, width, height, batch_size=1):
         latent = torch.zeros([batch_size, 4, height // 8, width // 8])
         return ({"samples":latent}, )
+
+
+class PerturbedAttentionGuidanceMultival:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "scale_multival": ("MULTIVAL",),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "patch"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/extras"
+
+    def patch(self, model: ModelPatcher, scale_multival: Union[float, Tensor]):
+        m = model.clone()
+        m.set_model_sampler_post_cfg_function(perturbed_attention_guidance_patch(scale_multival))
+
+        return (m,)
+
+
+class RescaleCFGMultival:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "mult_multival": ("MULTIVAL",),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "patch"
+
+    CATEGORY = "Animate Diff 🎭🅐🅓/extras"
+
+    def patch(self, model: ModelPatcher, mult_multival: Union[float, Tensor]):
+        m = model.clone()
+        m.set_model_sampler_cfg_function(rescale_cfg_patch(mult_multival))
+        return (m, )

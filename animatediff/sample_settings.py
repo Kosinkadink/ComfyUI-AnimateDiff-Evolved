@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from typing import Union
+from typing import Union, Callable
 import torch
 from torch import Tensor
 
@@ -200,58 +200,100 @@ class NoiseLayerGroup:
             cloned.add(layer)
         return cloned
 
+
+class RandDevice:
+    CPU = "cpu"
+    GPU = "gpu"
+    NV = "nv"
+
+
+def get_generator(device=RandDevice.CPU, seed: int=None):
+    generator = None
+    raw_device = None
+    if device == RandDevice.CPU:
+        raw_device = "cpu"
+        generator = torch.Generator(raw_device)
+    elif device == RandDevice.GPU:
+        raw_device = comfy.model_management.get_torch_device()
+        generator = torch.Generator(raw_device)
+    # TODO: should I add the NV code from Auto1111?
+    # It is AGPL licenced, which should be fine since I will not be modifying it.
+    # elif device == RandDevice.NV:
+    #     pass
+    else:
+        raise Exception(f"Unknown noise generator device: '{device}'")
+    if seed is not None:
+        generator = generator.manual_seed(seed)
+    return generator, raw_device
+
+
 class SeedNoiseGeneration:
     COMFY = "comfy"
+    COMFYGPU = "comfy [gpu]"
+    #COMFYNV = "comfy [nv]"
     AUTO1111 = "auto1111"
-    AUTO1111GPU = "auto1111 [gpu]" # TODO: implement this
+    AUTO1111GPU = "auto1111 [gpu]"
+    #AUTO1111NV = "auto1111 [nv]"
     USE_EXISTING = "use existing"
 
-    LIST = [COMFY, AUTO1111]
-    LIST_WITH_OVERRIDE = [USE_EXISTING, COMFY, AUTO1111]
+    LIST = [COMFY, COMFYGPU, AUTO1111, AUTO1111GPU]
+    LIST_WITH_OVERRIDE = [USE_EXISTING, COMFY, COMFYGPU, AUTO1111, AUTO1111GPU]
+
+    _COMFY_GENS = [COMFY, COMFYGPU]
+    _AUTO1111_GENS = [AUTO1111, AUTO1111GPU]
+
+    _SOURCE_DICT = {
+        COMFY: RandDevice.CPU, COMFYGPU: RandDevice.GPU,
+        AUTO1111: RandDevice.CPU, AUTO1111GPU: RandDevice.GPU,
+    }
+
+    @classmethod
+    def get_device(cls, seed_gen: str):
+        return cls._SOURCE_DICT[seed_gen]
 
     @classmethod
     def create_noise(cls, seed: int, latents: Tensor, existing_seed_gen: str=COMFY, seed_gen: str=USE_EXISTING, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}):
         # determine if should use existing type
         if seed_gen == cls.USE_EXISTING:
             seed_gen = existing_seed_gen
-        if seed_gen == cls.COMFY:
-            return cls.create_noise_comfy(seed, latents, noise_type, batch_offset, extra_args)
-        elif seed_gen in [cls.AUTO1111, cls.AUTO1111GPU]:
-            return cls.create_noise_auto1111(seed, latents, noise_type, batch_offset, extra_args)
+        if seed_gen in cls._COMFY_GENS:
+            return cls.create_noise_comfy(seed, latents, noise_type, batch_offset, extra_args, cls.get_device(seed_gen))
+        elif seed_gen in cls._AUTO1111_GENS:
+            return cls.create_noise_auto1111(seed, latents, noise_type, batch_offset, extra_args, cls.get_device(seed_gen))
         raise ValueError(f"Noise seed_gen {seed_gen} is not recognized.")
 
     @staticmethod
-    def create_noise_comfy(seed: int, latents: Tensor, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}):
-        common_noise = SeedNoiseGeneration._create_common_noise(seed, latents, noise_type, batch_offset, extra_args)
+    def create_noise_comfy(seed: int, latents: Tensor, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}, device=RandDevice.CPU):
+        common_noise = SeedNoiseGeneration._create_common_noise(seed, latents, noise_type, batch_offset, extra_args, device)
         if common_noise is not None:
             return common_noise
         if noise_type == NoiseLayerType.CONSTANT:
-            generator = torch.manual_seed(seed)
+            generator, raw_device = get_generator(device, seed)
             length = latents.shape[0]
             single_shape = (1 + batch_offset, latents.shape[1], latents.shape[2], latents.shape[3])
-            single_noise = torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu")
+            single_noise = torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device=raw_device).to(device="cpu")
             return torch.cat([single_noise[batch_offset:]] * length, dim=0)
         # comfy creates noise with a single seed for the entire shape of the latents batched tensor
-        generator = torch.manual_seed(seed)
+        generator, raw_device = get_generator(device, seed)
         offset_shape = (latents.shape[0] + batch_offset, latents.shape[1], latents.shape[2], latents.shape[3])
-        final_noise = torch.randn(offset_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu")
+        final_noise = torch.randn(offset_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device=raw_device).to(device="cpu")
         final_noise = final_noise[batch_offset:]
         # convert to derivative noise type, if needed
-        derivative_noise = SeedNoiseGeneration._create_derivative_noise(final_noise, noise_type=noise_type, seed=seed, extra_args=extra_args)
+        derivative_noise = SeedNoiseGeneration._create_derivative_noise(final_noise, noise_type=noise_type, seed=seed, extra_args=extra_args, device=device)
         if derivative_noise is not None:
             return derivative_noise
         return final_noise
     
     @staticmethod
-    def create_noise_auto1111(seed: int, latents: Tensor, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}):
-        common_noise = SeedNoiseGeneration._create_common_noise(seed, latents, noise_type, batch_offset, extra_args)
+    def create_noise_auto1111(seed: int, latents: Tensor, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}, device=RandDevice.CPU):
+        common_noise = SeedNoiseGeneration._create_common_noise(seed, latents, noise_type, batch_offset, extra_args, device)
         if common_noise is not None:
             return common_noise
         if noise_type == NoiseLayerType.CONSTANT:
-            generator = torch.manual_seed(seed+batch_offset)
+            generator, raw_device = get_generator(device, seed+batch_offset)
             length = latents.shape[0]
             single_shape = (1, latents.shape[1], latents.shape[2], latents.shape[3])
-            single_noise = torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu")
+            single_noise = torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device=raw_device).to(device="cpu")
             return torch.cat([single_noise] * length, dim=0)
         # auto1111 applies growing seeds for a batch
         length = latents.shape[0]
@@ -259,17 +301,17 @@ class SeedNoiseGeneration:
         all_noises = []
         # i starts at 0
         for i in range(length):
-            generator = torch.manual_seed(seed+i+batch_offset)
-            all_noises.append(torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu"))
+            generator, raw_device = get_generator(device, seed+i+batch_offset)
+            all_noises.append(torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device=raw_device).to(device="cpu"))
         final_noise = torch.cat(all_noises, dim=0)
         # convert to derivative noise type, if needed
-        derivative_noise = SeedNoiseGeneration._create_derivative_noise(final_noise, noise_type=noise_type, seed=seed, extra_args=extra_args)
+        derivative_noise = SeedNoiseGeneration._create_derivative_noise(final_noise, noise_type=noise_type, seed=seed, extra_args=extra_args, device=device)
         if derivative_noise is not None:
             return derivative_noise
         return final_noise
     
     @staticmethod
-    def create_noise_individual_seeds(seeds: list[int], latents: Tensor, seed_offset: int=0, extra_args: dict={}):
+    def create_noise_individual_seeds(seeds: list[int], latents: Tensor, seed_offset: int=0, extra_args: dict={}, device=RandDevice.CPU):
         length = latents.shape[0]
         if len(seeds) < length:
             raise ValueError(f"{len(seeds)} seeds in seed_override were provided, but at least {length} are required to work with the current latents.")
@@ -277,25 +319,25 @@ class SeedNoiseGeneration:
         single_shape = (1, latents.shape[1], latents.shape[2], latents.shape[3])
         all_noises = []
         for seed in seeds:
-            generator = torch.manual_seed(seed+seed_offset)
-            all_noises.append(torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device="cpu"))
+            generator, raw_device = get_generator(device, seed+seed_offset)
+            all_noises.append(torch.randn(single_shape, dtype=latents.dtype, layout=latents.layout, generator=generator, device=raw_device).to(device="cpu"))
         return torch.cat(all_noises, dim=0)
 
     @staticmethod
-    def _create_common_noise(seed: int, latents: Tensor, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}):
+    def _create_common_noise(seed: int, latents: Tensor, noise_type: str=NoiseLayerType.DEFAULT, batch_offset: int=0, extra_args: dict={}, device=RandDevice.CPU):
         if noise_type == NoiseLayerType.EMPTY:
             return torch.zeros_like(latents)
         return None
     
     @staticmethod
-    def _create_derivative_noise(noise: Tensor, noise_type: str, seed: int, extra_args: dict):
+    def _create_derivative_noise(noise: Tensor, noise_type: str, seed: int, extra_args: dict, device=RandDevice.CPU):
         derivative_func = DERIVATIVE_NOISE_FUNC_MAP.get(noise_type, None)
         if derivative_func is None:
             return None
-        return derivative_func(noise=noise, seed=seed, extra_args=extra_args)
+        return derivative_func(noise=noise, seed=seed, extra_args=extra_args, device=device)
 
     @staticmethod
-    def _convert_to_repeated_context(noise: Tensor, extra_args: dict, **kwargs):
+    def _convert_to_repeated_context(noise: Tensor, extra_args: dict, device=RandDevice.CPU, **kwargs):
         # if no context_length, return unmodified noise
         opts: ContextOptionsGroup = extra_args["context_options"]
         context_length: int = opts.context_length if not opts.view_options else opts.view_options.context_length
@@ -307,7 +349,7 @@ class SeedNoiseGeneration:
         return torch.cat([noise] * cat_count, dim=0)[:length]
 
     @staticmethod
-    def _convert_to_freenoise(noise: Tensor, seed: int, extra_args: dict, **kwargs):
+    def _convert_to_freenoise(noise: Tensor, seed: int, extra_args: dict, device=RandDevice.CPU, **kwargs):
         # if no context_length, return unmodified noise
         opts: ContextOptionsGroup = extra_args["context_options"]
         context_length: int = opts.context_length if not opts.view_options else opts.view_options.context_length
@@ -316,7 +358,7 @@ class SeedNoiseGeneration:
         if context_length is None:
             return noise
         delta = context_length - context_overlap
-        generator = torch.manual_seed(seed)
+        generator, _ = get_generator(RandDevice.CPU, seed) # no point in ever using non-CPU to just shuffle indexes
 
         for start_idx in range(0, video_length-context_length, delta):
             # start_idx corresponds to the beginning of a context window
@@ -461,9 +503,31 @@ class FreeInitOptions(IterationOptions):
             raise ValueError(f"FreeInit init_type '{self.init_type}' is not recognized.")
 
 
+class CFGExtras:
+    def __init__(self, call_fn: Callable):
+        self.call_fn = call_fn
+
+
+class CFGExtrasGroup:
+    def __init__(self):
+        self.extras: list[CFGExtras] = []
+    
+    def add(self, extra: CFGExtras):
+        self.extras.append(extra)
+    
+    def is_empty(self) -> bool:
+        return len(self.extras) == 0
+    
+    def clone(self):
+        cloned = CFGExtrasGroup()
+        cloned.extras = self.extras.copy()
+        return cloned
+
+
 class CustomCFGKeyframe:
-    def __init__(self, cfg_multival: Union[float, Tensor], start_percent=0.0, guarantee_steps=1):
+    def __init__(self, cfg_multival: Union[float, Tensor], start_percent=0.0, guarantee_steps=1, cfg_extras: CFGExtrasGroup=None):
         self.cfg_multival = cfg_multival
+        self.cfg_extras = cfg_extras
         # scheduling
         self.start_percent = float(start_percent)
         self.start_t = 999999999.9
@@ -541,7 +605,23 @@ class CustomCFGKeyframeGroup:
         # update steps current context is used
         self._current_used_steps += 1
 
+    def get_cfg_scale(self, cond: Tensor):
+        cond_scale = self.cfg_multival
+        if isinstance(cond_scale, Tensor):
+            cond_scale = prepare_mask_batch(cond_scale.to(cond.dtype).to(cond.device), cond.shape)
+            cond_scale = extend_to_batch_size(cond_scale, cond.shape[0])
+        return cond_scale
+    
+    def get_model_options(self, model_options: dict[str]):
+        cfg_extras = self.cfg_extras
+        if cfg_extras is not None:
+            for extra in cfg_extras.extras:
+                model_options = extra.call_fn(model_options)
+        return model_options
+
     def patch_model(self, model: ModelPatcher) -> ModelPatcher:
+        # NOTE: no longer used at the moment, as most sampler_cfg_function patches should work with tensor cfg_scales,
+        # meaning get_cfg_scale is a direct replacement
         def evolved_custom_cfg(args):
             cond: Tensor = args["cond"]
             uncond: Tensor = args["uncond"]
@@ -561,6 +641,12 @@ class CustomCFGKeyframeGroup:
     def cfg_multival(self):
         if self._current_keyframe != None:
             return self._current_keyframe.cfg_multival
+        return None
+    
+    @property
+    def cfg_extras(self):
+        if self._current_keyframe != None:
+            return self._current_keyframe.cfg_extras
         return None
 
 
