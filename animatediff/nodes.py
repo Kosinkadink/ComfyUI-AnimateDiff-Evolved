@@ -58,7 +58,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ViewsOnlyContextOptions": ViewAsContextOptionsNode,
     "ADE_BatchedContextOptions": BatchedContextOptionsNode,
     "ADE_AnimateDiffUniformContextOptions": LegacyLoopedUniformContextOptionsNode, # Legacy
-    "ADE_VisualizeContextOptions": VisualizeContextOptionsInt,
+    #"ADE_VisualizeContextOptions": VisualizeContextOptionsInt,
     # View Opts
     "ADE_StandardStaticViewOptions": StandardStaticViewOptionsNode,
     "ADE_StandardUniformViewOptions": StandardUniformViewOptionsNode,
