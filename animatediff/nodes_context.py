@@ -1,10 +1,12 @@
 import torch
 from torch import Tensor
 
+import comfy.samplers
 from comfy.model_patcher import ModelPatcher
 
-from .context import ContextFuseMethod, ContextOptions, ContextOptionsGroup, ContextSchedules
-from .utils_model import BIGMAX
+from .context import (ContextFuseMethod, ContextOptions, ContextOptionsGroup, ContextSchedules,
+                      generate_context_visualization)
+from .utils_model import BIGMAX, MAX_RESOLUTION
 
 
 LENGTH_MAX = 128   # keep an eye on these max values;
@@ -353,16 +355,20 @@ class LoopedUniformViewOptionsNode:
         return (view_options,)
 
 
-class VisualizeContextOptionsInt:
+class VisualizeContextOptionsKAdv:
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
                 "model": ("MODEL",),
                 "context_opts": ("CONTEXT_OPTIONS",),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS, ),
             },
             "optional": {
+                "visual_width": ("INT", {"min": 32, "max": MAX_RESOLUTION, "default": 1440}),
                 "latents_length": ("INT", {"min": 1, "max": BIGMAX, "default": 32}),
+                "steps": ("INT", {"min": 0, "max": BIGMAX, "default": 20}),
                 "start_step": ("INT", {"min": 0, "max": BIGMAX, "default": 0}),
                 "end_step": ("INT", {"min": 1, "max": BIGMAX, "default": 20}),
             }
@@ -372,7 +378,65 @@ class VisualizeContextOptionsInt:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/visualize"
     FUNCTION = "visualize"
 
-    def visualize(self, model: ModelPatcher, context_opts: ContextOptionsGroup,
-                  latents_length=32, start_step=0, end_step=20):
-        images = torch.zeros((latents_length, 256, 256, 3))
+    def visualize(self, model: ModelPatcher, context_opts: ContextOptionsGroup, sampler_name: str, scheduler: str,
+                  visual_width: 1280, latents_length=32, steps=20, start_step=0, end_step=20):
+        images = generate_context_visualization(context_opts=context_opts, model=model, width=visual_width, video_length=latents_length,
+                                                sampler_name=sampler_name, scheduler=scheduler,
+                                                steps=steps, start_step=start_step, end_step=end_step)
+        return (images,)
+
+
+class VisualizeContextOptionsK:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "context_opts": ("CONTEXT_OPTIONS",),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS, ),
+            },
+            "optional": {
+                "visual_width": ("INT", {"min": 32, "max": MAX_RESOLUTION, "default": 1440}),
+                "latents_length": ("INT", {"min": 1, "max": BIGMAX, "default": 32}),
+                "steps": ("INT", {"min": 0, "max": BIGMAX, "default": 20}),
+                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            }
+        }
+    
+    RETURN_TYPES = ("IMAGE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/visualize"
+    FUNCTION = "visualize"
+
+    def visualize(self, model: ModelPatcher, context_opts: ContextOptionsGroup, sampler_name: str, scheduler: str,
+                  visual_width: 1280, latents_length=32, steps=20, denoise=1.0):
+        images = generate_context_visualization(context_opts=context_opts, model=model, width=visual_width, video_length=latents_length,
+                                                sampler_name=sampler_name, scheduler=scheduler,
+                                                steps=steps, denoise=denoise)
+        return (images,)
+
+
+class VisualizeContextOptionsSCustom:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL",),
+                "context_opts": ("CONTEXT_OPTIONS",),
+                "sigmas": ("SIGMAS", ),
+            },
+            "optional": {
+                "visual_width": ("INT", {"min": 32, "max": MAX_RESOLUTION, "default": 1440}),
+                "latents_length": ("INT", {"min": 1, "max": BIGMAX, "default": 32}),
+            }
+        }
+    
+    RETURN_TYPES = ("IMAGE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/visualize"
+    FUNCTION = "visualize"
+
+    def visualize(self, model: ModelPatcher, context_opts: ContextOptionsGroup, sigmas,
+                  visual_width: 1280, latents_length=32):
+        images = generate_context_visualization(context_opts=context_opts, model=model, width=visual_width, video_length=latents_length,
+                                                sigmas=sigmas)
         return (images,)
