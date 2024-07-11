@@ -1,8 +1,7 @@
-from typing import Callable, Optional, Union
+from typing import Union
 
 import torch
 import torchvision
-import PIL
 from PIL import Image, ImageFont, ImageDraw
 
 import numpy as np
