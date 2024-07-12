@@ -223,6 +223,7 @@ class CustomCFGNode:
             },
             "optional": {
                 "cfg_extras": ("CFG_EXTRAS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
             }
         }
 
@@ -246,6 +247,7 @@ class CustomCFGSimpleNode:
             },
             "optional": {
                 "cfg_extras": ("CFG_EXTRAS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
     
@@ -269,6 +271,7 @@ class CustomCFGKeyframeNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 80}),
             }
         }
 

@@ -21,7 +21,8 @@ class MultivalDynamicNode:
                 "float_val": ("FLOAT", {"default": 1.0, "min": 0.0, "step": 0.001},),
             },
             "optional": {
-                "mask_optional": ("MASK",)
+                "mask_optional": ("MASK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
     
@@ -76,6 +77,7 @@ class MultivalScaledMaskNode:
             },
             "optional": {
                 "scaling": (ScaleType.LIST,),
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
 
@@ -120,7 +122,8 @@ class MultivalDynamicFloatInputNode:
                 "float_val": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001, "forceInput": True},),
             },
             "optional": {
-                "mask_optional": ("MASK",)
+                "mask_optional": ("MASK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
     
@@ -139,6 +142,9 @@ class MultivalFloatNode:
             "required": {
                 "float_val": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001},),
             },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+            }
         }
     
     RETURN_TYPES = ("MULTIVAL",)
@@ -154,7 +160,10 @@ class MultivalConvertToMaskNode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "multival": ("MULTIVAL",)
+                "multival": ("MULTIVAL",),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
     

@@ -34,6 +34,7 @@ class ApplyAnimateLCMI2VModel:
                 "effect_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
             }
         }
     

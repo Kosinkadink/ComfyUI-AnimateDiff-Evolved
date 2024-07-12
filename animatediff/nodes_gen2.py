@@ -94,6 +94,7 @@ class ApplyAnimateDiffModelNode:
                 "effect_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 80}),
             }
         }
     
@@ -140,6 +141,7 @@ class ApplyAnimateDiffModelBasicNode:
                 "scale_multival": ("MULTIVAL",),
                 "effect_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 40}),
             }
         }
     
@@ -192,6 +194,7 @@ class ADKeyframeNode:
                 "effect_multival": ("MULTIVAL",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
