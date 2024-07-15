@@ -23,7 +23,7 @@ from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, Sampl
                            CustomCFGNode, CustomCFGSimpleNode, CustomCFGKeyframeNode, CustomCFGKeyframeSimpleNode,
                            CFGExtrasPAGNode, CFGExtrasPAGSimpleNode, CFGExtrasRescaleCFGNode, CFGExtrasRescaleCFGSimpleNode,
                            NoisedImageInjectionNode, NoisedImageInjectOptionsNode)
-from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode)
+from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode, SigmaScheduleToSigmasNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode,
                             VisualizeContextOptionsK, VisualizeContextOptionsKAdv, VisualizeContextOptionsSCustom)
@@ -115,6 +115,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_SigmaScheduleWeightedAverage": WeightedAverageSigmaScheduleNode,
     "ADE_SigmaScheduleWeightedAverageInterp": InterpolatedWeightedAverageSigmaScheduleNode,
     "ADE_SigmaScheduleSplitAndCombine": SplitAndCombineSigmaScheduleNode,
+    "ADE_SigmaScheduleToSigmas": SigmaScheduleToSigmasNode,
     "ADE_NoisedImageInjection": NoisedImageInjectionNode,
     "ADE_NoisedImageInjectOptions": NoisedImageInjectOptionsNode,
     "ADE_CFGExtrasPAGSimple": CFGExtrasPAGSimpleNode,
@@ -220,7 +221,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_NoiseLayerReplace": "Noise Layer [Replace] 🎭🅐🅓",
     # AnimateDiff Settings
     "ADE_AnimateDiffSettings": "AnimateDiff Settings 🎭🅐🅓",
-    "ADE_AdjustPESweetspotStretch": "Adjust PE [Sweetspot Stretch] 🎭🅐🅓",
+    "ADE_AdjustPESweetspotStretch": "Adjust PE [Sweetspot] 🎭🅐🅓",
     "ADE_AdjustPEFullStretch": "Adjust PE [Full Stretch] 🎭🅐🅓",
     "ADE_AdjustPEManual": "Adjust PE [Manual] 🎭🅐🅓",
     "ADE_AdjustWeightAllAdd": "Adjust Weight [All◆Add] 🎭🅐🅓",
@@ -239,6 +240,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SigmaScheduleWeightedAverage": "Sigma Schedule Weighted Mean 🎭🅐🅓",
     "ADE_SigmaScheduleWeightedAverageInterp": "Sigma Schedule Interpolated Mean 🎭🅐🅓",
     "ADE_SigmaScheduleSplitAndCombine": "Sigma Schedule Split Combine 🎭🅐🅓",
+    "ADE_SigmaScheduleToSigmas": "Sigma Schedule To Sigmas 🎭🅐🅓",
     "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",
     "ADE_NoisedImageInjectOptions": "Image Injection Options 🎭🅐🅓",
     "ADE_CFGExtrasPAGSimple": "CFG Extras◆PAG 🎭🅐🅓",

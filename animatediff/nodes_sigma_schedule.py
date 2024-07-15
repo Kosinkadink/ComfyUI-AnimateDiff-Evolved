@@ -1,5 +1,7 @@
 import torch
 
+import comfy.samplers
+
 from .utils_model import BetaSchedules, SigmaSchedule, ModelSamplingType, ModelSamplingConfig, InterpolationMethod
 
 
@@ -71,6 +73,9 @@ class WeightedAverageSigmaScheduleNode:
                 "schedule_A": ("SIGMA_SCHEDULE",),
                 "schedule_B": ("SIGMA_SCHEDULE",),
                 "weight_A": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 80}),
             }
         }
     
@@ -124,6 +129,9 @@ class SplitAndCombineSigmaScheduleNode:
                 "schedule_Start": ("SIGMA_SCHEDULE",),
                 "schedule_End": ("SIGMA_SCHEDULE",),
                 "idx_split_percent": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001})
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 40}),
             }
         }
     
@@ -139,3 +147,35 @@ class SplitAndCombineSigmaScheduleNode:
         new_schedule = schedule_Start.clone()
         new_schedule.model_sampling.set_sigmas(new_sigmas)
         return (new_schedule,)
+
+
+class SigmaScheduleToSigmasNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "sigma_schedule": ("SIGMA_SCHEDULE",),
+                "scheduler": (comfy.samplers.SCHEDULER_NAMES, ),
+                "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
+                "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+            }
+        }
+    
+    RETURN_TYPES = ("SIGMAS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/sigma schedule"
+    FUNCTION = "get_sigmas"
+
+    def get_sigmas(self, sigma_schedule: SigmaSchedule, scheduler: str, steps: int, denoise: float):
+        total_steps = steps
+        if denoise < 1.0:
+            if denoise <= 0.0:
+                return (torch.FloatTensor([]),)
+            total_steps = int(steps/denoise)
+
+        sigmas = comfy.samplers.calculate_sigmas(sigma_schedule, scheduler, total_steps).cpu()
+        sigmas = sigmas[-(steps + 1):]
+        return (sigmas, )
+    

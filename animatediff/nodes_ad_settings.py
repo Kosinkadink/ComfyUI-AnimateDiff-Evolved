@@ -9,6 +9,7 @@ class AnimateDiffSettingsNode:
             "optional": {
                 "pe_adjust": ("PE_ADJUST",),
                 "weight_adjust": ("WEIGHT_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -30,9 +31,11 @@ class ManualAdjustPENode:
                 "initial_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "final_pe_idx_offset": ("INT", {"default": 0, "min": 0, "step": 1}),
                 "print_adjustment": ("BOOLEAN", {"default": False}),
+                
             },
             "optional": {
                 "prev_pe_adjust": ("PE_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
             }
         }
     
@@ -64,6 +67,7 @@ class SweetspotStretchPENode:
             },
             "optional": {
                 "prev_pe_adjust": ("PE_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
             }
         }
     
@@ -91,6 +95,7 @@ class FullStretchPENode:
             },
             "optional": {
                 "prev_pe_adjust": ("PE_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
             }
         }
     
@@ -118,6 +123,7 @@ class WeightAdjustAllAddNode:
             },
             "optional": {
                 "prev_weight_adjust": ("WEIGHT_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -147,6 +153,7 @@ class WeightAdjustAllMultNode:
             },
             "optional": {
                 "prev_weight_adjust": ("WEIGHT_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -178,6 +185,7 @@ class WeightAdjustIndivAddNode:
             },
             "optional": {
                 "prev_weight_adjust": ("WEIGHT_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -211,6 +219,7 @@ class WeightAdjustIndivMultNode:
             },
             "optional": {
                 "prev_weight_adjust": ("WEIGHT_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -249,6 +258,7 @@ class WeightAdjustIndivAttnAddNode:
             },
             "optional": {
                 "prev_weight_adjust": ("WEIGHT_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
             }
         }
     
@@ -295,6 +305,7 @@ class WeightAdjustIndivAttnMultNode:
             },
             "optional": {
                 "prev_weight_adjust": ("WEIGHT_ADJUST",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
             }
         }
     

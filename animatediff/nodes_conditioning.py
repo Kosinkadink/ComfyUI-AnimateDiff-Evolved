@@ -32,7 +32,8 @@ class PairedConditioningSetMaskHooked:
             "optional": {
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
-                "opt_timesteps": ("TIMESTEPS_COND",)
+                "opt_timesteps": ("TIMESTEPS_COND",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -62,7 +63,8 @@ class ConditioningSetMaskHooked:
             "optional": {
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
-                "opt_timesteps": ("TIMESTEPS_COND",)
+                "opt_timesteps": ("TIMESTEPS_COND",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -94,7 +96,8 @@ class PairedConditioningSetMaskAndCombineHooked:
             "optional": {
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
-                "opt_timesteps": ("TIMESTEPS_COND",)
+                "opt_timesteps": ("TIMESTEPS_COND",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
             }
         }
     
@@ -125,7 +128,8 @@ class ConditioningSetMaskAndCombineHooked:
             "optional": {
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
-                "opt_timesteps": ("TIMESTEPS_COND",)
+                "opt_timesteps": ("TIMESTEPS_COND",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 55}),
             }
         }
     
@@ -154,6 +158,7 @@ class PairedConditioningSetUnmaskedAndCombineHooked:
             },
             "optional": {
                 "opt_lora_hook": ("LORA_HOOK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
     
@@ -179,6 +184,7 @@ class ConditioningSetUnmaskedAndCombineHooked:
             },
             "optional": {
                 "opt_lora_hook": ("LORA_HOOK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -207,6 +213,9 @@ class ConditioningTimestepsNode:
             "required": {
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001})
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 25}),
             }
         }
     
@@ -225,6 +234,9 @@ class SetLoraHookKeyframes:
             "required": {
                 "lora_hook": ("LORA_HOOK",), 
                 "hook_kf": ("LORA_HOOK_KEYFRAMES",),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 40}),
             }
         }
     
@@ -249,6 +261,7 @@ class CreateLoraHookKeyframe:
             },
             "optional": {
                 "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 5}),
             }
         }
     
@@ -503,6 +516,9 @@ class SetModelLoraHook:
             "required": {
                 "conditioning": ("CONDITIONING",),
                 "lora_hook": ("LORA_HOOK",),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 5}),
             }
         }
     
@@ -526,6 +542,9 @@ class SetClipLoraHook:
             "required": {
                 "clip": ("CLIP",),
                 "lora_hook": ("LORA_HOOK",),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -549,6 +568,7 @@ class CombineLoraHooks:
             "optional": {
                 "lora_hook_A": ("LORA_HOOK",),
                 "lora_hook_B": ("LORA_HOOK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
             }
         }
     
@@ -572,6 +592,7 @@ class CombineLoraHookFourOptional:
                 "lora_hook_B": ("LORA_HOOK",),
                 "lora_hook_C": ("LORA_HOOK",),
                 "lora_hook_D": ("LORA_HOOK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
             }
         }
 
@@ -601,6 +622,7 @@ class CombineLoraHookEightOptional:
                 "lora_hook_F": ("LORA_HOOK",),
                 "lora_hook_G": ("LORA_HOOK",),
                 "lora_hook_H": ("LORA_HOOK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
             }
         }
 
