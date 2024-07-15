@@ -197,6 +197,47 @@ class ConditioningSetUnmaskedAndCombineHooked:
         (final_conditioning,) = set_unmasked_and_combine_conds(conds=[cond], new_conds=[cond_DEFAULT],
                                                                         opt_lora_hook=opt_lora_hook)
         return (final_conditioning,)
+    
+
+class PairedConditioningCombine:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive_A": ("CONDITIONING",),
+                "negative_A": ("CONDITIONING",),
+                "positive_B": ("CONDITIONING",),
+                "negative_B": ("CONDITIONING",),
+            },
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "combine"
+
+    def combine(self, positive_A, negative_A, positive_B, negative_B):
+        final_positive, final_negative = set_mask_and_combine_conds(conds=[positive_A, negative_A], new_conds=[positive_B, negative_B],)
+        return (final_positive, final_negative,)
+
+
+class ConditioningCombine:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cond_A": ("CONDITIONING",),
+                "cond_B": ("CONDITIONING",),
+            },
+        }
+    
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
+    FUNCTION = "combine"
+
+    def combine(self, cond_A, cond_B):
+        (final_conditioning,) = set_mask_and_combine_conds(conds=[cond_A], new_conds=[cond_B],)
+        return (final_conditioning,)
 ###############################################
 ###############################################
 ###############################################

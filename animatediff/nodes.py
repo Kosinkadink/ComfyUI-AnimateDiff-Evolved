@@ -17,6 +17,7 @@ from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly
                                  PairedConditioningSetMaskHooked, ConditioningSetMaskHooked,
                                  PairedConditioningSetMaskAndCombineHooked, ConditioningSetMaskAndCombineHooked,
                                  PairedConditioningSetUnmaskedAndCombineHooked, ConditioningSetUnmaskedAndCombineHooked,
+                                 PairedConditioningCombine, ConditioningCombine,
                                  ConditioningTimestepsNode, SetLoraHookKeyframes,
                                  CreateLoraHookKeyframe, CreateLoraHookKeyframeInterpolation, CreateLoraHookKeyframeFromStrengthList)
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
@@ -89,6 +90,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ConditioningSetMaskAndCombine": ConditioningSetMaskAndCombineHooked,
     "ADE_PairedConditioningSetUnmaskedAndCombine": PairedConditioningSetUnmaskedAndCombineHooked,
     "ADE_ConditioningSetUnmaskedAndCombine": ConditioningSetUnmaskedAndCombineHooked,
+    "ADE_PairedConditioningCombine": PairedConditioningCombine,
+    "ADE_ConditioningCombine": ConditioningCombine,
     "ADE_TimestepsConditioning": ConditioningTimestepsNode,
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
@@ -214,6 +217,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_ConditioningSetMaskAndCombine": "Set Props and Combine Cond 🎭🅐🅓",
     "ADE_PairedConditioningSetUnmaskedAndCombine": "Set Unmasked Conds 🎭🅐🅓",
     "ADE_ConditioningSetUnmaskedAndCombine": "Set Unmasked Cond 🎭🅐🅓",
+    "ADE_PairedConditioningCombine": "Manual Combine Conds 🎭🅐🅓",
+    "ADE_ConditioningCombine": "Manual Combine Cond 🎭🅐🅓",
     "ADE_TimestepsConditioning": "Timesteps Conditioning 🎭🅐🅓",
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
