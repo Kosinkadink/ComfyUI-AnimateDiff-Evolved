@@ -7,12 +7,13 @@ import folder_paths
 import copy
 import json
 import numpy as np
+from pathlib import Path
 from collections import OrderedDict
 
 from .ad_settings import AnimateDiffSettings
 from .adapter_cameractrl import CameraEntry
 from .logger import logger
-from .utils_model import get_available_motion_models, BIGMAX
+from .utils_model import get_available_motion_models, calculate_file_hash, strip_path, BIGMAX
 from .utils_motion import ADKeyframeGroup
 from .motion_lora import MotionLoraList
 from .model_injection import (MotionModelGroup, MotionModelPatcher, load_motion_module_gen2, inject_camera_encoder_into_model)
@@ -292,7 +293,7 @@ class CameraCtrlADKeyframeNode:
                 )
 
 
-class LoadCameraPoses:
+class LoadCameraPosesFromFile:
     @classmethod
     def INPUT_TYPES(s):
         input_dir = folder_paths.get_input_directory()
@@ -310,6 +311,46 @@ class LoadCameraPoses:
 
     def load_camera_poses(self, pose_filename: str):
         file_path = folder_paths.get_annotated_filepath(pose_filename)
+        with open(file_path, 'r') as f:
+            poses = f.readlines()
+        # first line of file is the link to source, so can be skipped,
+        # and the rest is a header-less CSV file separated by single spaces
+        poses = [pose.strip().split(' ') for pose in poses[1:]]
+        poses = [[float(x) for x in pose] for pose in poses]
+        poses = set_original_pose_dims(poses, pose_width=CAM.DEFAULT_POSE_WIDTH, pose_height=CAM.DEFAULT_POSE_HEIGHT)
+        return (poses,)
+    
+
+class LoadCameraPosesFromPath:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "optional": {
+                "file_path": ("STRING", {"default": "X://path/to/pose_file.txt"}),
+            }
+        }
+    
+    @classmethod
+    def IS_CHANGED(s, file_path, **kwargs):
+        if Path(file_path).is_file():
+            return calculate_file_hash(strip_path(file_path))
+        return False
+    
+    @classmethod
+    def VALIDATE_INPUTS(s, file_path, **kwargs):
+        # This function never gets ran for some reason, I don't care enough to figure out why right now.
+        if not Path(strip_path(file_path)).is_file():
+            return f"Pose file not found: {file_path}"
+        return True
+
+    RETURN_TYPES = ("CAMERACTRL_POSES",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/CameraCtrl/poses"
+    FUNCTION = "load_camera_poses"
+
+    def load_camera_poses(self, file_path: str):
+        file_path = strip_path(file_path)
+        if not Path(file_path).is_file():
+            raise Exception(f"Pose file not found: {file_path}")
         with open(file_path, 'r') as f:
             poses = f.readlines()
         # first line of file is the link to source, so can be skipped,

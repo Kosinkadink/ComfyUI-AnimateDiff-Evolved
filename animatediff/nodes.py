@@ -6,7 +6,8 @@ from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithConte
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ADKeyframeNode,
                          LoadAnimateDiffModelNode)
 from .nodes_animatelcmi2v import (ApplyAnimateLCMI2VModel, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
-from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, CameraCtrlADKeyframeNode, LoadCameraPoses,
+from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateDiffWithCameraCtrl, CameraCtrlADKeyframeNode,
+                               LoadCameraPosesFromFile, LoadCameraPosesFromPath,
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
 from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
@@ -148,7 +149,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
     "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
     "ADE_CameraCtrlAnimateDiffKeyframe": CameraCtrlADKeyframeNode,
-    "ADE_LoadCameraPoses": LoadCameraPoses,
+    "ADE_LoadCameraPoses": LoadCameraPosesFromFile,
+    "ADE_LoadCameraPosesFromPath": LoadCameraPosesFromPath,
     "ADE_CameraPoseBasic": CameraCtrlPoseBasic,
     "ADE_CameraPoseCombo": CameraCtrlPoseCombo,
     "ADE_CameraPoseAdvanced": CameraCtrlPoseAdvanced,
@@ -276,6 +278,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_LoadAnimateDiffModelWithCameraCtrl": "Load AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
     "ADE_CameraCtrlAnimateDiffKeyframe": "AnimateDiff+CameraCtrl Keyframe 🎭🅐🅓",
     "ADE_LoadCameraPoses": "Load CameraCtrl Poses (File) 🎭🅐🅓②",
+    "ADE_LoadCameraPosesFromPath": "Load CameraCtrl Poses (Path) 🎭🅐🅓②",
     "ADE_CameraPoseBasic": "Create CameraCtrl Poses 🎭🅐🅓②",
     "ADE_CameraPoseCombo": "Create CameraCtrl Poses (Combo) 🎭🅐🅓②",
     "ADE_CameraPoseAdvanced": "Create CameraCtrl Poses (Adv.) 🎭🅐🅓②",

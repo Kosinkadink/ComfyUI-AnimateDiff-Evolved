@@ -378,6 +378,16 @@ def calculate_model_hash(model: ModelPatcher):
     return m.hexdigest()
 
 
+def strip_path(path):
+    # removes whitespace and single quotes from either end of string, if present
+    path = path.strip()
+    if path.startswith("\""):
+        path = path[1:]
+    if path.endswith("\""):
+        path = path[:-1]
+    return path
+
+
 class ModelTypeSD:
     SD1_5 = "SD1.5"
     SD2_1 = "SD2.1"
