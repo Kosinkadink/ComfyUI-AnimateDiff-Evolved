@@ -1,8 +1,8 @@
 from typing import Union
 from torch import Tensor
+from collections.abc import Iterable
 
 from comfy.sd import VAE
-from comfy.model_patcher import set_model_options_post_cfg_function
 
 from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
@@ -10,8 +10,9 @@ from .sample_settings import (FreeInitOptions, IterationOptions,
                               SeedNoiseGeneration, SampleSettings,
                               CustomCFGKeyframeGroup, CustomCFGKeyframe, CFGExtrasGroup, CFGExtras,
                               NoisedImageToInjectGroup, NoisedImageToInject, NoisedImageInjectOptions)
-from .utils_model import BIGMIN, BIGMAX, MAX_RESOLUTION, SigmaSchedule
-from .cfg_extras import perturbed_attention_guidance_patch, rescale_cfg_patch, set_model_options_sampler_cfg_function
+from .utils_model import BIGMIN, BIGMAX, MAX_RESOLUTION, SigmaSchedule, InterpolationMethod
+from .cfg_extras import perturbed_attention_guidance_patch, rescale_cfg_patch, set_model_options_sampler_cfg_function, set_model_options_post_cfg_function
+from .logger import logger
 
 
 class SampleSettingsNode:
@@ -233,7 +234,7 @@ class CustomCFGNode:
         }
 
     RETURN_TYPES = ("CUSTOM_CFG",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/custom cfg"
     FUNCTION = "create_custom_cfg"
 
     def create_custom_cfg(self, cfg_multival: Union[float, Tensor], cfg_extras: CFGExtrasGroup=None):
@@ -257,7 +258,7 @@ class CustomCFGSimpleNode:
         }
     
     RETURN_TYPES = ("CUSTOM_CFG",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/custom cfg"
     FUNCTION = "create_custom_cfg"
 
     def create_custom_cfg(self, cfg: float, cfg_extras: CFGExtrasGroup=None):
@@ -281,7 +282,7 @@ class CustomCFGKeyframeNode:
         }
 
     RETURN_TYPES = ("CUSTOM_CFG",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/custom cfg"
     FUNCTION = "create_custom_cfg"
 
     def create_custom_cfg(self, cfg_multival: Union[float, Tensor], start_percent: float=0.0, guarantee_steps: int=1,
@@ -311,13 +312,106 @@ class CustomCFGKeyframeSimpleNode:
         }
     
     RETURN_TYPES = ("CUSTOM_CFG",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/custom cfg"
     FUNCTION = "create_custom_cfg"
 
     def create_custom_cfg(self, cfg: float, start_percent: float=0.0, guarantee_steps: int=1,
                           prev_custom_cfg: CustomCFGKeyframeGroup=None, cfg_extras: CFGExtrasGroup=None):
         return CustomCFGKeyframeNode.create_custom_cfg(self, cfg_multival=cfg, start_percent=start_percent,
                                                        guarantee_steps=guarantee_steps, prev_custom_cfg=prev_custom_cfg, cfg_extras=cfg_extras)
+
+
+class CustomCFGKeyframeInterpolationNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "cfg_start": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "cfg_end": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "interpolation": (InterpolationMethod._LIST, ),
+                "intervals": ("INT", {"default": 50, "min": 2, "max": 100, "step": 1}),
+                "print_keyframes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "prev_custom_cfg": ("CUSTOM_CFG",),
+                "cfg_extras": ("CFG_EXTRAS",),
+            }
+        }
+    
+    RETURN_TYPES = ("CUSTOM_CFG",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/custom cfg"
+    FUNCTION = "create_custom_cfg"
+
+    def create_custom_cfg(self,
+                          start_percent: float, end_percent: float,
+                          cfg_start: float, cfg_end: float, interpolation: str, intervals: int,
+                          prev_custom_cfg: CustomCFGKeyframeGroup=None, cfg_extras: CFGExtrasGroup=None,
+                          print_keyframes=False):
+        if not prev_custom_cfg:
+            prev_custom_cfg = CustomCFGKeyframeGroup()
+        prev_custom_cfg = prev_custom_cfg.clone()
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=intervals, method=InterpolationMethod.LINEAR)
+        cfgs = InterpolationMethod.get_weights(num_from=cfg_start, num_to=cfg_end, length=intervals, method=interpolation)
+
+        is_first = True
+        for percent, cfg in zip(percents, cfgs):
+            guarantee_steps = 0
+            if is_first:
+                guarantee_steps = 1
+                is_first = False
+            prev_custom_cfg.add(CustomCFGKeyframe(cfg_multival=float(cfg), start_percent=percent, guarantee_steps=guarantee_steps, cfg_extras=cfg_extras))
+            if print_keyframes:
+                logger.info(f"CustomCFGKeyframe - start_percent:{percent} = {cfg}")
+        return (prev_custom_cfg,)
+        
+
+class CustomCFGKeyframeFromListNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cfgs_float": ("FLOAT", {"default": -1, "min": -1, "step": 0.001, "forceInput": True}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "print_keyframes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "prev_custom_cfg": ("CUSTOM_CFG",),
+                "cfg_extras": ("CFG_EXTRAS",),
+            }
+        }
+
+    RETURN_TYPES = ("CUSTOM_CFG",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings/custom cfg"
+    FUNCTION = "create_custom_cfg"
+
+    def create_custom_cfg(self, cfgs_float: Union[float, list[float]],
+                              start_percent: float, end_percent: float,
+                              prev_custom_cfg: CustomCFGKeyframeGroup=None, cfg_extras: CFGExtrasGroup=None,
+                              print_keyframes=False):
+        if not prev_custom_cfg:
+            prev_custom_cfg = CustomCFGKeyframeGroup()
+        prev_custom_cfg = prev_custom_cfg.clone()
+        if type(cfgs_float) in (float, int):
+            cfgs_float = [float(cfgs_float)]
+        elif isinstance(cfgs_float, Iterable):
+            pass
+        else:
+            raise Exception(f"strengths_float must be either an interable input or a float, but was {type(cfgs_float).__repr__}.")
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=len(cfgs_float), method=InterpolationMethod.LINEAR)
+        
+        is_first = True
+        for percent, cfg in zip(percents, cfgs_float):
+            guarantee_steps = 0
+            if is_first:
+                guarantee_steps = 1
+                is_first = False
+            prev_custom_cfg.add(CustomCFGKeyframe(cfg_multival=float(cfg), start_percent=percent, guarantee_steps=guarantee_steps, cfg_extras=cfg_extras))
+            if print_keyframes:
+                logger.info(f"CustomCFGKeyframe - start_percent:{percent} = {cfg}")
+        return (prev_custom_cfg,)
 
 
 class CFGExtrasPAGNode:

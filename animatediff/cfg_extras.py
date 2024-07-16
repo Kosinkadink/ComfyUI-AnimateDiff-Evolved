@@ -21,6 +21,12 @@ def set_model_options_sampler_cfg_function(model_options: dict[str], sampler_cfg
     if disable_cfg1_optimization:
         model_options["disable_cfg1_optimization"] = True
     return model_options
+
+def set_model_options_post_cfg_function(model_options, post_cfg_function, disable_cfg1_optimization=False):
+    model_options["sampler_post_cfg_function"] = model_options.get("sampler_post_cfg_function", []) + [post_cfg_function]
+    if disable_cfg1_optimization:
+        model_options["disable_cfg1_optimization"] = True
+    return model_options
 #-------------------------------------------------------------------------------
 
 

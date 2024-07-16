@@ -400,7 +400,7 @@ class CreateLoraHookKeyframeFromStrengthList:
         elif isinstance(strengths_float, Iterable):
             pass
         else:
-            raise Exception(f"strengths_floast must be either an interable input or a float, but was {type(strengths_float).__repr__}.")
+            raise Exception(f"strengths_float must be either an interable input or a float, but was {type(strengths_float).__repr__}.")
         percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=len(strengths_float), method=InterpolationMethod.LINEAR)
 
         is_first = True
