@@ -125,6 +125,7 @@ class ApplyAnimateDiffPIAModel:
                 "effect_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
             }
         }
 
@@ -198,6 +199,7 @@ class PIA_ADKeyframeNode:
                 "pia_input": ("PIA_INPUT",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 5}),
             }
         }
     
@@ -249,6 +251,7 @@ class InputPIA_PaperPresetsNode:
             "optional": {
                 "mult_multival": ("MULTIVAL",),
                 "print_values": ("BOOLEAN", {"default": False},),
+                "autosize": ("ADEAUTOSIZE", {"padding": 60}),
                 #"effect_multival": ("MULTIVAL",),
             }
         }

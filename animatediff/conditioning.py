@@ -274,7 +274,7 @@ def set_mask_conds(conds: list, strength: float, set_cond_area: str,
         masked_conds.append(c)
     return masked_conds
 
-def set_mask_and_combine_conds(conds: list, new_conds: list, strength: float, set_cond_area: str,
+def set_mask_and_combine_conds(conds: list, new_conds: list, strength: float=1.0, set_cond_area: str="default",
                                opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
     combined_conds = []
     for c, masked_c in zip(conds, new_conds):
