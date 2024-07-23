@@ -28,7 +28,8 @@ from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, Sampl
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode, SigmaScheduleToSigmasNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode,
-                            VisualizeContextOptionsK, VisualizeContextOptionsKAdv, VisualizeContextOptionsSCustom)
+                            VisualizeContextOptionsK, VisualizeContextOptionsKAdv, VisualizeContextOptionsSCustom,
+                            SetContextExtrasOnContextOptions, ContextExtras_NaiveReuse, ContextExtras_ContextRef)
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
                                 WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
@@ -54,13 +55,15 @@ NODE_CLASS_MAPPINGS = {
     "ADE_MultivalDynamicFloatInput": MultivalDynamicFloatInputNode,
     "ADE_MultivalScaledMask": MultivalScaledMaskNode,
     "ADE_MultivalConvertToMask": MultivalConvertToMaskNode,
+    ###############################################################################
+    #------------------------------------------------------------------------------
     # Context Opts
     "ADE_StandardStaticContextOptions": StandardStaticContextOptionsNode,
     "ADE_StandardUniformContextOptions": StandardUniformContextOptionsNode,
     "ADE_LoopedUniformContextOptions": LoopedUniformContextOptionsNode,
     "ADE_ViewsOnlyContextOptions": ViewAsContextOptionsNode,
     "ADE_BatchedContextOptions": BatchedContextOptionsNode,
-    "ADE_AnimateDiffUniformContextOptions": LegacyLoopedUniformContextOptionsNode, # Legacy
+    "ADE_AnimateDiffUniformContextOptions": LegacyLoopedUniformContextOptionsNode, # Legacy/Deprecated
     "ADE_VisualizeContextOptionsK": VisualizeContextOptionsK,
     "ADE_VisualizeContextOptionsKAdv": VisualizeContextOptionsKAdv,
     "ADE_VisualizeContextOptionsSCustom": VisualizeContextOptionsSCustom,
@@ -68,6 +71,12 @@ NODE_CLASS_MAPPINGS = {
     "ADE_StandardStaticViewOptions": StandardStaticViewOptionsNode,
     "ADE_StandardUniformViewOptions": StandardUniformViewOptionsNode,
     "ADE_LoopedUniformViewOptions": LoopedUniformViewOptionsNode,
+    # Context Extras
+    "ADE_ContextExtras_Set": SetContextExtrasOnContextOptions,
+    "ADE_ContextExtras_ContextRef": ContextExtras_ContextRef,
+    "ADE_ContextExtras_NaiveReuse": ContextExtras_NaiveReuse,
+    #------------------------------------------------------------------------------
+    ###############################################################################
     # Iteration Opts
     "ADE_IterationOptsDefault": IterationOptionsNode,
     "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
@@ -184,13 +193,15 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_MultivalDynamicFloatInput": "Multival [Float List] 🎭🅐🅓",
     "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",
     "ADE_MultivalConvertToMask": "Multival to Mask 🎭🅐🅓",
+    ###############################################################################
+    #------------------------------------------------------------------------------
     # Context Opts
     "ADE_StandardStaticContextOptions": "Context Options◆Standard Static 🎭🅐🅓",
     "ADE_StandardUniformContextOptions": "Context Options◆Standard Uniform 🎭🅐🅓",
     "ADE_LoopedUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓",
     "ADE_ViewsOnlyContextOptions": "Context Options◆Views Only [VRAM⇈] 🎭🅐🅓",
     "ADE_BatchedContextOptions": "Context Options◆Batched [Non-AD] 🎭🅐🅓",
-    "ADE_AnimateDiffUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓", # Legacy
+    "ADE_AnimateDiffUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓", # Legacy/Deprecated
     "ADE_VisualizeContextOptionsK": "Visualize Context Options (K.) 🎭🅐🅓",
     "ADE_VisualizeContextOptionsKAdv": "Visualize Context Options (K.Adv.) 🎭🅐🅓",
     "ADE_VisualizeContextOptionsSCustom": "Visualize Context Options (S.Cus.) 🎭🅐🅓",
@@ -198,6 +209,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_StandardStaticViewOptions": "View Options◆Standard Static 🎭🅐🅓",
     "ADE_StandardUniformViewOptions": "View Options◆Standard Uniform 🎭🅐🅓",
     "ADE_LoopedUniformViewOptions": "View Options◆Looped Uniform 🎭🅐🅓",
+    # Context Extras
+    "ADE_ContextExtras_Set": "Set Context Extras 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef": "Context Extras◆ContextRef 🎭🅐🅓",
+    "ADE_ContextExtras_NaiveReuse": "Context Extras◆NaiveReuse 🎭🅐🅓",
+    #------------------------------------------------------------------------------
+    ###############################################################################
     # Iteration Opts
     "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
     "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",

@@ -6,6 +6,7 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import (ContextFuseMethod, ContextOptions, ContextOptionsGroup, ContextSchedules,
                       generate_context_visualization)
+from .context_extras import ContextExtrasGroup, ContextRef, ContextRefParams, NaiveReuse
 from .utils_model import BIGMAX, MAX_RESOLUTION
 
 
@@ -440,3 +441,90 @@ class VisualizeContextOptionsSCustom:
         images = generate_context_visualization(context_opts=context_opts, model=model, width=visual_width, video_length=latents_length,
                                                 sigmas=sigmas)
         return (images,)
+
+
+#########################
+# Context Extras
+class SetContextExtrasOnContextOptions:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "context_opts": ("CONTEXT_OPTIONS",),
+                "context_extras": ("CONTEXT_EXTRAS",),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXT_OPTIONS",)
+    RETURN_NAMES = ("CONTEXT_OPTS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras"
+    FUNCTION = "set_context_extras"
+
+    def set_context_extras(self, context_opts: ContextOptionsGroup, context_extras: ContextExtrasGroup):
+        context_opts = context_opts.clone()
+        context_opts.extras = context_extras.clone()
+        return (context_opts,)
+
+
+class ContextExtras_NaiveReuse:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "prev_extras": ("CONTEXT_EXTRAS",),
+                "mask_opt": ("MASK",),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "weighted_mean": ("FLOAT", {"default": 0.95, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 55}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXT_EXTRAS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras"
+    FUNCTION = "create_context_extra"
+
+    def create_context_extra(self, start_percent=0.0, end_percent=0.1, weighted_mean=0.95, mask_opt: Tensor=None, prev_extras: ContextExtrasGroup=None):
+        if prev_extras is None:
+            prev_extras = prev_extras = ContextExtrasGroup()
+        prev_extras = prev_extras.clone()
+        # create extra
+        naive_reuse = NaiveReuse(start_percent=start_percent, end_percent=end_percent, weighted_mean=weighted_mean, mask_opt=mask_opt)
+        prev_extras.add(naive_reuse)
+        return (prev_extras,)
+
+
+class ContextExtras_ContextRef:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "prev_extras": ("CONTEXT_EXTRAS",),
+                "mask_opt": ("MASK",),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 55}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXT_EXTRAS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras"
+    FUNCTION = "create_context_extra"
+
+    def create_context_extra(self, start_percent=0.0, end_percent=0.1, mask_opt: Tensor=None, prev_extras: ContextExtrasGroup=None):
+        if prev_extras is None:
+            prev_extras = prev_extras = ContextExtrasGroup()
+        prev_extras = prev_extras.clone()
+        # create extra
+        # TODO: make customizable, and allow mask input
+        params = ContextRefParams(attn_style_fidelity=1.0, attn_ref_weight=1.0, attn_atrength=1.0)
+        context_ref = ContextRef(start_percent=start_percent, end_percent=end_percent, params=params)
+        prev_extras.add(context_ref)
+        return (prev_extras,)

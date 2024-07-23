@@ -71,7 +71,7 @@ class AnimateDiffHelper_GlobalState:
         if self.motion_models is not None:
             self.motion_models.prepare_current_keyframe(x=x, t=timestep)
         if self.params.context_options is not None:
-            self.params.context_options.prepare_current_context(t=timestep)
+            self.params.context_options.prepare_current(t=timestep)
         if self.sample_settings.custom_cfg is not None:
             self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
 
@@ -617,8 +617,10 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
 
         # add AD/evolved-sampling params to model_options (transformer_options)
         model_options = model_options.copy()
-        if "tranformer_options" not in model_options:
-            model_options["tranformer_options"] = {}
+        if "transformer_options" not in model_options:
+            model_options["transformer_options"] = {}
+        else:
+            model_options["transformer_options"] = model_options["transformer_options"].copy()
         model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
         if not ADGS.is_using_sliding_context():
@@ -798,7 +800,25 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
     biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
-    # perform calc_conds_batch per context window
+    CONTEXTREF_ATTN_MACHINE_STATE = "contextref_attn_machine_state"
+    CONTEXTREF_ADAIN_MACHINE_STATE = "contextref_adain_machine_state"
+    #context_ref_steps = [0,1,2,3,4,5]#[0]
+    context_ref = False
+    first_context = False
+    if ADGS.params.context_options.extras.should_run_context_ref():
+        context_ref = True
+        first_context = True
+
+    #naive_steps = [0,1]#[0,1,2]#[0,1,2,3]
+    naive_counts_mult = 50
+    naive_init = False
+    cached_naive_conds = None
+    cached_naive_ctx_idxs = None
+    if ADGS.params.context_options.extras.should_run_naive_reuse():
+        cached_naive_conds = [torch.zeros_like(x_in) for _ in conds]
+        #cached_naive_counts = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+        naive_init = True
+    # perform calc_conds_batch per context window 
     for ctx_idxs in context_windows:
         ADGS.params.sub_idxs = ctx_idxs
         if ADGS.motion_models is not None:
@@ -816,6 +836,18 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
         sub_x = x_in[full_idxs]
         sub_timestep = timestep[full_idxs]
         sub_conds = [get_resized_cond(cond, full_idxs, len(ctx_idxs)) for cond in conds]
+
+        if context_ref:
+            if first_context:
+                first_context = False
+                model_options["transformer_options"][CONTEXTREF_ATTN_MACHINE_STATE] = "write"
+                model_options["transformer_options"][CONTEXTREF_ADAIN_MACHINE_STATE] = "write"
+            else:
+                model_options["transformer_options"][CONTEXTREF_ATTN_MACHINE_STATE] = "read"
+                model_options["transformer_options"][CONTEXTREF_ADAIN_MACHINE_STATE] = "read"
+        else:
+            model_options["transformer_options"][CONTEXTREF_ATTN_MACHINE_STATE] = "off"
+            model_options["transformer_options"][CONTEXTREF_ADAIN_MACHINE_STATE] = "off"
 
         sub_conds_out = calc_cond_uncond_batch_wrapper(model, sub_conds, sub_x, sub_timestep, model_options)
 
@@ -841,12 +873,34 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
             for i in range(len(sub_conds_out)):
                 conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
                 counts_final[i][full_idxs] += weights_tensor
+        if naive_init:
+            cached_naive_ctx_idxs = ctx_idxs
+            for i in range(len(sub_conds)):
+                cached_naive_conds[i][full_idxs] = conds_final[i][full_idxs] / counts_final[i][full_idxs]
+                #cached_naive_conds[i][full_idxs] = conds_final[i][full_idxs]
+                #cached_naive_counts[i][full_idxs] = counts_final[i][full_idxs]
+            naive_init = False
         
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
         # already normalized, so return as is
         del counts_final
         return conds_final
     else:
+        if cached_naive_conds is not None:
+            #start_idx = cached_naive_ctx_idxs[-1] + 1
+            start_idx = cached_naive_ctx_idxs[0]
+            for z in range(start_idx, ADGS.params.full_length, len(cached_naive_ctx_idxs)):
+                for i in range(len(cached_naive_conds)):
+                    new_ctx_idxs = [zz for zz in list(range(z, z+len(cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
+                    # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
+                    adjusted_cnaive_ctx_idxs = cached_naive_ctx_idxs[:len(new_ctx_idxs)]
+                    weighted_mean = ADGS.params.context_options.extras.naive_reuse.weighted_mean
+                    conds_final[i][new_ctx_idxs] = (weighted_mean * (cached_naive_conds[i][adjusted_cnaive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
+                    #conds_final[i][new_idxs] += (cached_naive_conds[i][cached_naive_full_idxs] / cached_naive_counts[i][cached_naive_full_idxs]) * counts
+                    #counts = counts_final[i][new_idxs] * naive_counts_mult# / 2
+                    #conds_final[i][new_idxs] += (cached_naive_conds[i][cached_naive_full_idxs] / cached_naive_counts[i][cached_naive_full_idxs]) * counts
+                    #counts_final[i][new_idxs] += counts# * 10#counts_final[i][full_idxs]
+            del cached_naive_conds
         # normalize conds via division by context usage counts
         for i in range(len(conds_final)):
             conds_final[i] /= counts_final[i]
