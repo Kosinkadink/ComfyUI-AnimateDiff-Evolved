@@ -114,6 +114,7 @@ class AnimateDiffHelper_GlobalState:
             del self.motion_models
             self.motion_models = None
         if self.params is not None:
+            self.params.context_options.reset()
             del self.params
             self.params = None
         if self.sample_settings is not None:
@@ -894,7 +895,7 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                     new_ctx_idxs = [zz for zz in list(range(z, z+len(cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
                     # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
                     adjusted_cnaive_ctx_idxs = cached_naive_ctx_idxs[:len(new_ctx_idxs)]
-                    weighted_mean = ADGS.params.context_options.extras.naive_reuse.weighted_mean
+                    weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
                     conds_final[i][new_ctx_idxs] = (weighted_mean * (cached_naive_conds[i][adjusted_cnaive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
                     #conds_final[i][new_idxs] += (cached_naive_conds[i][cached_naive_full_idxs] / cached_naive_counts[i][cached_naive_full_idxs]) * counts
                     #counts = counts_final[i][new_idxs] * naive_counts_mult# / 2

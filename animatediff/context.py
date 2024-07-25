@@ -90,6 +90,7 @@ class ContextOptionsGroup:
         self._current_index = 0
         self.step = 0
         self._set_first_as_current()
+        self.extras.cleanup()
 
     @property
     def step(self):

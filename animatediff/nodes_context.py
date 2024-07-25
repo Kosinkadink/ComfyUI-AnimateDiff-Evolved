@@ -1,5 +1,6 @@
 import torch
 from torch import Tensor
+from typing import Union
 
 import comfy.samplers
 from comfy.model_patcher import ModelPatcher
@@ -477,11 +478,11 @@ class ContextExtras_NaiveReuse:
             },
             "optional": {
                 "prev_extras": ("CONTEXT_EXTRAS",),
-                "mask_opt": ("MASK",),
+                "strength_multival": ("MULTIVAL",),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "end_percent": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "weighted_mean": ("FLOAT", {"default": 0.95, "min": 0.0, "max": 1.0, "step": 0.001}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 55}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -489,12 +490,13 @@ class ContextExtras_NaiveReuse:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras"
     FUNCTION = "create_context_extra"
 
-    def create_context_extra(self, start_percent=0.0, end_percent=0.1, weighted_mean=0.95, mask_opt: Tensor=None, prev_extras: ContextExtrasGroup=None):
+    def create_context_extra(self, start_percent=0.0, end_percent=0.1, weighted_mean=0.95, strength_multival: Union[float, Tensor]=None,
+                             prev_extras: ContextExtrasGroup=None):
         if prev_extras is None:
             prev_extras = prev_extras = ContextExtrasGroup()
         prev_extras = prev_extras.clone()
         # create extra
-        naive_reuse = NaiveReuse(start_percent=start_percent, end_percent=end_percent, weighted_mean=weighted_mean, mask_opt=mask_opt)
+        naive_reuse = NaiveReuse(start_percent=start_percent, end_percent=end_percent, weighted_mean=weighted_mean, multival_opt=strength_multival)
         prev_extras.add(naive_reuse)
         return (prev_extras,)
 
@@ -507,10 +509,10 @@ class ContextExtras_ContextRef:
             },
             "optional": {
                 "prev_extras": ("CONTEXT_EXTRAS",),
-                "mask_opt": ("MASK",),
+                "strength_multival": ("MULTIVAL",),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "end_percent": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.001}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 55}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -518,7 +520,8 @@ class ContextExtras_ContextRef:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras"
     FUNCTION = "create_context_extra"
 
-    def create_context_extra(self, start_percent=0.0, end_percent=0.1, mask_opt: Tensor=None, prev_extras: ContextExtrasGroup=None):
+    def create_context_extra(self, start_percent=0.0, end_percent=0.1, strength_multival: Union[float, Tensor]=None,
+                             prev_extras: ContextExtrasGroup=None):
         if prev_extras is None:
             prev_extras = prev_extras = ContextExtrasGroup()
         prev_extras = prev_extras.clone()

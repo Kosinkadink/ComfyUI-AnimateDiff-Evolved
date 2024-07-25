@@ -2,6 +2,8 @@ from torch import Tensor
 
 from comfy.model_base import BaseModel
 
+from .utils_motion import prepare_mask_batch, extend_to_batch_size, get_combined_multival
+
 
 class ContextExtra:
     def __init__(self, start_percent: float, end_percent: float):
@@ -24,9 +26,12 @@ class ContextExtra:
             return False
         return True
 
+    def cleanup(self):
+        pass
+
 
 ################################
-# Context Ref
+# ContextRef
 class ContextRefParams:
     def __init__(self,
                  attn_style_fidelity=0.0, attn_ref_weight=0.0, attn_atrength=0.0,
@@ -54,11 +59,30 @@ class ContextRef(ContextExtra):
 ################################
 # NaiveReuse
 class NaiveReuse(ContextExtra):
-    def __init__(self, start_percent: float, end_percent: float, weighted_mean: float, mask_opt: Tensor=None):
+    def __init__(self, start_percent: float, end_percent: float, weighted_mean: float, multival_opt: Tensor=None):
         super().__init__(start_percent=start_percent, end_percent=end_percent)
         self.weighted_mean = weighted_mean
-        self.mask_opt = mask_opt
+        self.orig_multival = multival_opt
+        self.mask: Tensor = None
     
+    def cleanup(self):
+        super().cleanup()
+        del self.mask
+        self.mask = None
+
+    def get_effective_weighted_mean(self, x: Tensor, idxs: list[int]):
+        if self.orig_multival is None:
+            return self.weighted_mean
+        # otherwise, is Tensor and should be extended to match dims and size of x;
+        # see if needs to be recalculated
+        if type(self.orig_multival) != Tensor:
+            return self.weighted_mean * self.orig_multival
+        elif self.mask is None or self.mask.shape[0] != x.shape[0] or self.mask.shape[-1] != x.shape[-1] or self.mask.shape[-2] != x.shape[-2]:
+            del self.mask
+            self.mask = prepare_mask_batch(self.orig_multival, x.shape)
+            self.mask = extend_to_batch_size(self.mask, x.shape[0])
+        return self.weighted_mean * self.mask[idxs].to(dtype=x.dtype, device=x.device)
+
     def should_run(self):
         to_return = super().should_run()
         # if weighted_mean is 0.0, then reuse will take no effect anyway
@@ -105,6 +129,10 @@ class ContextExtrasGroup:
         else:
             raise Exception(f"Unrecognized ContextExtras type: {type(extra)}")
     
+    def cleanup(self):
+        for extra in self.get_extras_list():
+            extra.cleanup()
+
     def clone(self):
         cloned = ContextExtrasGroup()
         cloned.context_ref = self.context_ref

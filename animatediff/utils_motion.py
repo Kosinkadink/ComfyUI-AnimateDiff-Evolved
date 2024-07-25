@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 
 import comfy.model_management as model_management
 import comfy.ops
@@ -236,6 +237,42 @@ class InputPIA_Multival(InputPIA):
         b, c, h, w = x.shape
         mask = torch.ones(size=(b, h, w))
         return mask * self.multival
+
+
+def create_multival_combo(float_val: Union[float, list[float]], mask_optional: Tensor=None):
+    # first, normalize inputs
+    # if float_val is iterable, treat as a list and assume inputs are floats
+    float_is_iterable = False
+    if isinstance(float_val, Iterable):
+        float_is_iterable = True
+        float_val = list(float_val)
+        # if mask present, make sure float_val list can be applied to list - match lengths
+        if mask_optional is not None:
+            if len(float_val) < mask_optional.shape[0]:
+                # copies last entry enough times to match mask shape
+                float_val = extend_list_to_batch_size(float_val, mask_optional.shape[0])
+            if mask_optional.shape[0] < len(float_val):
+                mask_optional = extend_to_batch_size(mask_optional, len(float_val))
+            float_val = float_val[:mask_optional.shape[0]]
+        float_val: Tensor = torch.tensor(float_val).unsqueeze(-1).unsqueeze(-1)
+    # now that inputs are normalized, figure out what value to actually return
+    if mask_optional is not None:
+        mask_optional = mask_optional.clone()
+        if float_is_iterable:
+            mask_optional = mask_optional[:] * float_val.to(mask_optional.dtype).to(mask_optional.device)
+        else:
+            mask_optional = mask_optional * float_val
+        return mask_optional
+    else:
+        if not float_is_iterable:
+            return float_val
+        # create a dummy mask of b,h,w=float_len,1,1 (sigle pixel)
+        # purpose is for float input to work with mask code, without special cases
+        float_len = float_val.shape[0] if float_is_iterable else 1
+        shape = (float_len,1,1)
+        mask_optional = torch.ones(shape)
+        mask_optional = mask_optional[:] * float_val.to(mask_optional.dtype).to(mask_optional.device)
+        return mask_optional
 
 
 def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[float, Tensor]) -> Union[float, Tensor]:
