@@ -801,8 +801,8 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
     biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
-    CONTEXTREF_ATTN_MACHINE_STATE = "contextref_attn_machine_state"
-    CONTEXTREF_ADAIN_MACHINE_STATE = "contextref_adain_machine_state"
+    CONTEXTREF_MACHINE_STATE = "contextref_machine_state"
+    CONTEXTREF_CLEAN_FUNC = "contextref_clean_func"
     #context_ref_steps = [0,1,2,3,4,5]#[0]
     context_ref = False
     first_context = False
@@ -841,14 +841,11 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
         if context_ref:
             if first_context:
                 first_context = False
-                model_options["transformer_options"][CONTEXTREF_ATTN_MACHINE_STATE] = "write"
-                model_options["transformer_options"][CONTEXTREF_ADAIN_MACHINE_STATE] = "write"
+                model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = "write"
             else:
-                model_options["transformer_options"][CONTEXTREF_ATTN_MACHINE_STATE] = "read"
-                model_options["transformer_options"][CONTEXTREF_ADAIN_MACHINE_STATE] = "read"
+                model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = "read"
         else:
-            model_options["transformer_options"][CONTEXTREF_ATTN_MACHINE_STATE] = "off"
-            model_options["transformer_options"][CONTEXTREF_ADAIN_MACHINE_STATE] = "off"
+            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = "off"
 
         sub_conds_out = calc_cond_uncond_batch_wrapper(model, sub_conds, sub_x, sub_timestep, model_options)
 
@@ -881,7 +878,11 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                 #cached_naive_conds[i][full_idxs] = conds_final[i][full_idxs]
                 #cached_naive_counts[i][full_idxs] = counts_final[i][full_idxs]
             naive_init = False
-        
+    
+    # clean contextref stuff with provided ACN function, if applicable
+    if context_ref:
+        model_options["transformer_options"][CONTEXTREF_CLEAN_FUNC]()
+
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
         # already normalized, so return as is
         del counts_final
