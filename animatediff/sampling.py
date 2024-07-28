@@ -803,15 +803,12 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
 
     CONTEXTREF_MACHINE_STATE = "contextref_machine_state"
     CONTEXTREF_CLEAN_FUNC = "contextref_clean_func"
-    #context_ref_steps = [0,1,2,3,4,5]#[0]
     context_ref = False
     first_context = False
     if ADGS.params.context_options.extras.should_run_context_ref():
         context_ref = True
         first_context = True
 
-    #naive_steps = [0,1]#[0,1,2]#[0,1,2,3]
-    naive_counts_mult = 50
     naive_init = False
     cached_naive_conds = None
     cached_naive_ctx_idxs = None
@@ -875,8 +872,6 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
             cached_naive_ctx_idxs = ctx_idxs
             for i in range(len(sub_conds)):
                 cached_naive_conds[i][full_idxs] = conds_final[i][full_idxs] / counts_final[i][full_idxs]
-                #cached_naive_conds[i][full_idxs] = conds_final[i][full_idxs]
-                #cached_naive_counts[i][full_idxs] = counts_final[i][full_idxs]
             naive_init = False
     
     # clean contextref stuff with provided ACN function, if applicable
@@ -898,10 +893,6 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                     adjusted_cnaive_ctx_idxs = cached_naive_ctx_idxs[:len(new_ctx_idxs)]
                     weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
                     conds_final[i][new_ctx_idxs] = (weighted_mean * (cached_naive_conds[i][adjusted_cnaive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
-                    #conds_final[i][new_idxs] += (cached_naive_conds[i][cached_naive_full_idxs] / cached_naive_counts[i][cached_naive_full_idxs]) * counts
-                    #counts = counts_final[i][new_idxs] * naive_counts_mult# / 2
-                    #conds_final[i][new_idxs] += (cached_naive_conds[i][cached_naive_full_idxs] / cached_naive_counts[i][cached_naive_full_idxs]) * counts
-                    #counts_final[i][new_idxs] += counts# * 10#counts_final[i][full_idxs]
             del cached_naive_conds
         # normalize conds via division by context usage counts
         for i in range(len(conds_final)):
