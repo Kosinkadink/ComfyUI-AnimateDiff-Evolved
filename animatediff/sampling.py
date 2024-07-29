@@ -820,7 +820,12 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     
     # prepare final conds, out_counts, and biases
     conds_final = [torch.zeros_like(x_in) for _ in conds]
-    counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+    if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+        # counts_final not used for RELATIVE fuse_method
+        counts_final = [torch.ones((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+    else:
+        # default counts_final initialization
+        counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
     biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
     CONTEXTREF_CONTROL_LIST_ALL = "contextref_control_list_all"
@@ -910,22 +915,24 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
             model_options["transformer_options"][CONTEXTREF_CLEAN_FUNC]()
             context_ref_injector.restore()
 
+    # handle NaiveReuse
+    if cached_naive_conds is not None:
+        start_idx = cached_naive_ctx_idxs[0]
+        for z in range(0, ADGS.params.full_length, len(cached_naive_ctx_idxs)):
+            for i in range(len(cached_naive_conds)):
+                # get the 'true' idxs of this window
+                new_ctx_idxs = [(zz+start_idx) % ADGS.params.full_length for zz in list(range(z, z+len(cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
+                # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
+                adjusted_naive_ctx_idxs = cached_naive_ctx_idxs[:len(new_ctx_idxs)]
+                weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
+                conds_final[i][new_ctx_idxs] = (weighted_mean * (cached_naive_conds[i][adjusted_naive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
+        del cached_naive_conds
+
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
         # already normalized, so return as is
         del counts_final
         return conds_final
     else:
-        if cached_naive_conds is not None:
-            #start_idx = cached_naive_ctx_idxs[-1] + 1
-            start_idx = cached_naive_ctx_idxs[0]
-            for z in range(start_idx, ADGS.params.full_length, len(cached_naive_ctx_idxs)):
-                for i in range(len(cached_naive_conds)):
-                    new_ctx_idxs = [zz for zz in list(range(z, z+len(cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
-                    # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
-                    adjusted_cnaive_ctx_idxs = cached_naive_ctx_idxs[:len(new_ctx_idxs)]
-                    weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
-                    conds_final[i][new_ctx_idxs] = (weighted_mean * (cached_naive_conds[i][adjusted_cnaive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
-            del cached_naive_conds
         # normalize conds via division by context usage counts
         for i in range(len(conds_final)):
             conds_final[i] /= counts_final[i]
