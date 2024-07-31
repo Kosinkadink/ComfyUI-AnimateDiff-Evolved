@@ -46,10 +46,29 @@ class ContextRefParams:
         self.adain_strength = adain_strength
 
 
+class ContextRefMode:
+    FIRST = "first"
+    SLIDING = "sliding"
+    _LIST = [FIRST, SLIDING]
+
+    def __init__(self, mode: str, sliding_width=2):
+        self.mode = mode
+        self.sliding_width = sliding_width
+
+    @classmethod
+    def init_first(cls):
+        return ContextRefMode(cls.FIRST)
+    
+    @classmethod
+    def init_sliding(cls, sliding_width):
+        return ContextRefMode(cls.SLIDING, sliding_width=sliding_width)
+
+
 class ContextRef(ContextExtra):
-    def __init__(self, start_percent: float, end_percent: float, params: ContextRefParams):
+    def __init__(self, start_percent: float, end_percent: float, params: ContextRefParams, mode: ContextRefMode):
         super().__init__(start_percent=start_percent, end_percent=end_percent)
         self.params = params
+        self.mode = mode
 
     def should_run(self):
         return super().should_run()

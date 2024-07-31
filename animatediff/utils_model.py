@@ -26,6 +26,12 @@ BIGMAX = (2**53-1)
 
 MAX_RESOLUTION = 16384  # mirrors ComfyUI's nodes.py MAX_RESOLUTION
 
+class MachineState:
+    READ = "read"
+    WRITE = "write"
+    READ_WRITE = "read_write"
+    OFF = "off"
+
 
 def vae_encode_raw_dynamic_batched(vae: VAE, pixels: Tensor, max_batch=16, min_batch=1, max_size=512*512, show_pbar=False):
     b, h, w, c = pixels.shape

@@ -26,8 +26,9 @@ import comfy.ops
 
 from .conditioning import COND_CONST, LoraHookGroup, conditioning_set_values
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
+from .context_extras import ContextRefMode
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
-from .utils_model import ModelTypeSD, vae_encode_raw_batched, vae_decode_raw_batched
+from .utils_model import ModelTypeSD, MachineState, vae_encode_raw_batched, vae_decode_raw_batched
 from .utils_motion import composite_extend, get_combined_multival, prepare_mask_batch, extend_to_batch_size
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
@@ -831,27 +832,31 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     CONTEXTREF_CONTROL_LIST_ALL = "contextref_control_list_all"
     CONTEXTREF_MACHINE_STATE = "contextref_machine_state"
     CONTEXTREF_CLEAN_FUNC = "contextref_clean_func"
-    context_ref = False
-    context_ref_injector = None
+    contextref_active = False
+    contextref_injector = None
+    contextref_mode = None
     first_context = False
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
         if ADGS.params.context_options.extras.should_run_context_ref():
-            context_ref = True
+            contextref_active = True
             first_context = True
+            contextref_mode = ADGS.params.context_options.extras.context_ref.mode
             # use injector to ensure only 1 cond or uncond will be batched at a time
-            context_ref_injector = ContextRefInjector()
-            context_ref_injector.inject()
+            contextref_injector = ContextRefInjector()
+            contextref_injector.inject()
 
-        naive_init = False
+        curr_window_idx = -1
+        naivereuse_active = False
         cached_naive_conds = None
         cached_naive_ctx_idxs = None
         if ADGS.params.context_options.extras.should_run_naive_reuse():
             cached_naive_conds = [torch.zeros_like(x_in) for _ in conds]
             #cached_naive_counts = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
-            naive_init = True
+            naivereuse_active = True
         # perform calc_conds_batch per context window 
         for ctx_idxs in context_windows:
+            curr_window_idx += 1
             ADGS.params.sub_idxs = ctx_idxs
             if ADGS.motion_models is not None:
                 ADGS.motion_models.set_sub_idxs(ctx_idxs)
@@ -869,16 +874,20 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
             sub_timestep = timestep[full_idxs]
             sub_conds = [get_resized_cond(cond, full_idxs, len(ctx_idxs)) for cond in conds]
 
-            if context_ref:
+            if contextref_active:
                 # set cond counter to 0 (each cond encountered will increment it by 1)
                 model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL][0].contextref_cond_idx = 0
                 if first_context:
                     first_context = False
-                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = "write"
+                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
                 else:
-                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = "read"
+                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
+                    if contextref_mode.mode == ContextRefMode.SLIDING: # if sliding, check if time to READ and WRITE
+                        if curr_window_idx % (contextref_mode.sliding_width-1) == 0:
+                            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
             else:
-                model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = "off"
+                model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.OFF
+            #logger.info(f"window: {curr_window_idx} - {model_options['transformer_options'][CONTEXTREF_MACHINE_STATE]}")
 
             sub_conds_out = calc_cond_uncond_batch_wrapper(model, sub_conds, sub_x, sub_timestep, model_options)
 
@@ -904,16 +913,16 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                 for i in range(len(sub_conds_out)):
                     conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
                     counts_final[i][full_idxs] += weights_tensor
-            if naive_init:
+            if naivereuse_active:
                 cached_naive_ctx_idxs = ctx_idxs
                 for i in range(len(sub_conds)):
                     cached_naive_conds[i][full_idxs] = conds_final[i][full_idxs] / counts_final[i][full_idxs]
-                naive_init = False
+                naivereuse_active = False
     finally:
         # clean contextref stuff with provided ACN function, if applicable
-        if context_ref:
+        if contextref_active:
             model_options["transformer_options"][CONTEXTREF_CLEAN_FUNC]()
-            context_ref_injector.restore()
+            contextref_injector.restore()
 
     # handle NaiveReuse
     if cached_naive_conds is not None:

@@ -7,7 +7,7 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import (ContextFuseMethod, ContextOptions, ContextOptionsGroup, ContextSchedules,
                       generate_context_visualization)
-from .context_extras import ContextExtrasGroup, ContextRef, ContextRefParams, NaiveReuse
+from .context_extras import ContextExtrasGroup, ContextRef, ContextRefParams, ContextRefMode, NaiveReuse
 from .utils_model import BIGMAX, MAX_RESOLUTION
 
 
@@ -510,6 +510,7 @@ class ContextExtras_ContextRef:
             "optional": {
                 "prev_extras": ("CONTEXT_EXTRAS",),
                 "strength_multival": ("MULTIVAL",),
+                "contextref_mode": ("CONTEXTREF_MODE",),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "end_percent": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
@@ -521,6 +522,7 @@ class ContextExtras_ContextRef:
     FUNCTION = "create_context_extra"
 
     def create_context_extra(self, start_percent=0.0, end_percent=0.1, strength_multival: Union[float, Tensor]=None,
+                             contextref_mode: ContextRefMode=None,
                              prev_extras: ContextExtrasGroup=None):
         if prev_extras is None:
             prev_extras = prev_extras = ContextExtrasGroup()
@@ -528,6 +530,49 @@ class ContextExtras_ContextRef:
         # create extra
         # TODO: make customizable, and allow mask input
         params = ContextRefParams(attn_style_fidelity=1.0, attn_ref_weight=1.0, attn_atrength=1.0)
-        context_ref = ContextRef(start_percent=start_percent, end_percent=end_percent, params=params)
+        if contextref_mode is None:
+            contextref_mode = ContextRefMode.init_first()
+        context_ref = ContextRef(start_percent=start_percent, end_percent=end_percent, params=params, mode=contextref_mode)
         prev_extras.add(context_ref)
         return (prev_extras,)
+
+
+class ContextRef_ModeFirst:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 25}),
+            },
+        }
+    
+    RETURN_TYPES = ("CONTEXTREF_MODE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/ContextRef"
+    FUNCTION = "create_contextref_mode"
+
+    def create_contextref_mode(self):
+        mode = ContextRefMode.init_first()
+        return (mode,)
+
+
+class ContextRef_ModeSliding:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "sliding_width": ("INT", {"default": 2, "min": 2, "max": BIGMAX, "step": 1}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 42}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXTREF_MODE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/ContextRef"
+    FUNCTION = "create_contextref_mode"
+
+    def create_contextref_mode(self, sliding_width):
+        mode = ContextRefMode.init_sliding(sliding_width=sliding_width)
+        return (mode,)

@@ -29,7 +29,8 @@ from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, Weig
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode,
                             VisualizeContextOptionsK, VisualizeContextOptionsKAdv, VisualizeContextOptionsSCustom,
-                            SetContextExtrasOnContextOptions, ContextExtras_NaiveReuse, ContextExtras_ContextRef)
+                            SetContextExtrasOnContextOptions, ContextExtras_NaiveReuse, ContextExtras_ContextRef,
+                            ContextRef_ModeFirst, ContextRef_ModeSliding)
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
                                 WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
@@ -75,6 +76,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ContextExtras_Set": SetContextExtrasOnContextOptions,
     "ADE_ContextExtras_ContextRef": ContextExtras_ContextRef,
     "ADE_ContextExtras_NaiveReuse": ContextExtras_NaiveReuse,
+    "ADE_ContextExtras_ContextRef_ModeFirst": ContextRef_ModeFirst,
+    "ADE_ContextExtras_ContextRef_ModeSliding": ContextRef_ModeSliding,
     #------------------------------------------------------------------------------
     ###############################################################################
     # Iteration Opts
@@ -213,6 +216,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_ContextExtras_Set": "Set Context Extras 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef": "Context Extras◆ContextRef 🎭🅐🅓",
     "ADE_ContextExtras_NaiveReuse": "Context Extras◆NaiveReuse 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_ModeFirst": "ContextRef Mode◆First 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_ModeSliding": "ContextRef Mode◆Sliding 🎭🅐🅓",
     #------------------------------------------------------------------------------
     ###############################################################################
     # Iteration Opts
