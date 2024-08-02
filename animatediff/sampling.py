@@ -876,7 +876,8 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
 
             if contextref_active:
                 # set cond counter to 0 (each cond encountered will increment it by 1)
-                model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL][0].contextref_cond_idx = 0
+                for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
+                    refcn.contextref_cond_idx = 0
                 if first_context:
                     first_context = False
                     model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE

@@ -34,16 +34,26 @@ class ContextExtra:
 # ContextRef
 class ContextRefParams:
     def __init__(self,
-                 attn_style_fidelity=0.0, attn_ref_weight=0.0, attn_atrength=0.0,
+                 attn_style_fidelity=0.0, attn_ref_weight=0.0, attn_strength=0.0,
                  adain_style_fidelity=0.0, adain_ref_weight=0.0, adain_strength=0.0):
         # attn1
-        self.attn_style_fidelity = attn_style_fidelity
-        self.attn_ref_weight = attn_ref_weight
-        self.attn_strength = attn_atrength
+        self.attn_style_fidelity = float(attn_style_fidelity)
+        self.attn_ref_weight = float(attn_ref_weight)
+        self.attn_strength = float(attn_strength)
         # adain
-        self.adain_style_fidelity = adain_style_fidelity
-        self.adain_ref_weight = adain_ref_weight
-        self.adain_strength = adain_strength
+        self.adain_style_fidelity = float(adain_style_fidelity)
+        self.adain_ref_weight = float(adain_ref_weight)
+        self.adain_strength = float(adain_strength)
+    
+    def create_dict(self):
+        return {
+            "attn_style_fidelity": self.attn_style_fidelity,
+            "attn_ref_weight": self.attn_ref_weight,
+            "attn_strength": self.attn_strength,
+            "adain_style_fidelity": self.adain_style_fidelity,
+            "adain_ref_weight": self.adain_ref_weight,
+            "adain_strength": self.adain_strength,
+        }
 
 
 class ContextRefMode:

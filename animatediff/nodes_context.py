@@ -511,6 +511,7 @@ class ContextExtras_ContextRef:
                 "prev_extras": ("CONTEXT_EXTRAS",),
                 "strength_multival": ("MULTIVAL",),
                 "contextref_mode": ("CONTEXTREF_MODE",),
+                "contextref_tune": ("CONTEXTREF_TUNE",),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "end_percent": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
@@ -523,16 +524,18 @@ class ContextExtras_ContextRef:
 
     def create_context_extra(self, start_percent=0.0, end_percent=0.1, strength_multival: Union[float, Tensor]=None,
                              contextref_mode: ContextRefMode=None,
+                             contextref_tune: ContextRefParams=None,
                              prev_extras: ContextExtrasGroup=None):
         if prev_extras is None:
             prev_extras = prev_extras = ContextExtrasGroup()
         prev_extras = prev_extras.clone()
         # create extra
         # TODO: make customizable, and allow mask input
-        params = ContextRefParams(attn_style_fidelity=1.0, attn_ref_weight=1.0, attn_atrength=1.0)
+        if contextref_tune is None:
+            contextref_tune = ContextRefParams(attn_style_fidelity=1.0, attn_ref_weight=1.0, attn_strength=1.0)
         if contextref_mode is None:
             contextref_mode = ContextRefMode.init_first()
-        context_ref = ContextRef(start_percent=start_percent, end_percent=end_percent, params=params, mode=contextref_mode)
+        context_ref = ContextRef(start_percent=start_percent, end_percent=end_percent, params=contextref_tune, mode=contextref_mode)
         prev_extras.add(context_ref)
         return (prev_extras,)
 
@@ -576,3 +579,56 @@ class ContextRef_ModeSliding:
     def create_contextref_mode(self, sliding_width):
         mode = ContextRefMode.init_sliding(sliding_width=sliding_width)
         return (mode,)
+
+
+class ContextRef_TuneAttnAdain:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "attn_style_fidelity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "attn_ref_weight": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "attn_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "adain_style_fidelity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "adain_ref_weight": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "adain_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 65}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXTREF_TUNE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/ContextRef"
+    FUNCTION = "create_contextref_tune"
+
+    def create_contextref_tune(self, attn_style_fidelity=1.0, attn_ref_weight=1.0, attn_strength=1.0,
+                        adain_style_fidelity=1.0, adain_ref_weight=1.0, adain_strength=1.0):
+        params = ContextRefParams(attn_style_fidelity=attn_style_fidelity, adain_style_fidelity=adain_style_fidelity,
+                                  attn_ref_weight=attn_ref_weight, adain_ref_weight=adain_ref_weight,
+                                  attn_strength=attn_strength, adain_strength=adain_strength)
+        return (params,)
+
+
+class ContextRef_TuneAttn:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "attn_style_fidelity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "attn_ref_weight": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "attn_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 15}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXTREF_TUNE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/ContextRef"
+    FUNCTION = "create_contextref_tune"
+
+    def create_contextref_tune(self, attn_style_fidelity=1.0, attn_ref_weight=1.0, attn_strength=1.0):
+        return ContextRef_TuneAttnAdain.create_contextref_tune(self,
+                                                               attn_style_fidelity=attn_style_fidelity, attn_ref_weight=attn_ref_weight, attn_strength=attn_strength,
+                                                               adain_ref_weight=0.0, adain_style_fidelity=0.0, adain_strength=0.0)
