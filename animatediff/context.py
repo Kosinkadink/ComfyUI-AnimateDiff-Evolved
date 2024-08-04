@@ -82,12 +82,14 @@ class ContextOptionsGroup:
         self._current_context: ContextOptions = None
         self._current_used_steps: int = 0
         self._current_index: int = 0
+        self._previous_t = -1
         self._step = 0
 
     def reset(self):
         self._current_context = None
         self._current_used_steps = 0
         self._current_index = 0
+        self._previous_t = -1
         self.step = 0
         self._set_first_as_current()
         self.extras.cleanup()
@@ -145,6 +147,9 @@ class ContextOptionsGroup:
 
     def prepare_current_context(self, t: Tensor):
         curr_t: float = t[0]
+        # if same as previous, do nothing as step already accounted for
+        if curr_t == self._previous_t:
+            return
         prev_index = self._current_index
         # if met guaranteed steps, look for next context in case need to switch
         if self._current_used_steps >= self._current_context.guarantee_steps:
@@ -166,6 +171,8 @@ class ContextOptionsGroup:
                         break
         # update steps current context is used
         self._current_used_steps += 1
+        # update previous_t
+        self._previous_t = curr_t
 
     def _set_first_as_current(self):
         if len(self.contexts) > 0:
