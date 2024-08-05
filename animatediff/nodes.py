@@ -31,7 +31,8 @@ from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniform
                             VisualizeContextOptionsK, VisualizeContextOptionsKAdv, VisualizeContextOptionsSCustom,
                             SetContextExtrasOnContextOptions, ContextExtras_NaiveReuse, ContextExtras_ContextRef,
                             ContextRef_ModeFirst, ContextRef_ModeSliding, ContextRef_ModeIndexes,
-                            ContextRef_TuneAttn, ContextRef_TuneAttnAdain)
+                            ContextRef_TuneAttn, ContextRef_TuneAttnAdain,
+                            NaiveReuse_KeyframeNode, NaiveReuse_KeyframeMultivalNode)
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
                                 WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
@@ -76,12 +77,14 @@ NODE_CLASS_MAPPINGS = {
     # Context Extras
     "ADE_ContextExtras_Set": SetContextExtrasOnContextOptions,
     "ADE_ContextExtras_ContextRef": ContextExtras_ContextRef,
-    "ADE_ContextExtras_NaiveReuse": ContextExtras_NaiveReuse,
     "ADE_ContextExtras_ContextRef_ModeFirst": ContextRef_ModeFirst,
     "ADE_ContextExtras_ContextRef_ModeSliding": ContextRef_ModeSliding,
     "ADE_ContextExtras_ContextRef_ModeIndexes": ContextRef_ModeIndexes,
     "ADE_ContextExtras_ContextRef_TuneAttn": ContextRef_TuneAttn,
     "ADE_ContextExtras_ContextRef_TuneAttnAdain": ContextRef_TuneAttnAdain,
+    "ADE_ContextExtras_NaiveReuse": ContextExtras_NaiveReuse,
+    "ADE_ContextExtras_NaiveReuse_Keyframe": NaiveReuse_KeyframeNode,
+    "ADE_ContextExtras_NaiveReuse_KeyframeMultival": NaiveReuse_KeyframeMultivalNode,
     #------------------------------------------------------------------------------
     ###############################################################################
     # Iteration Opts
@@ -219,12 +222,14 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Context Extras
     "ADE_ContextExtras_Set": "Set Context Extras 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef": "Context Extras◆ContextRef 🎭🅐🅓",
-    "ADE_ContextExtras_NaiveReuse": "Context Extras◆NaiveReuse 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_ModeFirst": "ContextRef Mode◆First 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_ModeSliding": "ContextRef Mode◆Sliding 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_ModeIndexes": "ContextRef Mode◆Indexes 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_TuneAttn": "ContextRef Tune◆Attn 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_TuneAttnAdain": "ContextRef Tune◆Attn+Adain 🎭🅐🅓",
+    "ADE_ContextExtras_NaiveReuse": "Context Extras◆NaiveReuse 🎭🅐🅓",
+    "ADE_ContextExtras_NaiveReuse_Keyframe": "NaiveReuse Keyframe 🎭🅐🅓",
+    "ADE_ContextExtras_NaiveReuse_KeyframeMultival": "NaiveReuse Keyframe [Multival] 🎭🅐🅓",
     #------------------------------------------------------------------------------
     ###############################################################################
     # Iteration Opts
