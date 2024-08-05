@@ -813,8 +813,6 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     # get context windows
     ADGS.params.context_options.step = ADGS.current_step
     context_windows = get_context_windows(ADGS.params.full_length, ADGS.params.context_options)
-    # figure out how input is split
-    batched_conds = x_in.size(0)//ADGS.params.full_length
 
     if ADGS.motion_models is not None:
         ADGS.motion_models.set_view_options(ADGS.params.context_options.view_options)
@@ -865,15 +863,10 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
             # update exposed params
             model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
             model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
-            # account for all portions of input frames
-            full_idxs = []
-            for n in range(batched_conds):
-                for ind in ctx_idxs:
-                    full_idxs.append((ADGS.params.full_length*n)+ind)
             # get subsections of x, timestep, conds
-            sub_x = x_in[full_idxs]
-            sub_timestep = timestep[full_idxs]
-            sub_conds = [get_resized_cond(cond, full_idxs, len(ctx_idxs)) for cond in conds]
+            sub_x = x_in[ctx_idxs]
+            sub_timestep = timestep[ctx_idxs]
+            sub_conds = [get_resized_cond(cond, ctx_idxs, len(ctx_idxs)) for cond in conds]
 
             if contextref_active:
                 # set cond counter to 0 (each cond encountered will increment it by 1)
@@ -915,26 +908,24 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                     bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
                     bias = max(1e-2, bias)
                     # take weighted average relative to total bias of current idx
-                    # and account for batched_conds
                     for i in range(len(sub_conds_out)):
-                        for n in range(batched_conds):
-                            bias_total = biases_final[i][(full_length*n)+idx]
-                            prev_weight = (bias_total / (bias_total + bias))
-                            new_weight = (bias / (bias_total + bias))
-                            conds_final[i][(full_length*n)+idx] = conds_final[i][(full_length*n)+idx] * prev_weight + sub_conds_out[i][(full_length*n)+pos] * new_weight
-                            biases_final[i][(full_length*n)+idx] = bias_total + bias
+                        bias_total = biases_final[i][idx]
+                        prev_weight = (bias_total / (bias_total + bias))
+                        new_weight = (bias / (bias_total + bias))
+                        conds_final[i][idx] = conds_final[i][idx] * prev_weight + sub_conds_out[i][pos] * new_weight
+                        biases_final[i][idx] = bias_total + bias
             else:
                 # add conds and counts based on weights of fuse method
-                weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep) * batched_conds
+                weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep)
                 weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
                 for i in range(len(sub_conds_out)):
-                    conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
-                    counts_final[i][full_idxs] += weights_tensor
+                    conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
+                    counts_final[i][ctx_idxs] += weights_tensor
             # handle NaiveReuse
             if naivereuse_active:
                 cached_naive_ctx_idxs = ctx_idxs
                 for i in range(len(sub_conds)):
-                    cached_naive_conds[i][full_idxs] = conds_final[i][full_idxs] / counts_final[i][full_idxs]
+                    cached_naive_conds[i][ctx_idxs] = conds_final[i][ctx_idxs] / counts_final[i][ctx_idxs]
                 naivereuse_active = False
             # toggle first_context off, if needed
             if first_context:
