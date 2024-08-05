@@ -30,7 +30,7 @@ from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniform
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode,
                             VisualizeContextOptionsK, VisualizeContextOptionsKAdv, VisualizeContextOptionsSCustom,
                             SetContextExtrasOnContextOptions, ContextExtras_NaiveReuse, ContextExtras_ContextRef,
-                            ContextRef_ModeFirst, ContextRef_ModeSliding,
+                            ContextRef_ModeFirst, ContextRef_ModeSliding, ContextRef_ModeIndexes,
                             ContextRef_TuneAttn, ContextRef_TuneAttnAdain)
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
@@ -79,6 +79,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ContextExtras_NaiveReuse": ContextExtras_NaiveReuse,
     "ADE_ContextExtras_ContextRef_ModeFirst": ContextRef_ModeFirst,
     "ADE_ContextExtras_ContextRef_ModeSliding": ContextRef_ModeSliding,
+    "ADE_ContextExtras_ContextRef_ModeIndexes": ContextRef_ModeIndexes,
     "ADE_ContextExtras_ContextRef_TuneAttn": ContextRef_TuneAttn,
     "ADE_ContextExtras_ContextRef_TuneAttnAdain": ContextRef_TuneAttnAdain,
     #------------------------------------------------------------------------------
@@ -221,6 +222,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_ContextExtras_NaiveReuse": "Context Extras◆NaiveReuse 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_ModeFirst": "ContextRef Mode◆First 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_ModeSliding": "ContextRef Mode◆Sliding 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_ModeIndexes": "ContextRef Mode◆Indexes 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_TuneAttn": "ContextRef Tune◆Attn 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_TuneAttnAdain": "ContextRef Tune◆Attn+Adain 🎭🅐🅓",
     #------------------------------------------------------------------------------

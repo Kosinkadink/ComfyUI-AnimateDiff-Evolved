@@ -835,13 +835,14 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     contextref_active = False
     contextref_injector = None
     contextref_mode = None
-    first_context = False
+    contextref_idxs_set = None
+    first_context = True
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
         if ADGS.params.context_options.extras.should_run_context_ref():
             contextref_active = True
-            first_context = True
             contextref_mode = ADGS.params.context_options.extras.context_ref.mode
+            contextref_idxs_set = contextref_mode.indexes.copy()
             # use injector to ensure only 1 cond or uncond will be batched at a time
             contextref_injector = ContextRefInjector()
             contextref_injector.inject()
@@ -879,13 +880,28 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                 for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
                     refcn.contextref_cond_idx = 0
                 if first_context:
-                    first_context = False
                     model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
                 else:
                     model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
                     if contextref_mode.mode == ContextRefMode.SLIDING: # if sliding, check if time to READ and WRITE
                         if curr_window_idx % (contextref_mode.sliding_width-1) == 0:
                             model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
+                # override with indexes mode, if set
+                if contextref_mode.mode == ContextRefMode.INDEXES:
+                    contains_idx = False
+                    for i in ctx_idxs:
+                        if i in contextref_idxs_set:
+                            contains_idx = True
+                            # single trigger decides if each index should only trigger READ_WRITE once per step
+                            if not contextref_mode.single_trigger:
+                                break
+                            contextref_idxs_set.remove(i)
+                    if contains_idx:
+                        model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
+                        if first_context:
+                            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
+                    else:
+                        model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
             else:
                 model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.OFF
             #logger.info(f"window: {curr_window_idx} - {model_options['transformer_options'][CONTEXTREF_MACHINE_STATE]}")
@@ -914,11 +930,15 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                 for i in range(len(sub_conds_out)):
                     conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
                     counts_final[i][full_idxs] += weights_tensor
+            # handle NaiveReuse
             if naivereuse_active:
                 cached_naive_ctx_idxs = ctx_idxs
                 for i in range(len(sub_conds)):
                     cached_naive_conds[i][full_idxs] = conds_final[i][full_idxs] / counts_final[i][full_idxs]
                 naivereuse_active = False
+            # toggle first_context off, if needed
+            if first_context:
+                first_context = False
     finally:
         # clean contextref stuff with provided ACN function, if applicable
         if contextref_active:

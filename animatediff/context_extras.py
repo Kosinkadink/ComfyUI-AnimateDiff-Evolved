@@ -59,19 +59,26 @@ class ContextRefParams:
 class ContextRefMode:
     FIRST = "first"
     SLIDING = "sliding"
-    _LIST = [FIRST, SLIDING]
+    INDEXES = "indexes"
+    _LIST = [FIRST, SLIDING, INDEXES]
 
-    def __init__(self, mode: str, sliding_width=2):
+    def __init__(self, mode: str, sliding_width=2, indexes: set[int]=set([0])):
         self.mode = mode
         self.sliding_width = sliding_width
+        self.indexes = indexes
+        self.single_trigger = True
 
     @classmethod
     def init_first(cls):
         return ContextRefMode(cls.FIRST)
     
     @classmethod
-    def init_sliding(cls, sliding_width):
+    def init_sliding(cls, sliding_width: int):
         return ContextRefMode(cls.SLIDING, sliding_width=sliding_width)
+    
+    @classmethod
+    def init_indexes(cls, indexes: set[int]):
+        return ContextRefMode(cls.INDEXES, indexes=indexes)
 
 
 class ContextRef(ContextExtra):

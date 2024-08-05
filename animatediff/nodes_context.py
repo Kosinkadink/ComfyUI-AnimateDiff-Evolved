@@ -9,6 +9,7 @@ from .context import (ContextFuseMethod, ContextOptions, ContextOptionsGroup, Co
                       generate_context_visualization)
 from .context_extras import ContextExtrasGroup, ContextRef, ContextRefParams, ContextRefMode, NaiveReuse
 from .utils_model import BIGMAX, MAX_RESOLUTION
+from .utils_scheduling import convert_str_to_indexes
 
 
 LENGTH_MAX = 128   # keep an eye on these max values;
@@ -578,6 +579,31 @@ class ContextRef_ModeSliding:
 
     def create_contextref_mode(self, sliding_width):
         mode = ContextRefMode.init_sliding(sliding_width=sliding_width)
+        return (mode,)
+
+
+class ContextRef_ModeIndexes:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "switch_on_idxs": ("STRING", {"default": ""}),
+                "always_include_0": ("BOOLEAN", {"default": True},),
+                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+            },
+        }
+    
+    RETURN_TYPES = ("CONTEXTREF_MODE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/ContextRef"
+    FUNCTION = "create_contextref_mode"
+
+    def create_contextref_mode(self, switch_on_idxs: str, always_include_0: bool):
+        idxs = set(convert_str_to_indexes(indexes_str=switch_on_idxs, length=0, allow_range=False))
+        if always_include_0 and 0 not in idxs:
+            idxs.add(0)
+        mode = ContextRefMode.init_indexes(indexes=idxs)
         return (mode,)
 
 
