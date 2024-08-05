@@ -855,6 +855,8 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
             naivereuse_active = True
         # perform calc_conds_batch per context window 
         for ctx_idxs in context_windows:
+            # allow processing to end between context window executions for faster Cancel
+            comfy.model_management.throw_exception_if_processing_interrupted()
             curr_window_idx += 1
             ADGS.params.sub_idxs = ctx_idxs
             if ADGS.motion_models is not None:
