@@ -156,6 +156,8 @@ class NaiveReuseKeyframeGroup:
             keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
     
     def prepare_current_keyframe(self, t: Tensor):
+        if self.is_empty():
+            return
         curr_t: float = t[0]
         # if curr_t same as before, do nothing as step already accounted for
         if curr_t == self._previous_t:
