@@ -838,12 +838,20 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
         if ADGS.params.context_options.extras.should_run_context_ref():
-            contextref_active = True
-            contextref_mode = ADGS.params.context_options.extras.context_ref.mode
-            contextref_idxs_set = contextref_mode.indexes.copy()
-            # use injector to ensure only 1 cond or uncond will be batched at a time
-            contextref_injector = ContextRefInjector()
-            contextref_injector.inject()
+            # check if ContextRef ReferenceAdvanced ACN objs should_run
+            actually_should_run = True
+            for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
+                refcn.prepare_current_timestep(timestep)
+                if not refcn.should_run():
+                    actually_should_run = False
+                    break
+            if actually_should_run:
+                contextref_active = True
+                contextref_mode = ADGS.params.context_options.extras.context_ref.mode
+                contextref_idxs_set = contextref_mode.indexes.copy()
+                # use injector to ensure only 1 cond or uncond will be batched at a time
+                contextref_injector = ContextRefInjector()
+                contextref_injector.inject()
 
         curr_window_idx = -1
         naivereuse_active = False

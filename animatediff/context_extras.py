@@ -9,6 +9,9 @@ from .utils_motion import (prepare_mask_batch, extend_to_batch_size, get_combine
                            get_sorted_list_via_attr)
 
 
+CONTEXTREF_VERSION = 1
+
+
 class ContextExtra:
     def __init__(self, start_percent: float, end_percent: float):
         # scheduling
@@ -36,7 +39,7 @@ class ContextExtra:
 
 ################################
 # ContextRef
-class ContextRefParams:
+class ContextRefTune:
     def __init__(self,
                  attn_style_fidelity=0.0, attn_ref_weight=0.0, attn_strength=0.0,
                  adain_style_fidelity=0.0, adain_ref_weight=0.0, adain_strength=0.0):
@@ -85,11 +88,162 @@ class ContextRefMode:
         return ContextRefMode(cls.INDEXES, indexes=indexes)
 
 
+class ContextRefKeyframe:
+    def __init__(self, mult=1.0, mult_multival: Union[float, Tensor]=None, tune_replace: ContextRefTune=None, mode_replace: ContextRefMode=None,
+                 start_percent=0.0, guarantee_steps=1, inherit_missing=True):
+        self.mult = mult
+        self.orig_mult_multival = mult_multival
+        self.orig_tune_replace = tune_replace
+        self.orig_mode_replace = mode_replace
+        self.mult_multival = self.orig_mult_multival
+        self.tune_replace = self.orig_tune_replace
+        self.mode_replace = self.orig_mode_replace
+        # scheduling
+        self.start_percent = float(start_percent)
+        self.guarantee_steps = guarantee_steps
+        self.inherit_missing = inherit_missing
+
+    def clone(self):
+        c = ContextRefKeyframe(mult=self.mult, mult_multival=self.orig_mult_multival, tune_replace=self.orig_tune_replace, mode_replace=self.orig_mode_replace,
+                               start_percent=self.start_percent, guarantee_steps=self.guarantee_steps, inherit_missing=self.inherit_missing)
+        c.mult_multival = self.mult_multival
+        c.tune_replace = self.tune_replace
+        c.mode_replace = self.mode_replace
+        return c
+
+
+class ContextRefKeyframeGroup:
+    def __init__(self):
+        self.keyframes: list[ContextRefKeyframe] = []
+        self._current_keyframe: NaiveReuseKeyframe = None
+        self._current_used_steps: int = 0
+        self._current_index: int = 0
+        self._previous_t = -1
+    
+    def reset(self):
+        self._current_keyframe = None
+        self._current_used_steps = 0
+        self._current_index = 0
+        self._set_first_as_current()
+
+    def add(self, keyframe: ContextRefKeyframe):
+        # add to end of list, then sort
+        self.keyframes.append(keyframe)
+        self.keyframes = get_sorted_list_via_attr(self.keyframes, "start_percent")
+        self._set_first_as_current()
+        self._prepare_all_keyframe_vals()
+
+    def _set_first_as_current(self):
+        if len(self.keyframes) > 0:
+            self._current_keyframe = self.keyframes[0]
+        else:
+            self._current_keyframe = None
+    
+    def _prepare_all_keyframe_vals(self):
+        if self.is_empty():
+            return
+        multival = None
+        tune = None
+        mode = None
+        for kf in self.keyframes:
+            # if shouldn't inherit, clear cache
+            if not kf.inherit_missing:
+                multival = None
+                tune = None
+                mode = None
+            # assign cached values, if origs were None
+            # Mult #################
+            if kf.orig_mult_multival is None:
+                kf.mult_multival = multival
+            else:
+                kf.mult_multival = kf.orig_mult_multival
+            # Tune #################
+            if kf.orig_tune_replace is None:
+                kf.tune_replace = tune
+            else:
+                kf.tune_replace = kf.orig_tune_replace
+            # Mode #################
+            if kf.orig_mode_replace is None:
+                kf.mode_replace = mode
+            else:
+                kf.mode_replace = kf.orig_mode_replace
+            # save new caches, in case next keyframe inherits missing
+            if kf.mult_multival is not None:
+                multival = kf.mult_multival
+            if kf.tune_replace is not None:
+                tune = kf.tune_replace
+            if kf.mode_replace is not None:
+                mode = kf.mode_replace
+
+    def has_index(self, index: int) -> int:
+        return index >=0 and index < len(self.keyframes)
+
+    def is_empty(self) -> bool:
+        return len(self.keyframes) == 0
+    
+    def clone(self):
+        cloned = ContextRefKeyframeGroup()
+        for keyframe in self.keyframes:
+            cloned.keyframes.append(keyframe.clone())
+        cloned._set_first_as_current()
+        cloned._prepare_all_keyframe_vals()
+        return cloned
+    
+    def create_list_of_dicts(self):
+        # for each keyframe, create a dict representing values relevant to TimestepKeyframe creation in ACN
+        c = []
+        for kf in self.keyframes:
+            d = {}
+            # scheduling
+            d["start_percent"] = kf.start_percent
+            d["guarantee_steps"] = kf.guarantee_steps
+            d["inherit_missing"] = kf.inherit_missing
+            # values
+            if type(kf.mult_multival) == Tensor:
+                d["strength"] = kf.mult
+                d["mask"] = kf.mult_multival
+            else:
+                if kf.mult_multival is None:
+                    d["strength"] = kf.mult
+                else:
+                    d["strength"] = kf.mult * kf.mult_multival
+                d["mask"] = None
+            d["tune"] = kf.tune_replace
+            d["mode"] = kf.mode_replace
+            # add to list
+            c.append(d)
+        return c
+
+
 class ContextRef(ContextExtra):
-    def __init__(self, start_percent: float, end_percent: float, params: ContextRefParams, mode: ContextRefMode):
+    def __init__(self, start_percent: float, end_percent: float,
+                 strength_multival: Union[float, Tensor], tune: ContextRefTune, mode: ContextRefMode,
+                 keyframe: ContextRefKeyframeGroup=None):
         super().__init__(start_percent=start_percent, end_percent=end_percent)
-        self.params = params
+        self.tune = tune
         self.mode = mode
+        self.keyframe = keyframe if keyframe else ContextRefKeyframeGroup()
+        self.version = CONTEXTREF_VERSION
+        # stuff for ACN usage
+        self.strength = 1.0
+        self.mask = None
+        self._strength_multival = strength_multival
+        self.strength_multival = strength_multival
+
+    @property
+    def strength_multival(self):
+        return self.strength_multival
+    @strength_multival.setter
+    def strength_multival(self, value):
+        if value is None:
+            value = 1.0
+        if type(value) == Tensor:
+            self.strength = 1.0
+            self.mask = value
+        else:
+            self.strength = value
+            self.mask = None
+        self._strength_multival = value
 
     def should_run(self):
         return super().should_run()
@@ -99,7 +253,8 @@ class ContextRef(ContextExtra):
 ################################
 # NaiveReuse 
 class NaiveReuseKeyframe:
-    def __init__(self, mult_multival: Union[float, Tensor], start_percent=0.0, guarantee_steps=1):
+    def __init__(self, mult=1.0, mult_multival: Union[float, Tensor]=1.0, start_percent=0.0, guarantee_steps=1):
+        self.mult = mult
         self.mult_multival = mult_multival
         # scheduling
         self.start_percent = float(start_percent)
@@ -107,7 +262,7 @@ class NaiveReuseKeyframe:
         self.guarantee_steps = guarantee_steps
     
     def clone(self):
-        c = NaiveReuseKeyframe(mult_multival=self.mult_multival,
+        c = NaiveReuseKeyframe(mult=self.mult, mult_multival=self.mult_multival,
                                start_percent=self.start_percent, guarantee_steps=self.guarantee_steps)
         c.start_t = self.start_t
         return c
@@ -187,6 +342,12 @@ class NaiveReuseKeyframeGroup:
     
     # properties shadow those of NaiveReuseKeyframe
     @property
+    def mult(self):
+        if self._current_keyframe != None:
+            return self._current_keyframe.mult
+        return 1.0
+
+    @property
     def mult_multival(self):
         if self._current_keyframe != None:
             return self._current_keyframe.mult_multival
@@ -218,7 +379,7 @@ class NaiveReuse(ContextExtra):
 
     def get_effective_weighted_mean(self, x: Tensor, idxs: list[int]):
         if self.orig_multival is None and self.keyframe.mult_multival is None:
-            return self.weighted_mean
+            return self.weighted_mean * self.keyframe.mult
         # check if keyframe changed
         keyframe_changed = False
         if self.keyframe._current_keyframe != self._prev_keyframe:
@@ -226,14 +387,14 @@ class NaiveReuse(ContextExtra):
         self._prev_keyframe = self.keyframe._current_keyframe
 
         if type(self.orig_multival) != Tensor and type(self.keyframe.mult_multival) != Tensor:
-            return self.weighted_mean * get_combined_multival(self.orig_multival, self.keyframe.mult_multival)
+            return self.weighted_mean * self.keyframe.mult * get_combined_multival(self.orig_multival, self.keyframe.mult_multival)
 
         if self.mask is None or keyframe_changed or self.mask.shape[0] != x.shape[0] or self.mask.shape[-1] != x.shape[-1] or self.mask.shape[-2] != x.shape[-2]:
             del self.mask
             real_mult_multival = resize_multival(self.keyframe.mult_multival, batch_size=x.shape[0], height=x.shape[-1], width=x.shape[-2])
             self.mask = resize_multival(self.orig_multival, batch_size=x.shape[0], height=x.shape[-1], width=x.shape[-2])
             self.mask = get_combined_multival(self.mask, real_mult_multival)
-        return self.weighted_mean * self.mask[idxs].to(dtype=x.dtype, device=x.device)
+        return self.weighted_mean * self.keyframe.mult * self.mask[idxs].to(dtype=x.dtype, device=x.device)
 
     def should_run(self):
         to_return = super().should_run()
@@ -241,7 +402,7 @@ class NaiveReuse(ContextExtra):
         if self.keyframe.mult_multival is not None and type(self.keyframe.mult_multival) != Tensor and math.isclose(self.keyframe.mult_multival, 0.0):
             return False
         # if weighted_mean is 0.0, then reuse will take no effect anyway
-        return to_return and self.weighted_mean > 0.0
+        return to_return and self.weighted_mean > 0.0 and self.keyframe.mult > 0.0
 #--------------------------------
 
 
