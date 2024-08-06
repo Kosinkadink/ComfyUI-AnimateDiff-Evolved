@@ -511,9 +511,14 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                         iter_model = model.model
                     else:
                         iter_model = model
+                    current_device = None
+                    if hasattr(model, "current_device"): # backwards compatibility, for now
+                        current_device = model.current_device
+                    else:
+                        current_device = model.model.device
                     iter_kwargs[IterationOptions.SAMPLER] = comfy.samplers.KSampler(
                         iter_model, steps=999, #steps=args[-7],
-                        device=model.current_device, sampler=args[-5],
+                        device=current_device, sampler=args[-5],
                         scheduler=args[-4], denoise=kwargs.get("denoise", None),
                         model_options=model.model_options)
                     del iter_model

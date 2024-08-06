@@ -36,7 +36,7 @@ from .sample_settings import SampleSettings, SeedNoiseGeneration
 class ModelPatcherAndInjector(ModelPatcher):
     def __init__(self, m: ModelPatcher):
         # replicate ModelPatcher.clone() to initialize ModelPatcherAndInjector
-        super().__init__(m.model, m.load_device, m.offload_device, m.size, m.current_device, weight_inplace_update=m.weight_inplace_update)
+        super().__init__(m.model, m.load_device, m.offload_device, m.size, weight_inplace_update=m.weight_inplace_update)
         self.patches = {}
         for k in m.patches:
             self.patches[k] = m.patches[k][:]
@@ -439,7 +439,7 @@ class CLIPWithHooks(CLIP):
 class ModelPatcherCLIPHooks(ModelPatcher):
     def __init__(self, m: ModelPatcher):
         # replicate ModelPatcher.clone() to initialize
-        super().__init__(m.model, m.load_device, m.offload_device, m.size, m.current_device, weight_inplace_update=m.weight_inplace_update)
+        super().__init__(m.model, m.load_device, m.offload_device, m.size, weight_inplace_update=m.weight_inplace_update)
         self.patches = {}
         for k in m.patches:
             self.patches[k] = m.patches[k][:]
@@ -1023,7 +1023,7 @@ class MotionModelPatcher(ModelPatcher):
 
     def clone(self):
         # normal ModelPatcher clone actions
-        n = MotionModelPatcher(self.model, self.load_device, self.offload_device, self.size, self.current_device, weight_inplace_update=self.weight_inplace_update)
+        n = MotionModelPatcher(self.model, self.load_device, self.offload_device, self.size, weight_inplace_update=self.weight_inplace_update)
         n.patches = {}
         for k in self.patches:
             n.patches[k] = self.patches[k][:]
@@ -1131,7 +1131,7 @@ class MotionModelGroup:
 
 
 def get_vanilla_model_patcher(m: ModelPatcher) -> ModelPatcher:
-    model = ModelPatcher(m.model, m.load_device, m.offload_device, m.size, m.current_device, weight_inplace_update=m.weight_inplace_update)
+    model = ModelPatcher(m.model, m.load_device, m.offload_device, m.size, weight_inplace_update=m.weight_inplace_update)
     model.patches = {}
     for k in m.patches:
         model.patches[k] = m.patches[k][:]
