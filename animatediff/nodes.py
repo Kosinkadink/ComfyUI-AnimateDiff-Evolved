@@ -31,7 +31,7 @@ from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniform
                             VisualizeContextOptionsK, VisualizeContextOptionsKAdv, VisualizeContextOptionsSCustom)
 from .nodes_context_extras import (SetContextExtrasOnContextOptions, ContextExtras_NaiveReuse, ContextExtras_ContextRef,
                             ContextRef_ModeFirst, ContextRef_ModeSliding, ContextRef_ModeIndexes,
-                            ContextRef_TuneAttn, ContextRef_TuneAttnAdain, ContextRef_KeyframeMultivalNode,
+                            ContextRef_TuneAttn, ContextRef_TuneAttnAdain, ContextRef_KeyframeMultivalNode, ContextRef_KeyframeInterpolationNode,
                             NaiveReuse_KeyframeMultivalNode)
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
@@ -83,6 +83,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_ContextExtras_ContextRef_TuneAttn": ContextRef_TuneAttn,
     "ADE_ContextExtras_ContextRef_TuneAttnAdain": ContextRef_TuneAttnAdain,
     "ADE_ContextExtras_ContextRef_Keyframe": ContextRef_KeyframeMultivalNode,
+    "ADE_ContextExtras_ContextRef_KeyframeInterpolation": ContextRef_KeyframeInterpolationNode,
     "ADE_ContextExtras_NaiveReuse": ContextExtras_NaiveReuse,
     "ADE_ContextExtras_NaiveReuse_Keyframe": NaiveReuse_KeyframeMultivalNode,
     #------------------------------------------------------------------------------
@@ -228,6 +229,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_ContextExtras_ContextRef_TuneAttn": "ContextRef Tune◆Attn 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_TuneAttnAdain": "ContextRef Tune◆Attn+Adain 🎭🅐🅓",
     "ADE_ContextExtras_ContextRef_Keyframe": "ContextRef Keyframe 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_KeyframeInterpolation": "ContextRef Keyframe Interp. 🎭🅐🅓",
     "ADE_ContextExtras_NaiveReuse": "Context Extras◆NaiveReuse 🎭🅐🅓",
     "ADE_ContextExtras_NaiveReuse_Keyframe": "NaiveReuse Keyframe 🎭🅐🅓",
     #------------------------------------------------------------------------------
@@ -246,7 +248,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SetLoraHookKeyframe": "Set LoRA Hook Keyframes 🎭🅐🅓",
     "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
     "ADE_LoraHookKeyframe": "LoRA Hook Keyframe 🎭🅐🅓",
-    "ADE_LoraHookKeyframeInterpolation": "LoRA Hook Keyframes Interpolation 🎭🅐🅓",
+    "ADE_LoraHookKeyframeInterpolation": "LoRA Hook Keyframes Interp. 🎭🅐🅓",
     "ADE_LoraHookKeyframeFromStrengthList": "LoRA Hook Keyframes From List 🎭🅐🅓",
     "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
     "ADE_PairedConditioningSetMask": "Set Props on Conds 🎭🅐🅓",
@@ -278,7 +280,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_CustomCFG": "Custom CFG [Multival] 🎭🅐🅓",
     "ADE_CustomCFGKeyframeSimple": "Custom CFG Keyframe 🎭🅐🅓",
     "ADE_CustomCFGKeyframe": "Custom CFG Keyframe [Multival] 🎭🅐🅓",
-    "ADE_CustomCFGKeyframeInterpolation": "Custom CFG Keyframes Interpolation 🎭🅐🅓",
+    "ADE_CustomCFGKeyframeInterpolation": "Custom CFG Keyframes Interp. 🎭🅐🅓",
     "ADE_CustomCFGKeyframeFromList": "Custom CFG Keyframes From List 🎭🅐🅓",
     "ADE_CFGExtrasPAGSimple": "CFG Extras◆PAG 🎭🅐🅓",
     "ADE_CFGExtrasPAG": "CFG Extras◆PAG [Multival] 🎭🅐🅓",
@@ -287,7 +289,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SigmaSchedule": "Create Sigma Schedule 🎭🅐🅓",
     "ADE_RawSigmaSchedule": "Create Raw Sigma Schedule 🎭🅐🅓",
     "ADE_SigmaScheduleWeightedAverage": "Sigma Schedule Weighted Mean 🎭🅐🅓",
-    "ADE_SigmaScheduleWeightedAverageInterp": "Sigma Schedule Interpolated Mean 🎭🅐🅓",
+    "ADE_SigmaScheduleWeightedAverageInterp": "Sigma Schedule Interp. Mean 🎭🅐🅓",
     "ADE_SigmaScheduleSplitAndCombine": "Sigma Schedule Split Combine 🎭🅐🅓",
     "ADE_SigmaScheduleToSigmas": "Sigma Schedule To Sigmas 🎭🅐🅓",
     "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",

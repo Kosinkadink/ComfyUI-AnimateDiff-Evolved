@@ -337,6 +337,7 @@ class CustomCFGKeyframeInterpolationNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
             }
         }
     

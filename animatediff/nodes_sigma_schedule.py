@@ -101,6 +101,9 @@ class InterpolatedWeightedAverageSigmaScheduleNode:
                 "weight_A_Start": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "weight_A_End": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "interpolation": (InterpolationMethod._LIST,),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
             }
         }
     

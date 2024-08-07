@@ -5,8 +5,9 @@ from .context import (ContextOptionsGroup)
 from .context_extras import (ContextExtrasGroup,
                              ContextRef, ContextRefTune, ContextRefMode, ContextRefKeyframeGroup, ContextRefKeyframe,
                              NaiveReuse, NaiveReuseKeyframe, NaiveReuseKeyframeGroup)
-from .utils_model import BIGMAX
+from .utils_model import BIGMAX, InterpolationMethod
 from .utils_scheduling import convert_str_to_indexes
+from .logger import logger
 
 
 class SetContextExtrasOnContextOptions:
@@ -168,7 +169,8 @@ class ContextRef_KeyframeMultivalNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/contextref"
     FUNCTION = "create_keyframe"
 
-    def create_keyframe(self, prev_kf=None, mult=1.0, mult_multival=1.0, mode_replace=None, tune_replace=None,
+    def create_keyframe(self, prev_kf: ContextRefKeyframeGroup=None,
+                        mult=1.0, mult_multival=1.0, mode_replace=None, tune_replace=None,
                         start_percent=1.0, guarantee_steps=1, inherit_missing=True):
         if prev_kf is None:
             prev_kf = ContextRefKeyframeGroup()
@@ -176,6 +178,58 @@ class ContextRef_KeyframeMultivalNode:
         kf = ContextRefKeyframe(mult=mult, mult_multival=mult_multival, tune_replace=tune_replace, mode_replace=mode_replace,
                                 start_percent=start_percent, guarantee_steps=guarantee_steps, inherit_missing=inherit_missing)
         prev_kf.add(kf)
+        return (prev_kf,)
+
+
+class ContextRef_KeyframeInterpolationNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "mult_start": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "mult_end": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "interpolation": (InterpolationMethod._LIST, ),
+                "intervals": ("INT", {"default": 50, "min": 2, "max": 100, "step": 1}),
+                "inherit_missing": ("BOOLEAN", {"default": True}),
+                "print_keyframes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "prev_kf": ("CONTEXTREF_KEYFRAME",),
+                "mult_multival": ("MULTIVAL",),
+                "mode_replace": ("CONTEXTREF_MODE",),
+                "tune_replace": ("CONTEXTREF_TUNE",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXTREF_KEYFRAME",)
+    RETURN_NAMES = ("CONTEXTREF_KF",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/contextref"
+    FUNCTION = "create_keyframe"
+
+    def create_keyframe(self,
+                        start_percent: float, end_percent: float,
+                        mult_start: float, mult_end: float, interpolation: str, intervals: int,
+                        inherit_missing=True, prev_kf: ContextRefKeyframeGroup=None,
+                        mult_multival=1.0, mode_replace=None, tune_replace=None, print_keyframes=False):
+        if prev_kf is None:
+            prev_kf = ContextRefKeyframeGroup()
+        prev_kf = prev_kf.clone()
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=intervals, method=InterpolationMethod.LINEAR)
+        mults = InterpolationMethod.get_weights(num_from=mult_start, num_to=mult_end, length=intervals, method=interpolation)
+
+        is_first = True
+        for percent, mult in zip(percents, mults):
+            guarantee_steps = 0
+            if is_first:
+                guarantee_steps = 1
+                is_first = False
+            prev_kf.add(ContextRefKeyframe(mult=mult, mult_multival=mult_multival, tune_replace=tune_replace, mode_replace=mode_replace,
+                                           start_percent=percent, guarantee_steps=guarantee_steps, inherit_missing=inherit_missing))
+            if print_keyframes:
+                logger.info(f"ContextRefKeyframe - start_percent:{percent} = {mult}")
         return (prev_kf,)
 
 
