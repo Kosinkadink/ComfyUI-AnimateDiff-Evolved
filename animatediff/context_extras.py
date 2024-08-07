@@ -106,9 +106,6 @@ class ContextRefKeyframe:
     def clone(self):
         c = ContextRefKeyframe(mult=self.mult, mult_multival=self.orig_mult_multival, tune_replace=self.orig_tune_replace, mode_replace=self.orig_mode_replace,
                                start_percent=self.start_percent, guarantee_steps=self.guarantee_steps, inherit_missing=self.inherit_missing)
-        c.mult_multival = self.mult_multival
-        c.tune_replace = self.tune_replace
-        c.mode_replace = self.mode_replace
         return c
 
 
@@ -253,19 +250,22 @@ class ContextRef(ContextExtra):
 ################################
 # NaiveReuse 
 class NaiveReuseKeyframe:
-    def __init__(self, mult=1.0, mult_multival: Union[float, Tensor]=1.0, start_percent=0.0, guarantee_steps=1):
+    def __init__(self, mult=1.0, mult_multival: Union[float, Tensor]=None, start_percent=0.0, guarantee_steps=1, inherit_missing=True):
         self.mult = mult
+        self.orig_mult_multival = mult_multival
         self.mult_multival = mult_multival
         # scheduling
         self.start_percent = float(start_percent)
         self.start_t = 999999999.9
         self.guarantee_steps = guarantee_steps
+        self.inherit_missing = inherit_missing
     
     def clone(self):
         c = NaiveReuseKeyframe(mult=self.mult, mult_multival=self.mult_multival,
                                start_percent=self.start_percent, guarantee_steps=self.guarantee_steps)
         c.start_t = self.start_t
         return c
+
 
 class NaiveReuseKeyframeGroup:
     def __init__(self):
@@ -286,13 +286,32 @@ class NaiveReuseKeyframeGroup:
         self.keyframes.append(keyframe)
         self.keyframes = get_sorted_list_via_attr(self.keyframes, "start_percent")
         self._set_first_as_current()
+        self._prepare_all_keyframe_vals()
 
     def _set_first_as_current(self):
         if len(self.keyframes) > 0:
             self._current_keyframe = self.keyframes[0]
         else:
             self._current_keyframe = None
-    
+
+    def _prepare_all_keyframe_vals(self):
+        if self.is_empty():
+            return
+        multival = None
+        for kf in self.keyframes:
+            # if shouldn't inherit, clear cache
+            if not kf.inherit_missing:
+                multival = None
+            # assign cached values, if origs were None
+            # Mult #################
+            if kf.orig_mult_multival is None:
+                kf.mult_multival = multival
+            else:
+                kf.mult_multival = kf.orig_mult_multival
+            # save new caches, in case next keyframe inherits missing
+            if kf.mult_multival is not None:
+                multival = kf.mult_multival
+
     def has_index(self, index: int) -> int:
         return index >=0 and index < len(self.keyframes)
 
@@ -304,6 +323,7 @@ class NaiveReuseKeyframeGroup:
         for keyframe in self.keyframes:
             cloned.keyframes.append(keyframe)
         cloned._set_first_as_current()
+        cloned._prepare_all_keyframe_vals()
         return cloned
     
     def initialize_timesteps(self, model: BaseModel):
@@ -352,6 +372,7 @@ class NaiveReuseKeyframeGroup:
         if self._current_keyframe != None:
             return self._current_keyframe.mult_multival
         return None
+
 
 class NaiveReuse(ContextExtra):
     def __init__(self, start_percent: float, end_percent: float, weighted_mean: float, multival_opt: Union[float, Tensor]=None, naivereuse_kf: NaiveReuseKeyframeGroup=None):

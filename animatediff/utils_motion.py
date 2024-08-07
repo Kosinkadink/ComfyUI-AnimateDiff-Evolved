@@ -276,10 +276,12 @@ def create_multival_combo(float_val: Union[float, list[float]], mask_optional: T
 
 
 def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[float, Tensor], force_leader_A=False) -> Union[float, Tensor]:
+    if multivalA is None and multivalB is None:
+        return 1.0
     # if one is None, use the other
-    if multivalA == None:
+    if multivalA is None:
         return multivalB
-    elif multivalB == None:
+    elif multivalB is None:
         return multivalA 
     # both have a value - combine them based on type
     # if both are Tensors, make dims match before multiplying
@@ -306,7 +308,7 @@ def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[floa
 
 
 def resize_multival(multival: Union[float, Tensor], batch_size: int, height: int, width: int):
-    if multival == None:
+    if multival is None:
         return 1.0
     if type(multival) != Tensor:
         return multival

@@ -1,5 +1,6 @@
 from torch import Tensor
 from typing import Union
+from collections.abc import Iterable
 
 from .context import (ContextOptionsGroup)
 from .context_extras import (ContextExtrasGroup,
@@ -81,6 +82,7 @@ class NaiveReuse_KeyframeMultivalNode:
                 "mult": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+                "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -90,13 +92,116 @@ class NaiveReuse_KeyframeMultivalNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/naivereuse"
     FUNCTION = "create_keyframe"
 
-    def create_keyframe(self, prev_kf=None, mult=1.0, mult_multival=1.0,
-                        start_percent=0.0, guarantee_steps=1):
+    def create_keyframe(self, prev_kf=None, mult=1.0, mult_multival=None,
+                        start_percent=0.0, guarantee_steps=1, inherit_missing=True):
         if prev_kf is None:
             prev_kf = NaiveReuseKeyframeGroup()
         prev_kf = prev_kf.clone()
-        kf = NaiveReuseKeyframe(mult=mult, mult_multival=mult_multival, start_percent=start_percent, guarantee_steps=guarantee_steps)
+        kf = NaiveReuseKeyframe(mult=mult, mult_multival=mult_multival,
+                                start_percent=start_percent, guarantee_steps=guarantee_steps, inherit_missing=inherit_missing)
         prev_kf.add(kf)
+        return (prev_kf,)
+
+
+class NaiveReuse_KeyframeInterpolationNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "mult_start": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "mult_end": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "interpolation": (InterpolationMethod._LIST, ),
+                "intervals": ("INT", {"default": 50, "min": 2, "max": 100, "step": 1}),
+                "inherit_missing": ("BOOLEAN", {"default": True}),
+                "print_keyframes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "prev_kf": ("NAIVEREUSE_KEYFRAME",),
+                "mult_multival": ("MULTIVAL",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+            }
+        }
+    
+    RETURN_TYPES = ("NAIVEREUSE_KEYFRAME",)
+    RETURN_NAMES = ("NAIVEREUSE_KF",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/naivereuse"
+    FUNCTION = "create_keyframe"
+
+    def create_keyframe(self,
+                        start_percent: float, end_percent: float,
+                        mult_start: float, mult_end: float, interpolation: str, intervals: int,
+                        inherit_missing=True, prev_kf: NaiveReuseKeyframeGroup=None,
+                        mult_multival=None, print_keyframes=False):
+        if prev_kf is None:
+            prev_kf = NaiveReuseKeyframeGroup()
+        prev_kf = prev_kf.clone()
+        prev_kf = prev_kf.clone()
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=intervals, method=InterpolationMethod.LINEAR)
+        mults = InterpolationMethod.get_weights(num_from=mult_start, num_to=mult_end, length=intervals, method=interpolation)
+
+        is_first = True
+        for percent, mult in zip(percents, mults):
+            guarantee_steps = 0
+            if is_first:
+                guarantee_steps = 1
+                is_first = False
+            prev_kf.add(NaiveReuseKeyframe(mult=mult, mult_multival=mult_multival,
+                                           start_percent=percent, guarantee_steps=guarantee_steps, inherit_missing=inherit_missing))
+            if print_keyframes:
+                logger.info(f"NaiveReuseKeyframe - start_percent:{percent} = {mult}")
+        return (prev_kf,)
+
+
+class NaiveReuse_KeyframeFromListNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "mults_float": ("FLOAT", {"default": -1, "min": -1, "step": 0.001, "forceInput": True}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "inherit_missing": ("BOOLEAN", {"default": True}),
+                "print_keyframes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "prev_kf": ("NAIVEREUSE_KEYFRAME",),
+                "mult_multival": ("MULTIVAL",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
+        }
+    
+    RETURN_TYPES = ("NAIVEREUSE_KEYFRAME",)
+    RETURN_NAMES = ("NAIVEREUSE_KF",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/naivereuse"
+    FUNCTION = "create_keyframe"
+
+    def create_keyframe(self, mults_float: Union[float, list[float]],
+                        start_percent: float, end_percent: float,
+                        inherit_missing=True, prev_kf: NaiveReuseKeyframeGroup=None,
+                        mult_multival=None, print_keyframes=False):
+        if prev_kf is None:
+            prev_kf = NaiveReuseKeyframeGroup()
+        prev_kf = prev_kf.clone()
+        if type(mults_float) in (float, int):
+            mults_float = [float(mults_float)]
+        elif isinstance(mults_float, Iterable):
+            pass
+        else:
+            raise Exception(f"strengths_float must be either an interable input or a float, but was {type(mults_float).__repr__}.")
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=len(mults_float), method=InterpolationMethod.LINEAR)
+        
+        is_first = True
+        for percent, mult in zip(percents, mults_float):
+            guarantee_steps = 0
+            if is_first:
+                guarantee_steps = 1
+                is_first = False
+            prev_kf.add(NaiveReuseKeyframe(mult=mult, mult_multival=mult_multival,
+                                           start_percent=percent, guarantee_steps=guarantee_steps, inherit_missing=inherit_missing))
+            if print_keyframes:
+                logger.info(f"NaiveReuseKeyframe - start_percent:{percent} = {mult}")
         return (prev_kf,)
 #----------------------------------------
 #########################################
@@ -170,7 +275,7 @@ class ContextRef_KeyframeMultivalNode:
     FUNCTION = "create_keyframe"
 
     def create_keyframe(self, prev_kf: ContextRefKeyframeGroup=None,
-                        mult=1.0, mult_multival=1.0, mode_replace=None, tune_replace=None,
+                        mult=1.0, mult_multival=None, mode_replace=None, tune_replace=None,
                         start_percent=1.0, guarantee_steps=1, inherit_missing=True):
         if prev_kf is None:
             prev_kf = ContextRefKeyframeGroup()
@@ -213,7 +318,7 @@ class ContextRef_KeyframeInterpolationNode:
                         start_percent: float, end_percent: float,
                         mult_start: float, mult_end: float, interpolation: str, intervals: int,
                         inherit_missing=True, prev_kf: ContextRefKeyframeGroup=None,
-                        mult_multival=1.0, mode_replace=None, tune_replace=None, print_keyframes=False):
+                        mult_multival=None, mode_replace=None, tune_replace=None, print_keyframes=False):
         if prev_kf is None:
             prev_kf = ContextRefKeyframeGroup()
         prev_kf = prev_kf.clone()
@@ -222,6 +327,59 @@ class ContextRef_KeyframeInterpolationNode:
 
         is_first = True
         for percent, mult in zip(percents, mults):
+            guarantee_steps = 0
+            if is_first:
+                guarantee_steps = 1
+                is_first = False
+            prev_kf.add(ContextRefKeyframe(mult=mult, mult_multival=mult_multival, tune_replace=tune_replace, mode_replace=mode_replace,
+                                           start_percent=percent, guarantee_steps=guarantee_steps, inherit_missing=inherit_missing))
+            if print_keyframes:
+                logger.info(f"ContextRefKeyframe - start_percent:{percent} = {mult}")
+        return (prev_kf,)
+
+
+class ContextRef_KeyframeFromListNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "mults_float": ("FLOAT", {"default": -1, "min": -1, "step": 0.001, "forceInput": True}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "inherit_missing": ("BOOLEAN", {"default": True}),
+                "print_keyframes": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "prev_kf": ("CONTEXTREF_KEYFRAME",),
+                "mult_multival": ("MULTIVAL",),
+                "mode_replace": ("CONTEXTREF_MODE",),
+                "tune_replace": ("CONTEXTREF_TUNE",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONTEXTREF_KEYFRAME",)
+    RETURN_NAMES = ("CONTEXTREF_KF",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras/contextref"
+    FUNCTION = "create_keyframe"
+
+    def create_keyframe(self, mults_float: Union[float, list[float]],
+                        start_percent: float, end_percent: float,
+                        inherit_missing=True, prev_kf: ContextRefKeyframeGroup=None,
+                        mult_multival=None, mode_replace=None, tune_replace=None, print_keyframes=False):
+        if prev_kf is None:
+            prev_kf = ContextRefKeyframeGroup()
+        prev_kf = prev_kf.clone()
+        if type(mults_float) in (float, int):
+            mults_float = [float(mults_float)]
+        elif isinstance(mults_float, Iterable):
+            pass
+        else:
+            raise Exception(f"strengths_float must be either an interable input or a float, but was {type(mults_float).__repr__}.")
+        percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=len(mults_float), method=InterpolationMethod.LINEAR)
+        
+        is_first = True
+        for percent, mult in zip(percents, mults_float):
             guarantee_steps = 0
             if is_first:
                 guarantee_steps = 1
