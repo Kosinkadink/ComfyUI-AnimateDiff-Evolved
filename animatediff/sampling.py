@@ -849,10 +849,11 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
                 refcn.prepare_current_timestep(timestep)
                 if not refcn.should_run():
                     actually_should_run = False
-                    break
             if actually_should_run:
                 contextref_active = True
-                contextref_mode = ADGS.params.context_options.extras.context_ref.mode
+                for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
+                    # get mode_override if present, mode otherwise
+                    contextref_mode = refcn.get_contextref_mode_replace() or ADGS.params.context_options.extras.context_ref.mode
                 contextref_idxs_set = contextref_mode.indexes.copy()
                 # use injector to ensure only 1 cond or uncond will be batched at a time
                 contextref_injector = ContextRefInjector()

@@ -6,6 +6,7 @@ from comfy.model_patcher import ModelPatcher
 
 from .context import (ContextFuseMethod, ContextOptions, ContextOptionsGroup, ContextSchedules,
                       generate_context_visualization)
+from .model_injection import ModelPatcherAndInjector
 from .utils_model import BIGMAX, MAX_RESOLUTION
 
 
@@ -378,7 +379,7 @@ class VisualizeContextOptionsKAdv:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/visualize"
     FUNCTION = "visualize"
 
-    def visualize(self, model: ModelPatcher, context_opts: ContextOptionsGroup, sampler_name: str, scheduler: str,
+    def visualize(self, model: ModelPatcherAndInjector, context_opts: ContextOptionsGroup, sampler_name: str, scheduler: str,
                   visual_width: 1280, latents_length=32, steps=20, start_step=0, end_step=20):
         images = generate_context_visualization(context_opts=context_opts, model=model, width=visual_width, video_length=latents_length,
                                                 sampler_name=sampler_name, scheduler=scheduler,
@@ -408,7 +409,7 @@ class VisualizeContextOptionsK:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/visualize"
     FUNCTION = "visualize"
 
-    def visualize(self, model: ModelPatcher, context_opts: ContextOptionsGroup, sampler_name: str, scheduler: str,
+    def visualize(self, model: ModelPatcherAndInjector, context_opts: ContextOptionsGroup, sampler_name: str, scheduler: str,
                   visual_width: 1280, latents_length=32, steps=20, denoise=1.0):
         images = generate_context_visualization(context_opts=context_opts, model=model, width=visual_width, video_length=latents_length,
                                                 sampler_name=sampler_name, scheduler=scheduler,
@@ -435,7 +436,7 @@ class VisualizeContextOptionsSCustom:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/visualize"
     FUNCTION = "visualize"
 
-    def visualize(self, model: ModelPatcher, context_opts: ContextOptionsGroup, sigmas,
+    def visualize(self, model: ModelPatcherAndInjector, context_opts: ContextOptionsGroup, sigmas,
                   visual_width: 1280, latents_length=32):
         images = generate_context_visualization(context_opts=context_opts, model=model, width=visual_width, video_length=latents_length,
                                                 sigmas=sigmas)
