@@ -75,6 +75,7 @@ NOTE: you can also use custom locations for models/motion loras by making use of
 - Per-frame GLIGEN coordinates control
      - Currently requires GLIGENTextBoxApplyBatch from KJNodes to do so, but I will add native nodes to do this soon.
 - Image Injection mid-sampling
+- ContextRef and NaiveReuse (novel cross-context consistency techniques)
 
 ## Upcoming Features
 - Example workflows for **every feature** in AnimateDiff-Evolved repo, and hopefully a long Youtube video showing all features (Goal: before Elden Ring DLC releases. Working on it right now.)
