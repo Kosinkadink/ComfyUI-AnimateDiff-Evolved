@@ -843,6 +843,13 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
         if ADGS.params.context_options.extras.should_run_context_ref():
+            # check that ACN provided ContextRef as requested
+            temp_refcn_list = model_options["transformer_options"].get(CONTEXTREF_CONTROL_LIST_ALL, None)
+            if temp_refcn_list is None:
+                raise Exception("Advanced-ControlNet nodes are either missing or too outdated to support ContextRef. Update/install ComfyUI-Advanced-ControlNet to use ContextRef.")
+            if len(temp_refcn_list) == 0:
+                raise Exception("Unexpected ContextRef issue; Advanced-ControlNet did not provide any ContextRef objs for AnimateDiff-Evolved.")
+            del temp_refcn_list
             # check if ContextRef ReferenceAdvanced ACN objs should_run
             actually_should_run = True
             for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
