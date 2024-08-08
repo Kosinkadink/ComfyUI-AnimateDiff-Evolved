@@ -337,6 +337,7 @@ class CreateLoraHookKeyframeInterpolation:
             },
             "optional": {
                 "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
             }
         }
     

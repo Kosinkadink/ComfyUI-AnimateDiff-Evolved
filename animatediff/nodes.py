@@ -29,6 +29,11 @@ from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, Weig
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode,
                             VisualizeContextOptionsK, VisualizeContextOptionsKAdv, VisualizeContextOptionsSCustom)
+from .nodes_context_extras import (SetContextExtrasOnContextOptions, ContextExtras_NaiveReuse, ContextExtras_ContextRef,
+                            ContextRef_ModeFirst, ContextRef_ModeSliding, ContextRef_ModeIndexes,
+                            ContextRef_TuneAttn, ContextRef_TuneAttnAdain,
+                            ContextRef_KeyframeMultivalNode, ContextRef_KeyframeInterpolationNode, ContextRef_KeyframeFromListNode,
+                            NaiveReuse_KeyframeMultivalNode, NaiveReuse_KeyframeInterpolationNode, NaiveReuse_KeyframeFromListNode)
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
                                 WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
@@ -54,13 +59,15 @@ NODE_CLASS_MAPPINGS = {
     "ADE_MultivalDynamicFloatInput": MultivalDynamicFloatInputNode,
     "ADE_MultivalScaledMask": MultivalScaledMaskNode,
     "ADE_MultivalConvertToMask": MultivalConvertToMaskNode,
+    ###############################################################################
+    #------------------------------------------------------------------------------
     # Context Opts
     "ADE_StandardStaticContextOptions": StandardStaticContextOptionsNode,
     "ADE_StandardUniformContextOptions": StandardUniformContextOptionsNode,
     "ADE_LoopedUniformContextOptions": LoopedUniformContextOptionsNode,
     "ADE_ViewsOnlyContextOptions": ViewAsContextOptionsNode,
     "ADE_BatchedContextOptions": BatchedContextOptionsNode,
-    "ADE_AnimateDiffUniformContextOptions": LegacyLoopedUniformContextOptionsNode, # Legacy
+    "ADE_AnimateDiffUniformContextOptions": LegacyLoopedUniformContextOptionsNode, # Legacy/Deprecated
     "ADE_VisualizeContextOptionsK": VisualizeContextOptionsK,
     "ADE_VisualizeContextOptionsKAdv": VisualizeContextOptionsKAdv,
     "ADE_VisualizeContextOptionsSCustom": VisualizeContextOptionsSCustom,
@@ -68,6 +75,23 @@ NODE_CLASS_MAPPINGS = {
     "ADE_StandardStaticViewOptions": StandardStaticViewOptionsNode,
     "ADE_StandardUniformViewOptions": StandardUniformViewOptionsNode,
     "ADE_LoopedUniformViewOptions": LoopedUniformViewOptionsNode,
+    # Context Extras
+    "ADE_ContextExtras_Set": SetContextExtrasOnContextOptions,
+    "ADE_ContextExtras_ContextRef": ContextExtras_ContextRef,
+    "ADE_ContextExtras_ContextRef_ModeFirst": ContextRef_ModeFirst,
+    "ADE_ContextExtras_ContextRef_ModeSliding": ContextRef_ModeSliding,
+    "ADE_ContextExtras_ContextRef_ModeIndexes": ContextRef_ModeIndexes,
+    "ADE_ContextExtras_ContextRef_TuneAttn": ContextRef_TuneAttn,
+    "ADE_ContextExtras_ContextRef_TuneAttnAdain": ContextRef_TuneAttnAdain,
+    "ADE_ContextExtras_ContextRef_Keyframe": ContextRef_KeyframeMultivalNode,
+    "ADE_ContextExtras_ContextRef_KeyframeInterpolation": ContextRef_KeyframeInterpolationNode,
+    "ADE_ContextExtras_ContextRef_KeyframeFromList": ContextRef_KeyframeFromListNode,
+    "ADE_ContextExtras_NaiveReuse": ContextExtras_NaiveReuse,
+    "ADE_ContextExtras_NaiveReuse_Keyframe": NaiveReuse_KeyframeMultivalNode,
+    "ADE_ContextExtras_NaiveReuse_KeyframeInterpolation": NaiveReuse_KeyframeInterpolationNode,
+    "ADE_ContextExtras_NaiveReuse_KeyframeFromList": NaiveReuse_KeyframeFromListNode,
+    #------------------------------------------------------------------------------
+    ###############################################################################
     # Iteration Opts
     "ADE_IterationOptsDefault": IterationOptionsNode,
     "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
@@ -184,13 +208,15 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_MultivalDynamicFloatInput": "Multival [Float List] 🎭🅐🅓",
     "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",
     "ADE_MultivalConvertToMask": "Multival to Mask 🎭🅐🅓",
+    ###############################################################################
+    #------------------------------------------------------------------------------
     # Context Opts
     "ADE_StandardStaticContextOptions": "Context Options◆Standard Static 🎭🅐🅓",
     "ADE_StandardUniformContextOptions": "Context Options◆Standard Uniform 🎭🅐🅓",
     "ADE_LoopedUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓",
     "ADE_ViewsOnlyContextOptions": "Context Options◆Views Only [VRAM⇈] 🎭🅐🅓",
     "ADE_BatchedContextOptions": "Context Options◆Batched [Non-AD] 🎭🅐🅓",
-    "ADE_AnimateDiffUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓", # Legacy
+    "ADE_AnimateDiffUniformContextOptions": "Context Options◆Looped Uniform 🎭🅐🅓", # Legacy/Deprecated
     "ADE_VisualizeContextOptionsK": "Visualize Context Options (K.) 🎭🅐🅓",
     "ADE_VisualizeContextOptionsKAdv": "Visualize Context Options (K.Adv.) 🎭🅐🅓",
     "ADE_VisualizeContextOptionsSCustom": "Visualize Context Options (S.Cus.) 🎭🅐🅓",
@@ -198,6 +224,23 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_StandardStaticViewOptions": "View Options◆Standard Static 🎭🅐🅓",
     "ADE_StandardUniformViewOptions": "View Options◆Standard Uniform 🎭🅐🅓",
     "ADE_LoopedUniformViewOptions": "View Options◆Looped Uniform 🎭🅐🅓",
+    # Context Extras
+    "ADE_ContextExtras_Set": "Set Context Extras 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef": "Context Extras◆ContextRef 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_ModeFirst": "ContextRef Mode◆First 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_ModeSliding": "ContextRef Mode◆Sliding 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_ModeIndexes": "ContextRef Mode◆Indexes 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_TuneAttn": "ContextRef Tune◆Attn 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_TuneAttnAdain": "ContextRef Tune◆Attn+Adain 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_Keyframe": "ContextRef Keyframe 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_KeyframeInterpolation": "ContextRef Keyframes Interp. 🎭🅐🅓",
+    "ADE_ContextExtras_ContextRef_KeyframeFromList": "ContextRef Keyframes From List 🎭🅐🅓",
+    "ADE_ContextExtras_NaiveReuse": "Context Extras◆NaiveReuse 🎭🅐🅓",
+    "ADE_ContextExtras_NaiveReuse_Keyframe": "NaiveReuse Keyframe 🎭🅐🅓",
+    "ADE_ContextExtras_NaiveReuse_KeyframeInterpolation": "NaiveReuse Keyframes Interp. 🎭🅐🅓",
+    "ADE_ContextExtras_NaiveReuse_KeyframeFromList": "NaiveReuse Keyframes From List 🎭🅐🅓",
+    #------------------------------------------------------------------------------
+    ###############################################################################
     # Iteration Opts
     "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
     "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",
@@ -212,7 +255,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SetLoraHookKeyframe": "Set LoRA Hook Keyframes 🎭🅐🅓",
     "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
     "ADE_LoraHookKeyframe": "LoRA Hook Keyframe 🎭🅐🅓",
-    "ADE_LoraHookKeyframeInterpolation": "LoRA Hook Keyframes Interpolation 🎭🅐🅓",
+    "ADE_LoraHookKeyframeInterpolation": "LoRA Hook Keyframes Interp. 🎭🅐🅓",
     "ADE_LoraHookKeyframeFromStrengthList": "LoRA Hook Keyframes From List 🎭🅐🅓",
     "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
     "ADE_PairedConditioningSetMask": "Set Props on Conds 🎭🅐🅓",
@@ -244,7 +287,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_CustomCFG": "Custom CFG [Multival] 🎭🅐🅓",
     "ADE_CustomCFGKeyframeSimple": "Custom CFG Keyframe 🎭🅐🅓",
     "ADE_CustomCFGKeyframe": "Custom CFG Keyframe [Multival] 🎭🅐🅓",
-    "ADE_CustomCFGKeyframeInterpolation": "Custom CFG Keyframes Interpolation 🎭🅐🅓",
+    "ADE_CustomCFGKeyframeInterpolation": "Custom CFG Keyframes Interp. 🎭🅐🅓",
     "ADE_CustomCFGKeyframeFromList": "Custom CFG Keyframes From List 🎭🅐🅓",
     "ADE_CFGExtrasPAGSimple": "CFG Extras◆PAG 🎭🅐🅓",
     "ADE_CFGExtrasPAG": "CFG Extras◆PAG [Multival] 🎭🅐🅓",
@@ -253,7 +296,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SigmaSchedule": "Create Sigma Schedule 🎭🅐🅓",
     "ADE_RawSigmaSchedule": "Create Raw Sigma Schedule 🎭🅐🅓",
     "ADE_SigmaScheduleWeightedAverage": "Sigma Schedule Weighted Mean 🎭🅐🅓",
-    "ADE_SigmaScheduleWeightedAverageInterp": "Sigma Schedule Interpolated Mean 🎭🅐🅓",
+    "ADE_SigmaScheduleWeightedAverageInterp": "Sigma Schedule Interp. Mean 🎭🅐🅓",
     "ADE_SigmaScheduleSplitAndCombine": "Sigma Schedule Split Combine 🎭🅐🅓",
     "ADE_SigmaScheduleToSigmas": "Sigma Schedule To Sigmas 🎭🅐🅓",
     "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",

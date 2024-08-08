@@ -11,7 +11,9 @@ import comfy.samplers
 from comfy.model_base import BaseModel
 from comfy.model_patcher import ModelPatcher
 
+from .context_extras import ContextExtrasGroup
 from .utils_motion import get_sorted_list_via_attr
+
 
 class ContextFuseMethod:
     FLAT = "flat"
@@ -76,17 +78,21 @@ class ContextOptions:
 class ContextOptionsGroup:
     def __init__(self):
         self.contexts: list[ContextOptions] = []
+        self.extras = ContextExtrasGroup()
         self._current_context: ContextOptions = None
         self._current_used_steps: int = 0
         self._current_index: int = 0
+        self._previous_t = -1
         self._step = 0
 
     def reset(self):
         self._current_context = None
         self._current_used_steps = 0
         self._current_index = 0
+        self._previous_t = -1
         self.step = 0
         self._set_first_as_current()
+        self.extras.cleanup()
 
     @property
     def step(self):
@@ -121,9 +127,10 @@ class ContextOptionsGroup:
 
     def is_empty(self) -> bool:
         return len(self.contexts) == 0
-    
+
     def clone(self):
         cloned = ContextOptionsGroup()
+        cloned.extras = self.extras.clone()
         for context in self.contexts:
             cloned.contexts.append(context)
         cloned._set_first_as_current()
@@ -132,9 +139,17 @@ class ContextOptionsGroup:
     def initialize_timesteps(self, model: BaseModel):
         for context in self.contexts:
             context.start_t = model.model_sampling.percent_to_sigma(context.start_percent)
+        self.extras.initialize_timesteps(model)
+
+    def prepare_current(self, t: Tensor):
+        self.prepare_current_context(t)
+        self.extras.prepare_current(t)
 
     def prepare_current_context(self, t: Tensor):
         curr_t: float = t[0]
+        # if same as previous, do nothing as step already accounted for
+        if curr_t == self._previous_t:
+            return
         prev_index = self._current_index
         # if met guaranteed steps, look for next context in case need to switch
         if self._current_used_steps >= self._current_context.guarantee_steps:
@@ -156,6 +171,8 @@ class ContextOptionsGroup:
                         break
         # update steps current context is used
         self._current_used_steps += 1
+        # update previous_t
+        self._previous_t = curr_t
 
     def _set_first_as_current(self):
         if len(self.contexts) > 0:
@@ -620,7 +637,7 @@ def generate_context_visualization(context_opts: ContextOptionsGroup, model: Mod
 
     for i, t in enumerate(sigmas):
         # make context_opts reflect current step/sigma
-        context_opts.prepare_current_context([t])
+        context_opts.prepare_current([t])
         context_opts.step = start_step+i
 
         # check if context should even be active in this case

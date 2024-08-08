@@ -26,8 +26,9 @@ import comfy.ops
 
 from .conditioning import COND_CONST, LoraHookGroup, conditioning_set_values
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
+from .context_extras import ContextRefMode
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
-from .utils_model import ModelTypeSD, vae_encode_raw_batched, vae_decode_raw_batched
+from .utils_model import ModelTypeSD, MachineState, vae_encode_raw_batched, vae_decode_raw_batched
 from .utils_motion import composite_extend, get_combined_multival, prepare_mask_batch, extend_to_batch_size
 from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
@@ -71,7 +72,7 @@ class AnimateDiffHelper_GlobalState:
         if self.motion_models is not None:
             self.motion_models.prepare_current_keyframe(x=x, t=timestep)
         if self.params.context_options is not None:
-            self.params.context_options.prepare_current_context(t=timestep)
+            self.params.context_options.prepare_current(t=timestep)
         if self.sample_settings.custom_cfg is not None:
             self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
 
@@ -114,6 +115,7 @@ class AnimateDiffHelper_GlobalState:
             del self.motion_models
             self.motion_models = None
         if self.params is not None:
+            self.params.context_options.reset()
             del self.params
             self.params = None
         if self.sample_settings is not None:
@@ -403,6 +405,28 @@ class GroupnormInjectHelper:
         self.previous_dwi_gn_cast_weights = None     
 
 
+class ContextRefInjector:
+    def __init__(self):
+        self.orig_can_concat_cond = None
+
+    def inject(self):
+        self.orig_can_concat_cond = comfy.samplers.can_concat_cond
+        comfy.samplers.can_concat_cond = ContextRefInjector.can_concat_cond_contextref_factory(self.orig_can_concat_cond)
+
+    def restore(self):
+        if self.orig_can_concat_cond is not None:
+            comfy.samplers.can_concat_cond = self.orig_can_concat_cond
+    
+    @staticmethod
+    def can_concat_cond_contextref_factory(orig_func: Callable):
+        def can_concat_cond_contextref_injection(c1, c2, *args, **kwargs):
+            #return orig_func(c1, c2, *args, **kwargs)
+            if c1 is c2:
+                return True
+            return False
+        return can_concat_cond_contextref_injection
+
+
 def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) -> Callable:
     def motion_sample(model: ModelPatcherAndInjector, noise: Tensor, *args, **kwargs):
         # check if model is intended for injecting
@@ -622,8 +646,10 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
 
         # add AD/evolved-sampling params to model_options (transformer_options)
         model_options = model_options.copy()
-        if "tranformer_options" not in model_options:
-            model_options["tranformer_options"] = {}
+        if "transformer_options" not in model_options:
+            model_options["transformer_options"] = {}
+        else:
+            model_options["transformer_options"] = model_options["transformer_options"].copy()
         model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
         if not ADGS.is_using_sliding_context():
@@ -792,61 +818,160 @@ def sliding_calc_conds_batch(model, conds, x_in: Tensor, timestep, model_options
     # get context windows
     ADGS.params.context_options.step = ADGS.current_step
     context_windows = get_context_windows(ADGS.params.full_length, ADGS.params.context_options)
-    # figure out how input is split
-    batched_conds = x_in.size(0)//ADGS.params.full_length
 
     if ADGS.motion_models is not None:
         ADGS.motion_models.set_view_options(ADGS.params.context_options.view_options)
     
     # prepare final conds, out_counts, and biases
     conds_final = [torch.zeros_like(x_in) for _ in conds]
-    counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+    if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+        # counts_final not used for RELATIVE fuse_method
+        counts_final = [torch.ones((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+    else:
+        # default counts_final initialization
+        counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
     biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
-    # perform calc_conds_batch per context window
-    for ctx_idxs in context_windows:
-        ADGS.params.sub_idxs = ctx_idxs
-        if ADGS.motion_models is not None:
-            ADGS.motion_models.set_sub_idxs(ctx_idxs)
-            ADGS.motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
-        # update exposed params
-        model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
-        model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
-        # account for all portions of input frames
-        full_idxs = []
-        for n in range(batched_conds):
-            for ind in ctx_idxs:
-                full_idxs.append((ADGS.params.full_length*n)+ind)
-        # get subsections of x, timestep, conds
-        sub_x = x_in[full_idxs]
-        sub_timestep = timestep[full_idxs]
-        sub_conds = [get_resized_cond(cond, full_idxs, len(ctx_idxs)) for cond in conds]
+    CONTEXTREF_CONTROL_LIST_ALL = "contextref_control_list_all"
+    CONTEXTREF_MACHINE_STATE = "contextref_machine_state"
+    CONTEXTREF_CLEAN_FUNC = "contextref_clean_func"
+    contextref_active = False
+    contextref_injector = None
+    contextref_mode = None
+    contextref_idxs_set = None
+    first_context = True
+    # need to make sure that contextref stuff gets cleaned up, no matter what
+    try:
+        if ADGS.params.context_options.extras.should_run_context_ref():
+            # check that ACN provided ContextRef as requested
+            temp_refcn_list = model_options["transformer_options"].get(CONTEXTREF_CONTROL_LIST_ALL, None)
+            if temp_refcn_list is None:
+                raise Exception("Advanced-ControlNet nodes are either missing or too outdated to support ContextRef. Update/install ComfyUI-Advanced-ControlNet to use ContextRef.")
+            if len(temp_refcn_list) == 0:
+                raise Exception("Unexpected ContextRef issue; Advanced-ControlNet did not provide any ContextRef objs for AnimateDiff-Evolved.")
+            del temp_refcn_list
+            # check if ContextRef ReferenceAdvanced ACN objs should_run
+            actually_should_run = True
+            for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
+                refcn.prepare_current_timestep(timestep)
+                if not refcn.should_run():
+                    actually_should_run = False
+            if actually_should_run:
+                contextref_active = True
+                for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
+                    # get mode_override if present, mode otherwise
+                    contextref_mode = refcn.get_contextref_mode_replace() or ADGS.params.context_options.extras.context_ref.mode
+                contextref_idxs_set = contextref_mode.indexes.copy()
+                # use injector to ensure only 1 cond or uncond will be batched at a time
+                contextref_injector = ContextRefInjector()
+                contextref_injector.inject()
 
-        sub_conds_out = calc_cond_uncond_batch_wrapper(model, sub_conds, sub_x, sub_timestep, model_options)
+        curr_window_idx = -1
+        naivereuse_active = False
+        cached_naive_conds = None
+        cached_naive_ctx_idxs = None
+        if ADGS.params.context_options.extras.should_run_naive_reuse():
+            cached_naive_conds = [torch.zeros_like(x_in) for _ in conds]
+            #cached_naive_counts = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+            naivereuse_active = True
+        # perform calc_conds_batch per context window 
+        for ctx_idxs in context_windows:
+            # allow processing to end between context window executions for faster Cancel
+            comfy.model_management.throw_exception_if_processing_interrupted()
+            curr_window_idx += 1
+            ADGS.params.sub_idxs = ctx_idxs
+            if ADGS.motion_models is not None:
+                ADGS.motion_models.set_sub_idxs(ctx_idxs)
+                ADGS.motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
+            # update exposed params
+            model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
+            model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
+            # get subsections of x, timestep, conds
+            sub_x = x_in[ctx_idxs]
+            sub_timestep = timestep[ctx_idxs]
+            sub_conds = [get_resized_cond(cond, ctx_idxs, len(ctx_idxs)) for cond in conds]
 
-        if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
-            full_length = ADGS.params.full_length
-            for pos, idx in enumerate(ctx_idxs):
-                # bias is the influence of a specific index in relation to the whole context window
-                bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
-                bias = max(1e-2, bias)
-                # take weighted average relative to total bias of current idx
-                # and account for batched_conds
-                for i in range(len(sub_conds_out)):
-                    for n in range(batched_conds):
-                        bias_total = biases_final[i][(full_length*n)+idx]
+            if contextref_active:
+                # set cond counter to 0 (each cond encountered will increment it by 1)
+                for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
+                    refcn.contextref_cond_idx = 0
+                if first_context:
+                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
+                else:
+                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
+                    if contextref_mode.mode == ContextRefMode.SLIDING: # if sliding, check if time to READ and WRITE
+                        if curr_window_idx % (contextref_mode.sliding_width-1) == 0:
+                            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
+                # override with indexes mode, if set
+                if contextref_mode.mode == ContextRefMode.INDEXES:
+                    contains_idx = False
+                    for i in ctx_idxs:
+                        if i in contextref_idxs_set:
+                            contains_idx = True
+                            # single trigger decides if each index should only trigger READ_WRITE once per step
+                            if not contextref_mode.single_trigger:
+                                break
+                            contextref_idxs_set.remove(i)
+                    if contains_idx:
+                        model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
+                        if first_context:
+                            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
+                    else:
+                        model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
+            else:
+                model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.OFF
+            #logger.info(f"window: {curr_window_idx} - {model_options['transformer_options'][CONTEXTREF_MACHINE_STATE]}")
+
+            sub_conds_out = calc_cond_uncond_batch_wrapper(model, sub_conds, sub_x, sub_timestep, model_options)
+
+            if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+                full_length = ADGS.params.full_length
+                for pos, idx in enumerate(ctx_idxs):
+                    # bias is the influence of a specific index in relation to the whole context window
+                    bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
+                    bias = max(1e-2, bias)
+                    # take weighted average relative to total bias of current idx
+                    for i in range(len(sub_conds_out)):
+                        bias_total = biases_final[i][idx]
                         prev_weight = (bias_total / (bias_total + bias))
                         new_weight = (bias / (bias_total + bias))
-                        conds_final[i][(full_length*n)+idx] = conds_final[i][(full_length*n)+idx] * prev_weight + sub_conds_out[i][(full_length*n)+pos] * new_weight
-                        biases_final[i][(full_length*n)+idx] = bias_total + bias
-        else:
-            # add conds and counts based on weights of fuse method
-            weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep) * batched_conds
-            weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-            for i in range(len(sub_conds_out)):
-                conds_final[i][full_idxs] += sub_conds_out[i] * weights_tensor
-                counts_final[i][full_idxs] += weights_tensor
-        
+                        conds_final[i][idx] = conds_final[i][idx] * prev_weight + sub_conds_out[i][pos] * new_weight
+                        biases_final[i][idx] = bias_total + bias
+            else:
+                # add conds and counts based on weights of fuse method
+                weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep)
+                weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                for i in range(len(sub_conds_out)):
+                    conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
+                    counts_final[i][ctx_idxs] += weights_tensor
+            # handle NaiveReuse
+            if naivereuse_active:
+                cached_naive_ctx_idxs = ctx_idxs
+                for i in range(len(sub_conds)):
+                    cached_naive_conds[i][ctx_idxs] = conds_final[i][ctx_idxs] / counts_final[i][ctx_idxs]
+                naivereuse_active = False
+            # toggle first_context off, if needed
+            if first_context:
+                first_context = False
+    finally:
+        # clean contextref stuff with provided ACN function, if applicable
+        if contextref_active:
+            model_options["transformer_options"][CONTEXTREF_CLEAN_FUNC]()
+            contextref_injector.restore()
+
+    # handle NaiveReuse
+    if cached_naive_conds is not None:
+        start_idx = cached_naive_ctx_idxs[0]
+        for z in range(0, ADGS.params.full_length, len(cached_naive_ctx_idxs)):
+            for i in range(len(cached_naive_conds)):
+                # get the 'true' idxs of this window
+                new_ctx_idxs = [(zz+start_idx) % ADGS.params.full_length for zz in list(range(z, z+len(cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
+                # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
+                adjusted_naive_ctx_idxs = cached_naive_ctx_idxs[:len(new_ctx_idxs)]
+                weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
+                conds_final[i][new_ctx_idxs] = (weighted_mean * (cached_naive_conds[i][adjusted_naive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
+        del cached_naive_conds
+
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
         # already normalized, so return as is
         del counts_final

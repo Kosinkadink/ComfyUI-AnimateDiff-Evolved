@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 
 import comfy.model_management as model_management
 import comfy.ops
@@ -238,23 +239,65 @@ class InputPIA_Multival(InputPIA):
         return mask * self.multival
 
 
-def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[float, Tensor]) -> Union[float, Tensor]:
+def create_multival_combo(float_val: Union[float, list[float]], mask_optional: Tensor=None):
+    # first, normalize inputs
+    # if float_val is iterable, treat as a list and assume inputs are floats
+    float_is_iterable = False
+    if isinstance(float_val, Iterable):
+        float_is_iterable = True
+        float_val = list(float_val)
+        # if mask present, make sure float_val list can be applied to list - match lengths
+        if mask_optional is not None:
+            if len(float_val) < mask_optional.shape[0]:
+                # copies last entry enough times to match mask shape
+                float_val = extend_list_to_batch_size(float_val, mask_optional.shape[0])
+            if mask_optional.shape[0] < len(float_val):
+                mask_optional = extend_to_batch_size(mask_optional, len(float_val))
+            float_val = float_val[:mask_optional.shape[0]]
+        float_val: Tensor = torch.tensor(float_val).unsqueeze(-1).unsqueeze(-1)
+    # now that inputs are normalized, figure out what value to actually return
+    if mask_optional is not None:
+        mask_optional = mask_optional.clone()
+        if float_is_iterable:
+            mask_optional = mask_optional[:] * float_val.to(mask_optional.dtype).to(mask_optional.device)
+        else:
+            mask_optional = mask_optional * float_val
+        return mask_optional
+    else:
+        if not float_is_iterable:
+            return float_val
+        # create a dummy mask of b,h,w=float_len,1,1 (sigle pixel)
+        # purpose is for float input to work with mask code, without special cases
+        float_len = float_val.shape[0] if float_is_iterable else 1
+        shape = (float_len,1,1)
+        mask_optional = torch.ones(shape)
+        mask_optional = mask_optional[:] * float_val.to(mask_optional.dtype).to(mask_optional.device)
+        return mask_optional
+
+
+def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[float, Tensor], force_leader_A=False) -> Union[float, Tensor]:
+    if multivalA is None and multivalB is None:
+        return 1.0
     # if one is None, use the other
-    if multivalA == None:
+    if multivalA is None:
         return multivalB
-    elif multivalB == None:
+    elif multivalB is None:
         return multivalA 
     # both have a value - combine them based on type
     # if both are Tensors, make dims match before multiplying
     if type(multivalA) == Tensor and type(multivalB) == Tensor:
-        areaA = multivalA.shape[1]*multivalA.shape[2]
-        areaB = multivalB.shape[1]*multivalB.shape[2]
-        # match height/width to mask with larger area
-        leader,follower = (multivalA,multivalB) if areaA >= areaB else (multivalB,multivalA)
-        batch_size = multivalA.shape[0] if multivalA.shape[0] >= multivalB.shape[0] else multivalB.shape[0]
+        if force_leader_A:
+            leader,follower = (multivalA,multivalB)
+            batch_size = multivalA.shape[0]
+        else:
+            areaA = multivalA.shape[1]*multivalA.shape[2]
+            areaB = multivalB.shape[1]*multivalB.shape[2]
+            # match height/width to mask with larger area
+            leader,follower = (multivalA,multivalB) if areaA >= areaB else (multivalB,multivalA)
+            batch_size = multivalA.shape[0] if multivalA.shape[0] >= multivalB.shape[0] else multivalB.shape[0]
         # make follower same dimensions as leader
         follower = torch.unsqueeze(follower, 1)
-        follower = comfy.utils.common_upscale(follower, leader.shape[2], leader.shape[1], "bilinear", "center")
+        follower = comfy.utils.common_upscale(follower, leader.shape[-1], leader.shape[-2], "bilinear", "center")
         follower = torch.squeeze(follower, 1)
         # make sure batch size will match
         leader = extend_to_batch_size(leader, batch_size)
@@ -262,6 +305,18 @@ def get_combined_multival(multivalA: Union[float, Tensor], multivalB: Union[floa
         return leader * follower
     # otherwise, just multiply them together - one of them is a float
     return multivalA * multivalB
+
+
+def resize_multival(multival: Union[float, Tensor], batch_size: int, height: int, width: int):
+    if multival is None:
+        return 1.0
+    if type(multival) != Tensor:
+        return multival
+    multival = torch.unsqueeze(multival, 1)
+    multival = comfy.utils.common_upscale(multival, height, width, "bilinear", "center")
+    multival = torch.squeeze(multival, 1)
+    multival = extend_to_batch_size(multival, batch_size)
+    return multival
 
 
 def get_combined_input(inputA: Union[InputPIA, None], inputB: Union[InputPIA, None], x: Tensor):

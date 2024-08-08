@@ -546,6 +546,7 @@ class CustomCFGKeyframeGroup:
         self._current_keyframe: CustomCFGKeyframe = None
         self._current_used_steps: int = 0
         self._current_index: int = 0
+        self._previous_t = -1
     
     def reset(self):
         self._current_keyframe = None
@@ -584,6 +585,9 @@ class CustomCFGKeyframeGroup:
     
     def prepare_current_keyframe(self, t: Tensor):
         curr_t: float = t[0]
+        # if curr_t same as before, do nothing as step already accounted for
+        if curr_t == self._previous_t:
+            return
         prev_index = self._current_index
         # if met guaranteed steps, look for next keyframe in case need to switch
         if self._current_used_steps >= self._current_keyframe.guarantee_steps:
@@ -604,6 +608,8 @@ class CustomCFGKeyframeGroup:
                     else: break
         # update steps current context is used
         self._current_used_steps += 1
+        # update previous_t
+        self._previous_t = curr_t
 
     def get_cfg_scale(self, cond: Tensor):
         cond_scale = self.cfg_multival
