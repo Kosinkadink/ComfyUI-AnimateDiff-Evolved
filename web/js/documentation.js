@@ -17,10 +17,8 @@ function chainCallback(object, property, callback) {
         object[property] = callback;
     }
 }
-
 var helpDOM;
 function initHelpDOM() {
-    helpDOM = document.createElement("div");
     let parentDOM = document.createElement("div");
     document.body.appendChild(parentDOM)
     parentDOM.appendChild(helpDOM)
@@ -57,8 +55,9 @@ function initHelpDOM() {
         const transform = ctx.getTransform();
         const scale = app.canvas.ds.scale;//gets the litegraph zoom
         //calculate coordinates with account for browser zoom
-        const x = transform.e*scale/transform.a;
-        const y = transform.f*scale/transform.a;
+        const bcr = app.canvas.canvas.getBoundingClientRect()
+        const x = transform.e*scale/transform.a + bcr.x;
+        const y = transform.f*scale/transform.a + bcr.y;
         //TODO: text reflows at low zoom. investigate alternatives
         Object.assign(parentDOM.style, {
             left: (x+(n.pos[0] + n.size[0]+15)*scale) + "px",
@@ -100,7 +99,7 @@ function initHelpDOM() {
     helpDOM.selectHelp = function(name, value) {
         //attempt to navigate to name in help
         function collapseUnlessMatch(items,t) {
-            var match = items.querySelector('[title="' + t + '"]')
+            var match = items.querySelector('[vhs_title="' + t + '"]')
             if (!match) {
                 for (let i of items.children) {
                     if (i.innerHTML.slice(0,t.length+5).includes(t)) {
@@ -126,7 +125,8 @@ function initHelpDOM() {
             collapseUnlessMatch(target, value)
         }
     }
-    helpDOM.addHelp = function (node, nodeType, description) {
+
+    helpDOM.addHelp = function(node, nodeType, description) {
         if (!description) {
             return
         }
@@ -143,7 +143,7 @@ function initHelpDOM() {
         }
 
         node.description = description
-        chainCallback(nodeType.prototype, "onDrawForeground", function (ctx) {
+        chainCallback(node, "onDrawForeground", function (ctx) {
             //draw question mark
             ctx.save()
             ctx.font = 'bold 20px Arial'
@@ -217,22 +217,37 @@ function initHelpDOM() {
         });
     }
 }
+
+
+
 app.registerExtension({
     name: "AnimateDiffEvolved.documentation",
     async init() {
         if (app.VHSHelp) {
             helpDOM = app.VHSHelp
         } else {
+            helpDOM = document.createElement("div");
             initHelpDOM()
             app.VHSHelp = helpDOM
         }
     },
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         // NOTE: May need manual adjusting for the few non-namespaced nodes
-        if(nodeData?.name?.startsWith("ADE_")) {
+        if(nodeData?.name?.startsWith("ADE_") && nodeData.description) {
+            let description = nodeData.description
+            let el = document.createElement("div")
+            el.innerHTML = description
+            if (!el.children.length) {
+                //Is plaintext. Do minor convenience formatting
+                let chunks = description.split('\n')
+                nodeData.description = chunks[0]
+                description = chunks.join('<br>')
+            } else {
+                nodeData.description = el.querySelector('#VHS_shortdesc')?.innerHTML || el.children[1]?.firstChild?.innerHTML
+            }
             chainCallback(nodeType.prototype, "onNodeCreated", function () {
-                helpDOM.addHelp(this, nodeType, nodeData.description)
-            });
+                helpDOM.addHelp(this, nodeType, description)
+            })
         }
     },
 });
