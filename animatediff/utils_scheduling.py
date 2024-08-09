@@ -3,6 +3,10 @@ from typing import Union
 from torch import Tensor
 
 
+class SelectError(Exception):
+    pass
+
+
 def validate_index(index: int, length: int=0, is_range: bool=False, allow_negative=False, allow_missing=False) -> int:
     # if part of range, do nothing
     if is_range:
@@ -10,14 +14,14 @@ def validate_index(index: int, length: int=0, is_range: bool=False, allow_negati
     # otherwise, validate index
     # validate not out of range - only when latent_count is passed in
     if length > 0 and index > length-1 and not allow_missing:
-        raise IndexError(f"Index '{index}' out of range for {length} item(s).")
+        raise SelectError(f"Index '{index}' out of range for {length} item(s).")
     # if negative, validate not out of range
     if index < 0:
         if not allow_negative:
-            raise IndexError(f"Negative indeces not allowed, but was '{index}'.")
+            raise SelectError(f"Negative indeces not allowed, but was '{index}'.")
         conv_index = length+index
         if conv_index < 0 and not allow_missing:
-            raise IndexError(f"Index '{index}', converted to '{conv_index}' out of range for {length} item(s).")
+            raise SelectError(f"Index '{index}', converted to '{conv_index}' out of range for {length} item(s).")
         index = conv_index
     return index
 
@@ -25,8 +29,8 @@ def validate_index(index: int, length: int=0, is_range: bool=False, allow_negati
 def convert_to_index_int(raw_index: str, length: int=0, is_range: bool=False, allow_negative=False, allow_missing=False) -> int:
     try:
         return validate_index(int(raw_index), length=length, is_range=is_range, allow_negative=allow_negative, allow_missing=allow_missing)
-    except ValueError as e:
-        raise ValueError(f"Index '{raw_index}' must be an integer.", e)
+    except SelectError as e:
+        raise SelectError(f"Index '{raw_index}' must be an integer.", e)
 
 
 def convert_str_to_indexes(indexes_str: str, length: int=0, allow_range=True, allow_missing=False) -> list[int]:
@@ -42,7 +46,7 @@ def convert_str_to_indexes(indexes_str: str, length: int=0, allow_range=True, al
         # parse range of indeces (e.g. 2:16)
         if ':' in g:
             if not allow_range:
-                raise Exception("Ranges (:) not allowed for this input.")
+                raise SelectError("Ranges (:) not allowed for this input.")
             index_range = g.split(":", 2)
             index_range = [r.strip() for r in index_range]
 
