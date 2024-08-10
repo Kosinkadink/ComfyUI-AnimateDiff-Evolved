@@ -11,9 +11,9 @@ from .logger import logger
 #----------------------------------------------
 # JSON prompt format is as follows:
 # "idxs": "prompt", ...
-_regex_prompt_json = re.compile(r'"([\d:-]+)\s*"\s*:\s*"([^"]*)"(?:\s*,\s*|$)')
+_regex_prompt_json = re.compile(r'"([\d:\-\.]+)\s*"\s*:\s*"([^"]*)"(?:\s*,\s*|$)')
 # NOTE: I used ChatGPT to generate this regex and summary, as I couldn't be bothered.
-# ([\d:-]+): Matches idxs, which can be any combination of digits and colons.
+# ([\d:\-\.]+): Matches idxs, which can be any combination of digits, colons, and periods.
 # \s*: Matches optional whitespace.
 # ":\s*": Matches the ":" separator with optional spaces.
 # "([^"]*)": Captures the prompt, which can be any character except for double quotation marks.
@@ -21,9 +21,9 @@ _regex_prompt_json = re.compile(r'"([\d:-]+)\s*"\s*:\s*"([^"]*)"(?:\s*,\s*|$)')
 
 # pythonic prompt format is as follows:
 # idxs = "prompt", ...
-_regex_prompt_pyth = re.compile(r'([\d:-]+)\s*=\s*"([^"]*)"(?:\s*,\s*|$)')
+_regex_prompt_pyth = re.compile(r'([\d:\-\.]+)\s*=\s*"([^"]*)"(?:\s*,\s*|$)')
 # NOTE: I used ChatGPT to generate this regex and summary, as I couldn't be bothered.
-# ([\d:-]+): Matches idx, which can be any combination of digits and colons.
+# ([\d:\-\.]+): Matches idx, which can be any combination of digits, colons, and periods.
 # \s*=\s*: Matches the equal sign (=) with optional spaces on both sides.
 # "([^"]*)": Captures the prompt, which can be any character except for double quotation marks.
 # (?:\s*,\s*|$): Matches either a comma (with optional spaces before or after) or the end of the string ($).
@@ -31,9 +31,9 @@ _regex_prompt_pyth = re.compile(r'([\d:-]+)\s*=\s*"([^"]*)"(?:\s*,\s*|$)')
 
 # JSON value format is as follows:
 # "idxs": value, ...
-_regex_value_json = re.compile(r'"([\d:-]+)\s*"\s*:\s*([^,]+)(?:\s*,\s*|$)')
+_regex_value_json = re.compile(r'"([\d:\-\.]+)\s*"\s*:\s*([^,]+)(?:\s*,\s*|$)')
 # NOTE: I used ChatGPT to generate this regex and summary, as I couldn't be bothered.
-# ([\d:-]+): Matches idxs, which can be any combination of digits and colons.
+# ([\d:\-\.]+): Matches idxs, which can be any combination of digits, colons, and periods.
 # \s*: Matches optional whitespace.
 # ":\s*: Matches the ":" separator with optional spaces.
 # ([^,]+): Captures the value, which can be any character except for commas (this ensures that values are correctly separated).
@@ -41,9 +41,9 @@ _regex_value_json = re.compile(r'"([\d:-]+)\s*"\s*:\s*([^,]+)(?:\s*,\s*|$)')
 
 # pythonic value format is as follows:
 # idxs = value, ...
-_regex_value_pyth = re.compile(r'([\d:-]+)\s*=\s*([^,]+)(?:\s*,\s*|$)')
+_regex_value_pyth = re.compile(r'([\d:\-\.]+)\s*=\s*([^,]+)(?:\s*,\s*|$)')
 # NOTE: I used ChatGPT to generate this regex and summary, as I couldn't be bothered.
-# ([\d:-]+): Matches idx, which can be any combination of digits and colons.
+# ([\d:\-\.]+): Matches idx, which can be any combination of digits, colons, and periods.
 # \s*=\s*: Matches the equal sign (=) with optional spaces on both sides.
 # ([^,]+): Captures the value, which can be any character except for commas (this ensures that values are correctly separated).
 # (?:\s*,\s*|$): Matches either a comma (with optional spaces before or after) or the end of the string ($).
@@ -196,12 +196,14 @@ def parse_value_groups(groups: tuple, length: int):
     if len(errors) == 0:
         # perform second parse, to get idea of indexes to handle
         pairs, errors = handle_group_idxs(pairs, length)
+        if len(pairs) == 0:
+            errors.append(ParseErrorReport(idx_str='No valid idxs provided', val_str='', reason='Provided ranges might not be selecting anything.'))
     if len(errors) > 0:
         error_msg_list = []
         issues_formatted = f"{len(errors)} issue{'s' if len(errors)> 1 else ''}"
         error_msg_list.append(f"Found {issues_formatted} with idxs/vals:")
         for error in errors:
-            error_msg_list.append(f"{error.idx_str} -> {error.reason}")
+            error_msg_list.append(f"{error.idx_str}: {error.reason}")
         error_msg = "\n".join(error_msg_list)
         raise Exception(error_msg)
     # perform third parse, where hold and interpolation is used to fill in any in-between values
@@ -240,7 +242,7 @@ def handle_group_idxs(pairs: list[InputPair], length: int):
             hold = True
             idx_str = idx_str[:-1]
         try:
-            idxs = convert_str_to_indexes(idx_str, length, allow_range=True, allow_missing=True)
+            idxs = convert_str_to_indexes(idx_str, length, allow_range=True, allow_missing=True, fix_reverse=True, same_is_one=True, allow_decimal=True)
         except SelectError as e:
             errors.append(ParseErrorReport(idx_str, val_str, f"Couldn't convert idxs; {str(e)}"))
             continue

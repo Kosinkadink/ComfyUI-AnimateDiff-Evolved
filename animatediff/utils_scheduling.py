@@ -1,13 +1,38 @@
 from typing import Union
 
 from torch import Tensor
+import math
 
 
 class SelectError(Exception):
     pass
 
 
-def validate_index(index: int, length: int=0, is_range: bool=False, allow_negative=False, allow_missing=False) -> int:
+def validate_index(raw_index: Union[str, int, float], length: int=0, is_range: bool=False, allow_negative=False, allow_missing=False, allow_decimal=False) -> int:
+    is_decimal = False
+    if isinstance(raw_index, str):
+        if '.' in raw_index:
+            is_decimal = True
+    if is_decimal:
+        if not allow_decimal:
+            raise SelectError(f"Index '{raw_index}' contains a decimal, but decimal inputs are not allowed.")
+        if length == 0:
+            raise SelectError(f"Decimal indexes are not allowed when no explicit length ({length}) is provided.")
+        try:
+            index_float = float(raw_index)
+        except ValueError as e:
+            raise SelectError(f"Decimal index '{raw_index}' isn't a valid float. ", e)
+        if index_float < 0.0 or index_float > 1.0:
+            raise SelectError(f"Decimal index must be between 0.0 and 1.0, but was '{index_float}'.")
+        if math.isclose(index_float, 1.0):
+            index = length-1
+        else:
+            index = int(index_float * length)
+    else:
+        try:
+            index = int(raw_index)
+        except ValueError as e:
+            raise SelectError(f"Index '{raw_index}' must be an integer.", e)
     # if part of range, do nothing
     if is_range:
         return index
@@ -26,14 +51,11 @@ def validate_index(index: int, length: int=0, is_range: bool=False, allow_negati
     return index
 
 
-def convert_to_index_int(raw_index: str, length: int=0, is_range: bool=False, allow_negative=False, allow_missing=False) -> int:
-    try:
-        return validate_index(int(raw_index), length=length, is_range=is_range, allow_negative=allow_negative, allow_missing=allow_missing)
-    except SelectError as e:
-        raise SelectError(f"Index '{raw_index}' must be an integer.", e)
+def convert_to_index_int(raw_index: str, length: int=0, is_range: bool=False, allow_negative=False, allow_missing=False, allow_decimal=False) -> int:
+    return validate_index(raw_index, length=length, is_range=is_range, allow_negative=allow_negative, allow_missing=allow_missing, allow_decimal=allow_decimal)
 
 
-def convert_str_to_indexes(indexes_str: str, length: int=0, allow_range=True, allow_missing=False) -> list[int]:
+def convert_str_to_indexes(indexes_str: str, length: int=0, allow_range=True, allow_missing=False, fix_reverse=False, same_is_one=False, allow_decimal=False) -> list[int]:
     if not indexes_str:
         return []
     int_indexes = list(range(0, length))
@@ -52,12 +74,12 @@ def convert_str_to_indexes(indexes_str: str, length: int=0, allow_range=True, al
 
             start_index = index_range[0]
             if len(start_index) > 0:
-                start_index = convert_to_index_int(start_index, length=length, is_range=True, allow_negative=allow_negative, allow_missing=allow_missing)
+                start_index = convert_to_index_int(start_index, length=length, is_range=True, allow_negative=allow_negative, allow_missing=allow_missing, allow_decimal=allow_decimal)
             else:
                 start_index = 0
             end_index = index_range[1]
             if len(end_index) > 0:
-                end_index = convert_to_index_int(end_index, length=length, is_range=True, allow_negative=allow_negative, allow_missing=allow_missing)
+                end_index = convert_to_index_int(end_index, length=length, is_range=True, allow_negative=allow_negative, allow_missing=allow_missing, allow_decimal=allow_decimal)
             else:
                 end_index = length
             # support step as well, to allow things like reversing, every-other, etc.
@@ -68,15 +90,30 @@ def convert_str_to_indexes(indexes_str: str, length: int=0, allow_range=True, al
                     step = convert_to_index_int(step, length=length, is_range=True, allow_negative=True, allow_missing=True)
                 else:
                     step = 1
-            # if latents were passed in, base indeces on known latent count
-            if len(int_indexes) > 0:
-                chosen_indexes.extend(int_indexes[start_index:end_index][::step])
-            # otherwise, assume indeces are valid
+            # if supposed to treat same start and end as one entry, do so
+            if same_is_one and start_index == end_index:
+                chosen_indexes.append(convert_to_index_int(start_index, length=length, allow_negative=allow_negative, allow_missing=allow_missing, allow_decimal=allow_decimal))
             else:
-                chosen_indexes.extend(list(range(start_index, end_index, step)))
+                # if should fix_reverse and reverse detected, then swap start and end indexes
+                do_reverse = False
+                if fix_reverse and end_index < start_index:
+                    start_index, end_index = end_index, start_index
+                    #do_reverse = True
+                # if latents were passed in, base indeces on known latent count
+                if len(int_indexes) > 0 and not allow_missing:
+                    new_indexes = int_indexes[start_index:end_index][::step]
+                    if do_reverse:
+                        new_indexes.reverse()
+                    chosen_indexes.extend(new_indexes)
+                # otherwise, assume indeces are valid
+                else:
+                    new_indexes = list(range(start_index, end_index, step))
+                    if do_reverse:
+                        new_indexes.reverse()
+                    chosen_indexes.extend(new_indexes)
         # parse individual indeces
         else:
-            chosen_indexes.append(convert_to_index_int(g, length=length, allow_negative=allow_negative, allow_missing=allow_missing))
+            chosen_indexes.append(convert_to_index_int(g, length=length, allow_negative=allow_negative, allow_missing=allow_missing, allow_decimal=allow_decimal))
     return chosen_indexes
 
 
