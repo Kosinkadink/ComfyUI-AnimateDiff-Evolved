@@ -173,14 +173,12 @@ def evaluate_value_schedule(text: str, length: int):
     raise Exception(error_msg)
 
 
-#InputPair = namedtuple('InputPair', ['idx', 'val', 'hold'], defaults=[None]*3)
 @dataclass
 class InputPair:
     idx: int
     val: int
     hold: bool = False
     end: bool = False
-
 
 @dataclass
 class ParseErrorReport:
@@ -261,17 +259,23 @@ def handle_val_interpolation(pairs: list[InputPair], length: int):
         # if no last pair is set, then use first provided val up to the idx
         if last_pair is None:
             for i in range(0, pair.idx+1):
+                if i >= length:
+                    break
                 real_vals[i] = pair.val
         # if idx is exactly one greater than the one before, nothing special
         elif last_pair.idx == pair.idx-1:
-            real_vals[pair.idx] = pair.val
+            if pair.idx < length:
+                real_vals[pair.idx] = pair.val
         else:
             # if holding value, no interpolation
             if last_pair.hold:
                 # keep same value as last_pair, then assign current index value
                 for i in range(last_pair.idx+1, pair.idx):
+                    if i >= length:
+                        continue
                     real_vals[i] = last_pair.val
-                real_vals[pair.idx] = pair.val
+                if pair.idx < length:
+                    real_vals[pair.idx] = pair.val
             # otherwise, interpolate
             else:
                 diff_len = abs(pair.idx-last_pair.idx)+1
