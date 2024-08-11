@@ -65,7 +65,7 @@ function initHelpDOM() {
             width: "400px",
             minHeight: "100px",
             maxHeight: "600px",
-            overflowY: 'auto',
+            overflowY: 'scroll',
             transformOrigin: '0 0',
             transform: 'scale(' + scale + ',' + scale +')',
             fontSize: '18px',
@@ -81,15 +81,33 @@ function initHelpDOM() {
     function setCollapse(el, doCollapse) {
         if (doCollapse) {
             el.children[0].innerHTML = '[+]'
-            el.children[1].style.overflowY = 'hidden'
-            el.children[1].style.height = '1.5em'
-            el.children[1].style.height = '1.5em'
-            el.children[1].style.color = '#CCC'
+            Object.assign(el.children[1].style, {
+                color: '#CCC',
+                overflowX: 'hidden',
+                width: '0px',
+                minWidth: 'calc(100% - 20px)',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+            })
+            for (let child of el.children[1].children) {
+                if (child.style.display != 'none'){
+                    child.origDisplay = child.style.display
+                }
+                child.style.display = 'none'
+            }
         } else {
             el.children[0].innerHTML = '[-]'
-            el.children[1].style.overflowY = ''
-            el.children[1].style.height = ''
-            el.children[1].style.color = ''
+            Object.assign(el.children[1].style, {
+                color: '',
+                overflowX: '',
+                width: '100%',
+                minWidth: '',
+                textOverflow: '',
+                whiteSpace: '',
+            })
+            for (let child of el.children[1].children) {
+                child.style.display = child.origDisplay
+            }
         }
     }
     helpDOM.collapseOnClick = function() {
@@ -111,6 +129,7 @@ function initHelpDOM() {
             if (!match) {
                 return null
             }
+            match.scrollIntoView(false)
             for (let i of items.querySelectorAll('.VHS_collapse')) {
                 if (i.contains(match)) {
                     setCollapse(i, false)
@@ -162,6 +181,9 @@ function initHelpDOM() {
                     for (let e of helpDOM.querySelectorAll('.VHS_collapse')) {
                         e.children[0].onclick = helpDOM.collapseOnClick
                         e.children[0].style.cursor = 'pointer'
+                    }
+                    for (let e of helpDOM.querySelectorAll('.VHS_precollapse')) {
+                        setCollapse(e, true)
                     }
                 }
                 return true
