@@ -62,6 +62,7 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.model_params_lowvram_keys = {} # keeps track of keys with applied 'weight_function' or 'bias_function'
         # injection stuff
         self.currently_injected = False
+        self.skip_injection = False
         self.motion_injection_params: InjectionParams = InjectionParams()
         self.sample_settings: SampleSettings = SampleSettings()
         self.motion_models: MotionModelGroup = None
@@ -267,7 +268,32 @@ class ModelPatcherAndInjector(ModelPatcher):
                 self.model_params_lowvram = False
                 self.model_params_lowvram_keys.clear()
 
+    def partially_load(self, *args, **kwargs):
+        # partially_load calls patch_model, but we don't want to inject model in the intermediate call;
+        # make sure to eject before performing partial load, then inject
+        self.eject_model()
+        try:
+            self.skip_injection = True
+            to_return = super().partially_load(*args, **kwargs)
+            self.skip_injection = False
+            self.inject_model()
+            return to_return
+        finally:
+            self.skip_injection = False
+
+    def partially_unload(self, *args, **kwargs):
+        if not self.currently_injected:
+            return super().partially_unload(*args, **kwargs)
+        # make sure to eject before performing partial unload, then inject again
+        self.eject_model()
+        try:
+           return super().partially_unload(*args, **kwargs)
+        finally:
+            self.inject_model()
+
     def inject_model(self):
+        if self.skip_injection: # make it possible to skip injection for intermediate calls (partial load)
+            return
         if self.motion_models is not None:
             for motion_model in self.motion_models.models:
                 self.currently_injected = True
