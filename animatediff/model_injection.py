@@ -271,15 +271,20 @@ class ModelPatcherAndInjector(ModelPatcher):
     def partially_load(self, *args, **kwargs):
         # partially_load calls patch_model, but we don't want to inject model in the intermediate call;
         # make sure to eject before performing partial load, then inject
-        self.eject_model()
+        was_injected = self.currently_injected
         try:
-            self.skip_injection = True
-            to_return = super().partially_load(*args, **kwargs)
-            self.skip_injection = False
-            self.inject_model()
-            return to_return
+            self.eject_model()
+            try:
+                self.skip_injection = True
+                to_return = super().partially_load(*args, **kwargs)
+                self.skip_injection = False
+                self.inject_model()
+                return to_return
+            finally:
+                self.skip_injection = False
         finally:
-            self.skip_injection = False
+            if was_injected and not self.currently_injected:
+                self.inject_model()
 
     def partially_unload(self, *args, **kwargs):
         if not self.currently_injected:
