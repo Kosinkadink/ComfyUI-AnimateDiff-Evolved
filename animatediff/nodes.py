@@ -11,7 +11,7 @@ from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateD
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
 from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
-from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalConvertToMaskNode
+from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalDynamicFloatsNode, MultivalConvertToMaskNode
 from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
                                  SetModelLoraHook, SetClipLoraHook,
                                  CombineLoraHooks, CombineLoraHookFourOptional, CombineLoraHookEightOptional,
@@ -58,6 +58,7 @@ NODE_CLASS_MAPPINGS = {
     # Multival Nodes
     "ADE_MultivalDynamic": MultivalDynamicNode,
     "ADE_MultivalDynamicFloatInput": MultivalDynamicFloatInputNode,
+    "ADE_MultivalDynamicFloats": MultivalDynamicFloatsNode,
     "ADE_MultivalScaledMask": MultivalScaledMaskNode,
     "ADE_MultivalConvertToMask": MultivalConvertToMaskNode,
     ###############################################################################
@@ -211,6 +212,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Multival Nodes
     "ADE_MultivalDynamic": "Multival 🎭🅐🅓",
     "ADE_MultivalDynamicFloatInput": "Multival [Float List] 🎭🅐🅓",
+    "ADE_MultivalDynamicFloats": "Multival [Floats] 🎭🅐🅓",
     "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",
     "ADE_MultivalConvertToMask": "Multival to Mask 🎭🅐🅓",
     ###############################################################################
