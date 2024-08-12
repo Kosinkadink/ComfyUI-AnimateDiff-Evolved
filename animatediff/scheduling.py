@@ -1,5 +1,6 @@
 import re
 import math
+from typing import Union
 from collections import namedtuple
 from dataclasses import dataclass
 
@@ -65,9 +66,8 @@ class RegexErrorReport:
 
 def evaluate_prompt_schedule(text: str, length: int):
     text = strip_input(text)
-    # TODO: handle case of no text provided
     if len(text) == 0:
-        pass
+        raise Exception("No text provided to Prompt Scheduling.")
     # prioritize formats based on best guess to minimize redo's
     if text.startswith('"'):
         formats = [SFormat.JSON, SFormat.PYTH]
@@ -114,8 +114,25 @@ def evaluate_prompt_schedule(text: str, length: int):
     error_msg = "\n".join(error_msg_list)
     raise Exception(error_msg)
 
+
 def parse_prompt_groups(groups: tuple, length: int):
-    pass
+    pairs: list[InputPair]
+    errors: list[ParseErrorReport]
+    # perform first parse, to get idea of indexes to handle
+    pairs, errors = handle_group_idxs(groups, length)
+    if len(errors) == 0:
+        # do next step
+        raise Exception("Looks good.")
+    if len(errors) > 0:
+        error_msg_list = []
+        issues_formatted = f"{len(errors)} issue{'s' if len(errors)> 1 else ''}"
+        error_msg_list.append(f"Found {issues_formatted} with idxs:")
+        for error in errors:
+            error_msg_list.append(f"{error.idx_str}: {error.reason}")
+        error_msg = "\n".join(error_msg_list)
+        raise Exception(error_msg)
+    final_vals = []
+    return final_vals
 
 
 def evaluate_value_schedule(text: str, length: int):
@@ -173,20 +190,6 @@ def evaluate_value_schedule(text: str, length: int):
     raise Exception(error_msg)
 
 
-@dataclass
-class InputPair:
-    idx: int
-    val: int
-    hold: bool = False
-    end: bool = False
-
-@dataclass
-class ParseErrorReport:
-    idx_str: str
-    val_str: str
-    reason: str
-
-
 def parse_value_groups(groups: tuple, length: int):
     #logger.info(groups)
     pairs: list[InputPair]
@@ -222,6 +225,20 @@ def handle_float_vals(groups: list[tuple]):
             continue
         actual_pairs.append(InputPair(idx_str, val))
     return actual_pairs, errors
+
+
+@dataclass
+class InputPair:
+    idx: int
+    val: Union[int, str]
+    hold: bool = False
+    end: bool = False
+
+@dataclass
+class ParseErrorReport:
+    idx_str: str
+    val_str: str
+    reason: str
 
 
 def handle_group_idxs(pairs: list[InputPair], length: int):
