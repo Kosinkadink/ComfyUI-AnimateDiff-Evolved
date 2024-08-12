@@ -115,11 +115,13 @@ def evaluate_prompt_schedule(text: str, length: int):
     raise Exception(error_msg)
 
 
-def parse_prompt_groups(groups: tuple, length: int):
+def parse_prompt_groups(groups: list[tuple], length: int):
     pairs: list[InputPair]
     errors: list[ParseErrorReport]
+    # turn group tuples into InputPairs
+    pairs = [InputPair(x[0], x[1]) for x in groups]
     # perform first parse, to get idea of indexes to handle
-    pairs, errors = handle_group_idxs(groups, length)
+    pairs, errors = handle_group_idxs(pairs, length)
     if len(errors) == 0:
         # do next step
         raise Exception("Looks good.")
@@ -190,7 +192,7 @@ def evaluate_value_schedule(text: str, length: int):
     raise Exception(error_msg)
 
 
-def parse_value_groups(groups: tuple, length: int):
+def parse_value_groups(groups: list[tuple], length: int):
     #logger.info(groups)
     pairs: list[InputPair]
     errors: list[ParseErrorReport]
