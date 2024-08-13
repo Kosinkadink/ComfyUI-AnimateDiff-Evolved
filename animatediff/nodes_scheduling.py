@@ -2,12 +2,14 @@ from .scheduling import evaluate_prompt_schedule, evaluate_value_schedule
 from .utils_model import BIGMAX
 from .logger import logger
 
+
 class PromptSchedulingLatentsNode:
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
                 "prompts": ("STRING", {"multiline": True, "default": ""}),
+                "clip": ("CLIP",),
                 "latent": ("LATENT",),
             },
             "optional": {
@@ -15,13 +17,14 @@ class PromptSchedulingLatentsNode:
             },
         }
     
-    RETURN_TYPES = ("LATENT",)
+    RETURN_TYPES = ("CONDITIONING", "LATENT",)
+
     CATEGORY = "Animate Diff 🎭🅐🅓/scheduling"
     FUNCTION = "create_schedule"
 
-    def create_schedule(self, prompts: str, latent: dict, print_schedule=False):
-        evaluate_prompt_schedule(prompts, latent["samples"].size(0))
-        return (latent)
+    def create_schedule(self, prompts: str, clip, latent: dict, print_schedule=False):
+        conditioning = evaluate_prompt_schedule(prompts, latent["samples"].size(0), clip)
+        return (conditioning, latent)
 
 
 class ValueSchedulingLatentsNode:
