@@ -1,4 +1,4 @@
-from .scheduling import evaluate_prompt_schedule, evaluate_value_schedule
+from .scheduling import evaluate_prompt_schedule, evaluate_value_schedule, TensorInterp
 from .utils_model import BIGMAX
 from .logger import logger
 
@@ -14,6 +14,7 @@ class PromptSchedulingLatentsNode:
             },
             "optional": {
                 "print_schedule": ("BOOLEAN", {"default": False}),
+                "tensor_interp": (TensorInterp._LIST,)
             },
         }
     
@@ -22,8 +23,8 @@ class PromptSchedulingLatentsNode:
     CATEGORY = "Animate Diff 🎭🅐🅓/scheduling"
     FUNCTION = "create_schedule"
 
-    def create_schedule(self, prompts: str, clip, latent: dict, print_schedule=False):
-        conditioning = evaluate_prompt_schedule(prompts, latent["samples"].size(0), clip)
+    def create_schedule(self, prompts: str, clip, latent: dict, print_schedule=False, tensor_interp=TensorInterp.LERP):
+        conditioning = evaluate_prompt_schedule(prompts, latent["samples"].size(0), clip, tensor_interp)
         return (conditioning, latent)
 
 

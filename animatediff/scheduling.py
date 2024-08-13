@@ -60,6 +60,11 @@ class SFormat:
     JSON = "json"
     PYTH = "pythonic"
 
+class TensorInterp:
+    LERP = "lerp"
+    SLERP = "slerp"
+    _LIST = [LERP, SLERP]
+
 @dataclass
 class RegexErrorReport:
     start: int
@@ -90,7 +95,7 @@ class ParseErrorReport:
     reason: str
 
 
-def evaluate_prompt_schedule(text: str, length: int, clip: CLIP):
+def evaluate_prompt_schedule(text: str, length: int, clip: CLIP, interp=TensorInterp.LERP):
     text = strip_input(text)
     if len(text) == 0:
         raise Exception("No text provided to Prompt Scheduling.")
@@ -105,13 +110,13 @@ def evaluate_prompt_schedule(text: str, length: int, clip: CLIP):
             # if no errors found, assume this is the right format and pass on to parsing individual values
             json_matches, json_errors = get_matches_and_errors(text, _regex_prompt_json)
             if len(json_errors) == 0:
-                return parse_prompt_groups(json_matches, length, clip)
+                return parse_prompt_groups(json_matches, length, clip, interp)
         elif format is SFormat.PYTH:
             # check pythonic format
             # if no errors found, assume this is the right format and pass on to parsing individual values
             pyth_matches, pyth_errors = get_matches_and_errors(text, _regex_prompt_pyth)
             if len(pyth_errors) == 0:
-                return parse_prompt_groups(pyth_matches, length, clip)
+                return parse_prompt_groups(pyth_matches, length, clip, interp)
     # since both formats have errors, check which format is more 'correct' for the input
     # priority:
     # 1 - most matches
@@ -141,7 +146,7 @@ def evaluate_prompt_schedule(text: str, length: int, clip: CLIP):
     raise Exception(error_msg)
 
 
-def parse_prompt_groups(groups: list[tuple], length: int, clip: CLIP):
+def parse_prompt_groups(groups: list[tuple], length: int, clip: CLIP, interp=TensorInterp.LERP):
     pairs: list[InputPair]
     errors: list[ParseErrorReport]
     # turn group tuples into InputPairs
@@ -156,11 +161,11 @@ def parse_prompt_groups(groups: list[tuple], length: int, clip: CLIP):
             error_msg_list.append(f"{error.idx_str}: {error.reason}")
         error_msg = "\n".join(error_msg_list)
         raise Exception(error_msg)
-    final_vals = handle_prompt_interpolation(pairs, length, clip)
+    final_vals = handle_prompt_interpolation(pairs, length, clip, interp)
     return final_vals
 
 
-def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP):
+def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP, interp=TensorInterp.LERP):
     timer = Timer()
     timer.start()
     # for now, use FizzNodes approach of calculating max size of tokens beforehand;
@@ -236,7 +241,11 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP)
                         cond_to, pooled_to = clip.encode_from_tokens(clip.tokenize(pair.val), return_pooled=True)
                         cond_to = pad_cond(cond_to, target_length=max_size)
                         holder = CondHolder(idx=pair.idx, prompt=pair.val, cond=cond_to, pooled=pooled_to, hold=pair.hold)
-                    cond_interp = interpolate_conds(cond_from=prev_holder.cond, cond_to=cond_to, strength_to=weight)
+                    # interpolate conds
+                    if interp == TensorInterp.LERP:
+                        cond_interp = lerp_tensors(tensor_from=prev_holder.cond, tensor_to=cond_to, strength_to=weight)
+                    elif interp == TensorInterp.SLERP:
+                        cond_interp = slerp_tensors(tensor_from=prev_holder.cond, tensor_to=cond_to, strength_to=weight)
                     pooled_interp = pooled_to
                     if math.isclose(weight, 0.0):
                         pooled_interp = prev_holder.pooled
@@ -279,10 +288,32 @@ def pad_cond(cond: Tensor, target_length: int):
     return cond
 
 
-def interpolate_conds(cond_from: Tensor, cond_to: Tensor, strength_to: Tensor):
+def lerp_tensors(tensor_from: Tensor, tensor_to: Tensor, strength_to: Tensor):
     # basic weighted average to combine conds
     # TODO: see how far we can generalize this, and if some params need to change
-    return torch.mul(cond_from, (1.0-strength_to)) + torch.mul(cond_to, strength_to)
+    return torch.mul(tensor_from, (1.0-strength_to)) + torch.mul(tensor_to, strength_to)
+
+
+# https://matilabs.ai/2024/03/05/slerp-model-merging-primer/#slerp-code
+# https://medium.com/@akp83540/slerp-algorithm-a4ce1bacee4a
+def slerp_tensors(tensor_from: Tensor, tensor_to: Tensor, strength_to: Tensor, dot_threshold=0.9995):
+    # normalize tensors
+    normal_from = tensor_from / tensor_from.norm()
+    normal_to = tensor_to / tensor_to.norm()
+    # get dot product to find the cosine of the angle between the tensors (vectors)
+    dot = (normal_from * normal_to).sum()
+    # if tensors (vectors) nearly parallel (dot product ~ 1.0), simplify to lerp
+    if dot.abs() > dot_threshold:
+        return lerp_tensors(tensor_from=tensor_from, tensor_to=tensor_to, strength_to=strength_to)
+    # omega (Ω)
+    omega = dot.acos()
+    # apply formula:
+    # q(t) = (q₀ * sin((1 — t) * Ω)) / sin(Ω) + (q₁ * sin(t * Ω)) / sin(Ω)
+    # simplified to (extract sin(Ω)):
+    # q(t) = ((q₀ * sin((1 — t) * Ω)) + (q₁ * sin(t * Ω))) / sin(Ω)
+    sin_from = ((1.0 - strength_to) * omega).sin()
+    sin_to = (strength_to * omega).sin()
+    return (tensor_from * sin_from + tensor_to * sin_to) / omega.sin()
 
 
 def evaluate_value_schedule(text: str, length: int):
