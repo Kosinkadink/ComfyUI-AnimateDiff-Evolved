@@ -185,10 +185,28 @@ def prepare_prompts(pairs: list[InputPair], options: PromptOptions):
     for pair in pairs:
         prepend_text = options.prepend_text.strip()
         append_text = options.append_text.strip()
+        prompt = pair.val.strip()
+        # when adding prepend and append text, handle commas properly
+        # prepend text
         if len(prepend_text) > 0:
-            pair.val = prepend_text + ", " + pair.val
+            while prepend_text.endswith(','):
+                prepend_text = prepend_text[:-1].strip()
+            if prompt.startswith(','):
+                prepend_text = f"{prepend_text}"
+            else:
+                prepend_text = f"{prepend_text}, "
+            prompt = prepend_text + prompt
+        # append text
         if len(append_text) > 0:
-            pair.val = pair.val + ", " + append_text
+            while append_text.startswith(','):
+                append_text = append_text[1:].strip()
+            if prompt.endswith(','):
+                append_text = f" {append_text}"
+            else:
+                append_text = f", {append_text}"
+            prompt = prompt + append_text
+        # update value w/ prompt
+        pair.val = prompt
 
 
 def apply_values_replace_to_prompt(prompt: str, idx: int, values_replace: Union[None, dict[str, list[float]]]):
