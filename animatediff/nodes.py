@@ -37,7 +37,8 @@ from .nodes_context_extras import (SetContextExtrasOnContextOptions, ContextExtr
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
                                 WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
-from .nodes_scheduling import (PromptSchedulingLatentsNode, ValueSchedulingNode, ValueSchedulingLatentsNode)
+from .nodes_scheduling import (PromptSchedulingNode, PromptSchedulingLatentsNode, ValueSchedulingNode, ValueSchedulingLatentsNode,
+                               AddValuesReplaceNode, FloatToFloatsNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect, PerturbedAttentionGuidanceMultival, RescaleCFGMultival
 from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated,
                                AnimateDiffModelSettings, AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
@@ -155,9 +156,12 @@ NODE_CLASS_MAPPINGS = {
     "ADE_NoisedImageInjection": NoisedImageInjectionNode,
     "ADE_NoisedImageInjectOptions": NoisedImageInjectOptionsNode,
     # Scheduling
+    "ADE_PromptScheduling": PromptSchedulingNode,
     "ADE_PromptSchedulingLatents": PromptSchedulingLatentsNode,
     "ADE_ValueScheduling": ValueSchedulingNode,
     "ADE_ValueSchedulingLatents": ValueSchedulingLatentsNode,
+    "ADE_ValuesReplace": AddValuesReplaceNode,
+    "ADE_FloatToFloats": FloatToFloatsNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -309,9 +313,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",
     "ADE_NoisedImageInjectOptions": "Image Injection Options 🎭🅐🅓",
     # Scheduling
+    "ADE_PromptScheduling": "Prompt Scheduling 🎭🅐🅓",
     "ADE_PromptSchedulingLatents": "Prompt Scheduling [Latents] 🎭🅐🅓",
     "ADE_ValueScheduling": "Value Scheduling 🎭🅐🅓",
     "ADE_ValueSchedulingLatents": "Value Scheduling [Latents] 🎭🅐🅓",
+    "ADE_ValuesReplace": "Add Values Replace 🎭🅐🅓",
+    "ADE_FloatToFloats": "Float to Floats 🎭🅐🅓",
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

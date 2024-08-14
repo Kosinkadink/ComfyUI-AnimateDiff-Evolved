@@ -1,11 +1,46 @@
 from typing import Union
 
+import torch
 from torch import Tensor
 import math
 
 
+class TensorInterp:
+    LERP = "lerp"
+    SLERP = "slerp"
+    _LIST = [LERP, SLERP]
+
+
 class SelectError(Exception):
     pass
+
+
+def lerp_tensors(tensor_from: Tensor, tensor_to: Tensor, strength_to: Tensor):
+    # basic weighted average to combine conds
+    # TODO: see how far we can generalize this, and if some params need to change
+    return torch.mul(tensor_from, (1.0-strength_to)) + torch.mul(tensor_to, strength_to)
+
+
+# https://matilabs.ai/2024/03/05/slerp-model-merging-primer/#slerp-code
+# https://medium.com/@akp83540/slerp-algorithm-a4ce1bacee4a
+def slerp_tensors(tensor_from: Tensor, tensor_to: Tensor, strength_to: Tensor, dot_threshold=0.9995):
+    # normalize tensors
+    normal_from = tensor_from / tensor_from.norm()
+    normal_to = tensor_to / tensor_to.norm()
+    # get dot product to find the cosine of the angle between the tensors (vectors)
+    dot = (normal_from * normal_to).sum()
+    # if tensors (vectors) nearly parallel (dot product ~ 1.0), simplify to lerp
+    if dot.abs() > dot_threshold:
+        return lerp_tensors(tensor_from=tensor_from, tensor_to=tensor_to, strength_to=strength_to)
+    # omega (Ω)
+    omega = dot.acos()
+    # apply formula:
+    # q(t) = (q₀ * sin((1 — t) * Ω)) / sin(Ω) + (q₁ * sin(t * Ω)) / sin(Ω)
+    # simplified to (extract sin(Ω)):
+    # q(t) = ((q₀ * sin((1 — t) * Ω)) + (q₁ * sin(t * Ω))) / sin(Ω)
+    sin_from = ((1.0 - strength_to) * omega).sin()
+    sin_to = (strength_to * omega).sin()
+    return (tensor_from * sin_from + tensor_to * sin_to) / omega.sin()
 
 
 def validate_index(raw_index: Union[str, int, float], length: int=0, is_range: bool=False, allow_negative=False, allow_missing=False, allow_decimal=False) -> int:
@@ -35,6 +70,11 @@ def validate_index(raw_index: Union[str, int, float], length: int=0, is_range: b
             raise SelectError(f"Index '{raw_index}' must be an integer.", e)
     # if part of range, do nothing
     if is_range:
+        if index < 0:
+            conv_index = length+index
+            if conv_index < 0:
+                conv_index = 0
+            index = conv_index
         return index
     # otherwise, validate index
     # validate not out of range - only when latent_count is passed in

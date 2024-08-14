@@ -8,8 +8,9 @@ from dataclasses import dataclass
 
 from comfy.sd import CLIP
 
-from .utils_model import InterpolationMethod, Timer
-from .utils_scheduling import SelectError, convert_str_to_indexes
+from .utils_model import InterpolationMethod
+from .utils_motion import extend_list_to_batch_size
+from .utils_scheduling import SelectError, TensorInterp, convert_str_to_indexes, lerp_tensors, slerp_tensors
 from .logger import logger
 
 ###############################################
@@ -56,14 +57,18 @@ _regex_value_pyth = re.compile(r'([\d:\-\.]+)\s*=\s*([^,]+)(?:\s*,\s*|$)')
 ###############################################
 
 
+# verify that string only contains a-z, A-Z, 0-9, or _
+_regex_key_value = re.compile(r'^[a-zA-Z0-9_]+$')
+def verify_key_value(key: str, raise_error=True):
+    match = re.match(_regex_key_value, key)
+    if not match and raise_error:
+        raise Exception(f"Value key may only contain 'a-z', 'A-Z', '0-9', or '_', but was: '{key}'.")
+    return match is not None
+
+
 class SFormat:
     JSON = "json"
     PYTH = "pythonic"
-
-class TensorInterp:
-    LERP = "lerp"
-    SLERP = "slerp"
-    _LIST = [LERP, SLERP]
 
 @dataclass
 class RegexErrorReport:
@@ -83,10 +88,12 @@ class InputPair:
 class CondHolder:
     idx: int
     prompt: str
+    raw_prompt: str
     cond: Tensor
     pooled: Tensor
     hold: bool = False
-    end: bool = False
+    interp_weight: float = None
+    interp_prompt: str = None
 
 @dataclass
 class ParseErrorReport:
@@ -94,8 +101,16 @@ class ParseErrorReport:
     val_str: str
     reason: str
 
+@dataclass
+class PromptOptions:
+    interp: str = TensorInterp.LERP
+    prepend_text: str = ''
+    append_text: str = ''
+    values_replace: dict[str, list[float]] = None
+    print_schedule: bool = False
 
-def evaluate_prompt_schedule(text: str, length: int, clip: CLIP, interp=TensorInterp.LERP):
+
+def evaluate_prompt_schedule(text: str, length: int, clip: CLIP, options: PromptOptions):
     text = strip_input(text)
     if len(text) == 0:
         raise Exception("No text provided to Prompt Scheduling.")
@@ -110,13 +125,13 @@ def evaluate_prompt_schedule(text: str, length: int, clip: CLIP, interp=TensorIn
             # if no errors found, assume this is the right format and pass on to parsing individual values
             json_matches, json_errors = get_matches_and_errors(text, _regex_prompt_json)
             if len(json_errors) == 0:
-                return parse_prompt_groups(json_matches, length, clip, interp)
+                return parse_prompt_groups(json_matches, length, clip, options)
         elif format is SFormat.PYTH:
             # check pythonic format
             # if no errors found, assume this is the right format and pass on to parsing individual values
             pyth_matches, pyth_errors = get_matches_and_errors(text, _regex_prompt_pyth)
             if len(pyth_errors) == 0:
-                return parse_prompt_groups(pyth_matches, length, clip, interp)
+                return parse_prompt_groups(pyth_matches, length, clip, options)
     # since both formats have errors, check which format is more 'correct' for the input
     # priority:
     # 1 - most matches
@@ -146,7 +161,7 @@ def evaluate_prompt_schedule(text: str, length: int, clip: CLIP, interp=TensorIn
     raise Exception(error_msg)
 
 
-def parse_prompt_groups(groups: list[tuple], length: int, clip: CLIP, interp=TensorInterp.LERP):
+def parse_prompt_groups(groups: list[tuple], length: int, clip: CLIP, options: PromptOptions):
     pairs: list[InputPair]
     errors: list[ParseErrorReport]
     # turn group tuples into InputPairs
@@ -161,65 +176,105 @@ def parse_prompt_groups(groups: list[tuple], length: int, clip: CLIP, interp=Ten
             error_msg_list.append(f"{error.idx_str}: {error.reason}")
         error_msg = "\n".join(error_msg_list)
         raise Exception(error_msg)
-    final_vals = handle_prompt_interpolation(pairs, length, clip, interp)
+    prepare_prompts(pairs, options)
+    final_vals = handle_prompt_interpolation(pairs, length, clip, options)
     return final_vals
 
 
-def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP, interp=TensorInterp.LERP):
-    timer = Timer()
-    timer.start()
+def prepare_prompts(pairs: list[InputPair], options: PromptOptions):
+    for pair in pairs:
+        prepend_text = options.prepend_text.strip()
+        append_text = options.append_text.strip()
+        if len(prepend_text) > 0:
+            pair.val = prepend_text + ", " + pair.val
+        if len(append_text) > 0:
+            pair.val = pair.val + ", " + append_text
+
+
+def apply_values_replace_to_prompt(prompt: str, idx: int, values_replace: Union[None, dict[str, list[float]]]):
+    # if no values to replace, do nothing
+    if values_replace is None:
+        return prompt
+    for key, value in values_replace.items():
+        # use FizzNodes `` notation
+        match_str = '`' + key + '`'
+        value_str = f"{value[idx]}"
+        prompt = prompt.replace(match_str, value_str)
+    return prompt
+
+
+def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP, options: PromptOptions):
+    if length == 0:
+        length = max(pairs, key=lambda x: x.idx).idx+1
+    # prepare values_replace (should match length)
+    values_replace = options.values_replace
+    if values_replace is not None:
+        values_replace.copy()
+        for key, value in values_replace.items():
+            if len(value) < length:
+                values_replace[key] = extend_list_to_batch_size(value, length)
     # for now, use FizzNodes approach of calculating max size of tokens beforehand;
     # this doubles total encoding time, as this will be done again.
     # TODO: do this dynamically to save encoding time
     max_size = 0
     for pair in pairs:
-        cond: Tensor = clip.encode_from_tokens(clip.tokenize(pair.val))
+        prepared_prompt = apply_values_replace_to_prompt(pair.val, 0, values_replace=values_replace)
+        cond: Tensor = clip.encode_from_tokens(clip.tokenize(prepared_prompt))
         max_size = max(max_size, cond.shape[1])
-    
-    if length == 0:
-        length = max(pairs, key=lambda x: x.idx).idx+1
+
     real_holders: list[CondHolder] = [None] * length
     real_cond = [None] * length
     real_pooled = [None] * length
-    max_size = 0
     prev_holder: Union[CondHolder, None] = None
     for idx, pair in enumerate(pairs):
         holder = None
         # if no last pair is set, then use first provided val up to the idx
         if prev_holder is None:
-            cond, pooled = clip.encode_from_tokens(clip.tokenize(pair.val), return_pooled=True)
-            cond = pad_cond(cond, target_length=max_size)
-            holder = CondHolder(idx=pair.idx, prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
             for i in range(idx, pair.idx+1):
                 if i >= length:
                     continue
+                real_prompt = apply_values_replace_to_prompt(pair.val, i, values_replace=values_replace)
+                if holder is None or holder.prompt != real_prompt:
+                    cond, pooled = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
+                    cond = pad_cond(cond, target_length=max_size)
+                    holder = CondHolder(idx=i, prompt=real_prompt, raw_prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
                 real_cond[i] = cond
                 real_pooled[i] = pooled
                 real_holders[i] = holder
         # if idx is exactly one greater than the one before, nothing special
         elif prev_holder.idx == pair.idx-1:
+            holder = prev_holder
             if pair.idx < length:
-                cond, pooled = clip.encode_from_tokens(clip.tokenize(pair.val), return_pooled=True)
+                real_prompt = apply_values_replace_to_prompt(pair.val, pair.idx, values_replace=values_replace)
+                cond, pooled = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
                 cond = pad_cond(cond, target_length=max_size)
-                holder = CondHolder(idx=pair.idx, prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
+                holder = CondHolder(idx=pair.idx, prompt=real_prompt, raw_prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
                 real_cond[pair.idx] = cond
                 real_pooled[pair.idx] = pooled
                 real_holders[pair.idx] = holder
         else:
             # if holding value, no interpolation
             if prev_holder.hold:
-                # keep same value as last_holder, then calculate current index cond
+                # keep same value as last_holder, then calculate current index cond;
+                # however, need to check if real_prompt remains the same
                 for i in range(prev_holder.idx+1, pair.idx):
                     if i >= length:
                         continue
-                    holder = prev_holder
-                    real_cond[i] = prev_holder.cond
-                    real_pooled[i] = prev_holder.pooled
-                    real_holders[i] = prev_holder
+                    if holder is None:
+                        holder = prev_holder
+                    real_prompt = apply_values_replace_to_prompt(pair.val, i, values_replace=values_replace)
+                    if holder.prompt != real_prompt:
+                        cond, pooled = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
+                        cond = pad_cond(cond, target_length=max_size)
+                        holder = CondHolder(idx=i, prompt=real_prompt, raw_prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
+                    real_cond[i] = holder.cond
+                    real_pooled[i] = holder.pooled
+                    real_holders[i] = holder
                 if pair.idx < length:
-                    cond, pooled = clip.encode_from_tokens(clip.tokenize(pair.val), return_pooled=True)
+                    real_prompt = apply_values_replace_to_prompt(pair.val, pair.idx, values_replace=values_replace)
+                    cond, pooled = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
                     cond = pad_cond(cond, target_length=max_size)
-                    holder = CondHolder(idx=pair.idx, prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
+                    holder = CondHolder(idx=pair.idx, prompt=real_prompt, raw_prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
                     real_cond[pair.idx] = cond
                     real_pooled[pair.idx] = pooled
                     real_holders[pair.idx] = holder
@@ -232,27 +287,40 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
                                                               method=InterpolationMethod.LINEAR)
                 cond_to = None
                 pooled_to = None
+                cond_from = None
                 holder = None
+                interm_holder = prev_holder
                 for idx, weight in zip(interp_idxs, interp_weights):
                     if idx >= length:
                         continue
-                    # calculate cond stuff if not done yet
-                    if cond_to is None:
-                        cond_to, pooled_to = clip.encode_from_tokens(clip.tokenize(pair.val), return_pooled=True)
+                    idx_int = round(float(idx))
+                    # calculate cond_to stuff if not done yet
+                    real_prompt = apply_values_replace_to_prompt(pair.val, idx_int, values_replace=values_replace)
+                    if holder is None or holder.prompt != real_prompt:
+                        cond_to, pooled_to = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
                         cond_to = pad_cond(cond_to, target_length=max_size)
-                        holder = CondHolder(idx=pair.idx, prompt=pair.val, cond=cond_to, pooled=pooled_to, hold=pair.hold)
+                        holder = CondHolder(idx=pair.idx, prompt=real_prompt, raw_prompt=pair.val, cond=cond_to, pooled=pooled_to, hold=pair.hold)
+                    # calculate interm_holder stuff if needed
+                    real_prompt = apply_values_replace_to_prompt(interm_holder.raw_prompt, idx_int, values_replace=values_replace)
+                    if interm_holder.prompt != real_prompt:
+                        cond_from, pooled_from = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
+                        cond_from = pad_cond(cond_from, target_length=max_size)
+                        interm_holder = CondHolder(idx=idx_int, prompt=real_prompt, raw_prompt=interm_holder.raw_prompt, cond=cond_from, pooled=pooled_from, hold=holder.hold)
+                    else:
+                        interm_holder = CondHolder(idx=interm_holder.idx, prompt=interm_holder.prompt, raw_prompt=interm_holder.raw_prompt, cond=interm_holder.cond, pooled=interm_holder.pooled, hold=interm_holder.hold)
                     # interpolate conds
-                    if interp == TensorInterp.LERP:
-                        cond_interp = lerp_tensors(tensor_from=prev_holder.cond, tensor_to=cond_to, strength_to=weight)
-                    elif interp == TensorInterp.SLERP:
-                        cond_interp = slerp_tensors(tensor_from=prev_holder.cond, tensor_to=cond_to, strength_to=weight)
+                    if options.interp == TensorInterp.LERP:
+                        cond_interp = lerp_tensors(tensor_from=interm_holder.cond, tensor_to=cond_to, strength_to=weight)
+                    elif options.interp == TensorInterp.SLERP:
+                        cond_interp = slerp_tensors(tensor_from=interm_holder.cond, tensor_to=cond_to, strength_to=weight)
                     pooled_interp = pooled_to
                     if math.isclose(weight, 0.0):
-                        pooled_interp = prev_holder.pooled
-                    idx_int = round(float(idx))
+                        pooled_interp = interm_holder.pooled
+                    interm_holder = CondHolder(idx=idx_int, prompt=interm_holder.prompt, raw_prompt=interm_holder.raw_prompt, cond=cond_interp, pooled=pooled_interp, hold=holder.hold,
+                                               interp_weight=weight, interp_prompt=holder.prompt)
                     real_cond[idx_int] = cond_interp
                     real_pooled[idx_int] = pooled_interp
-                    real_holders[idx_int] = CondHolder(idx=idx_int, prompt=holder.prompt, cond=cond_interp, pooled=pooled_interp, hold=holder.hold)
+                    real_holders[idx_int] = interm_holder
         assert holder is not None
         prev_holder = holder
 
@@ -261,6 +329,12 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
     prev_holder = None
     for i in range(len(real_holders)):
         if real_holders[i] is None:
+            # check if any value replacement needs to be accounted for
+            real_prompt = apply_values_replace_to_prompt(prev_holder.raw_prompt, i, values_replace=values_replace)
+            if prev_holder.prompt != real_prompt:
+                cond, pooled = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
+                cond = pad_cond(cond, target_length=max_size)
+                prev_holder = CondHolder(idx=i, prompt=real_prompt, raw_prompt=prev_holder.raw_prompt, cond=cond, pooled=pooled, hold=prev_holder.hold)
             real_cond[i] = prev_holder.cond
             real_pooled[i] = prev_holder.pooled
         else:
@@ -268,8 +342,14 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
     
     final_cond = torch.cat(real_cond, dim=0)
     final_pooled = torch.cat(real_pooled, dim=0)
-    timer.stop()
-    logger.info(f"Total prompt time time: {timer.get_time_diff()}")
+
+    if options.print_schedule:
+        logger.info(f"PromptScheduling ({len(real_holders)} prompts)")
+        for i, holder in enumerate(real_holders):
+            if holder.interp_prompt is None:
+                logger.info(f'{i} = "{holder.prompt}"')
+            else:
+                logger.info(f'{i} = ({1.-holder.interp_weight:.2f})"{holder.prompt}" -> ({holder.interp_weight:.2f})"{holder.interp_prompt}"')
     # cond is a list[list[Tensor, dict[str: Any]]] format
     return [[final_cond, {"pooled_output": final_pooled}]]
 
@@ -286,34 +366,6 @@ def pad_cond(cond: Tensor, target_length: int):
         # perform padding
         cond = F.pad(cond, (0, 0, left_pad, right_pad))
     return cond
-
-
-def lerp_tensors(tensor_from: Tensor, tensor_to: Tensor, strength_to: Tensor):
-    # basic weighted average to combine conds
-    # TODO: see how far we can generalize this, and if some params need to change
-    return torch.mul(tensor_from, (1.0-strength_to)) + torch.mul(tensor_to, strength_to)
-
-
-# https://matilabs.ai/2024/03/05/slerp-model-merging-primer/#slerp-code
-# https://medium.com/@akp83540/slerp-algorithm-a4ce1bacee4a
-def slerp_tensors(tensor_from: Tensor, tensor_to: Tensor, strength_to: Tensor, dot_threshold=0.9995):
-    # normalize tensors
-    normal_from = tensor_from / tensor_from.norm()
-    normal_to = tensor_to / tensor_to.norm()
-    # get dot product to find the cosine of the angle between the tensors (vectors)
-    dot = (normal_from * normal_to).sum()
-    # if tensors (vectors) nearly parallel (dot product ~ 1.0), simplify to lerp
-    if dot.abs() > dot_threshold:
-        return lerp_tensors(tensor_from=tensor_from, tensor_to=tensor_to, strength_to=strength_to)
-    # omega (Ω)
-    omega = dot.acos()
-    # apply formula:
-    # q(t) = (q₀ * sin((1 — t) * Ω)) / sin(Ω) + (q₁ * sin(t * Ω)) / sin(Ω)
-    # simplified to (extract sin(Ω)):
-    # q(t) = ((q₀ * sin((1 — t) * Ω)) + (q₁ * sin(t * Ω))) / sin(Ω)
-    sin_from = ((1.0 - strength_to) * omega).sin()
-    sin_to = (strength_to * omega).sin()
-    return (tensor_from * sin_from + tensor_to * sin_to) / omega.sin()
 
 
 def evaluate_value_schedule(text: str, length: int):
