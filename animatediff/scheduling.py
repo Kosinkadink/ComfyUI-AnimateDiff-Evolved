@@ -469,6 +469,7 @@ def handle_float_vals(groups: list[tuple]):
     actual_pairs: list[InputPair] = []
     errors: list[ParseErrorReport] = []
     for idx_str, val_str in groups:
+        val_str = strip_value(val_str)
         try:
             val = float(val_str)
         except ValueError:
@@ -583,7 +584,7 @@ def is_surrounded(text: str, pair):
 
 def is_surrounded_pairs(text: str, pairs):
     for pair in pairs:
-        if is_surrounded(pair[0], pair[1]):
+        if is_surrounded(text, pair):
             return True
     return False
 
