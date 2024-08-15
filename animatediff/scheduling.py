@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from dataclasses import dataclass
 
 from comfy.sd import CLIP
+from comfy.utils import ProgressBar
+import comfy.model_management
 
 from .utils_model import InterpolationMethod
 from .utils_motion import extend_list_to_batch_size
@@ -231,6 +233,10 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
         for key, value in values_replace.items():
             if len(value) < length:
                 values_replace[key] = extend_list_to_batch_size(value, length)
+
+    pairs_lengths = len(pairs)
+    pbar_total = length + pairs_lengths
+    pbar = ProgressBar(pbar_total)
     # for now, use FizzNodes approach of calculating max size of tokens beforehand;
     # this doubles total encoding time, as this will be done again.
     # TODO: do this dynamically to save encoding time
@@ -239,6 +245,7 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
         prepared_prompt = apply_values_replace_to_prompt(pair.val, 0, values_replace=values_replace)
         cond: Tensor = clip.encode_from_tokens(clip.tokenize(prepared_prompt))
         max_size = max(max_size, cond.shape[1])
+        pbar.update(1)
 
     real_holders: list[CondHolder] = [None] * length
     real_cond = [None] * length
@@ -259,8 +266,11 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
                 real_cond[i] = cond
                 real_pooled[i] = pooled
                 real_holders[i] = holder
+                pbar.update(1)
+                comfy.model_management.throw_exception_if_processing_interrupted()
         # if idx is exactly one greater than the one before, nothing special
         elif prev_holder.idx == pair.idx-1:
+            comfy.model_management.throw_exception_if_processing_interrupted()
             holder = prev_holder
             if pair.idx < length:
                 real_prompt = apply_values_replace_to_prompt(pair.val, pair.idx, values_replace=values_replace)
@@ -270,6 +280,7 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
                 real_cond[pair.idx] = cond
                 real_pooled[pair.idx] = pooled
                 real_holders[pair.idx] = holder
+                pbar.update(1)
         else:
             # if holding value, no interpolation
             if prev_holder.hold:
@@ -288,6 +299,8 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
                     real_cond[i] = holder.cond
                     real_pooled[i] = holder.pooled
                     real_holders[i] = holder
+                    pbar.update(1)
+                    comfy.model_management.throw_exception_if_processing_interrupted()
                 if pair.idx < length:
                     real_prompt = apply_values_replace_to_prompt(pair.val, pair.idx, values_replace=values_replace)
                     cond, pooled = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
@@ -296,6 +309,8 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
                     real_cond[pair.idx] = cond
                     real_pooled[pair.idx] = pooled
                     real_holders[pair.idx] = holder
+                    pbar.update(1)
+                    comfy.model_management.throw_exception_if_processing_interrupted()
             # otherwise, interpolate
             else:
                 diff_len = abs(pair.idx-prev_holder.idx)+1
@@ -339,6 +354,8 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
                     real_cond[idx_int] = cond_interp
                     real_pooled[idx_int] = pooled_interp
                     real_holders[idx_int] = interm_holder
+                    pbar.update(1)
+                    comfy.model_management.throw_exception_if_processing_interrupted()
         assert holder is not None
         prev_holder = holder
 
@@ -357,6 +374,7 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
             real_pooled[i] = prev_holder.pooled
         else:
             prev_holder = real_holders[i]
+        pbar.update(1)
     
     final_cond = torch.cat(real_cond, dim=0)
     final_pooled = torch.cat(real_pooled, dim=0)
