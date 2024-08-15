@@ -103,6 +103,27 @@ class MultivalDynamicFloatInputNode:
         return MultivalDynamicNode.create_multival(self, float_val=float_val, mask_optional=mask_optional)
 
 
+class MultivalDynamicFloatsNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "floats": ("FLOATS", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001},),
+            },
+            "optional": {
+                "mask_optional": ("MASK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
+        }
+    
+    RETURN_TYPES = ("MULTIVAL",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/multival"
+    FUNCTION = "create_multival"
+
+    def create_multival(self, floats: Union[float, list[float]]=None, mask_optional: Tensor=None):
+        return MultivalDynamicNode.create_multival(self, float_val=floats, mask_optional=mask_optional)
+
+
 class MultivalFloatNode:
     @classmethod
     def INPUT_TYPES(s):

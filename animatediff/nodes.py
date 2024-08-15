@@ -11,7 +11,7 @@ from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateD
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
 from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
-from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalConvertToMaskNode
+from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalDynamicFloatsNode, MultivalConvertToMaskNode
 from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
                                  SetModelLoraHook, SetClipLoraHook,
                                  CombineLoraHooks, CombineLoraHookFourOptional, CombineLoraHookEightOptional,
@@ -37,6 +37,8 @@ from .nodes_context_extras import (SetContextExtrasOnContextOptions, ContextExtr
 from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, SweetspotStretchPENode, FullStretchPENode,
                                 WeightAdjustAllAddNode, WeightAdjustAllMultNode, WeightAdjustIndivAddNode, WeightAdjustIndivMultNode,
                                 WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
+from .nodes_scheduling import (PromptSchedulingNode, PromptSchedulingLatentsNode, ValueSchedulingNode, ValueSchedulingLatentsNode,
+                               AddValuesReplaceNode, FloatToFloatsNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect, PerturbedAttentionGuidanceMultival, RescaleCFGMultival
 from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated,
                                AnimateDiffModelSettings, AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
@@ -57,6 +59,7 @@ NODE_CLASS_MAPPINGS = {
     # Multival Nodes
     "ADE_MultivalDynamic": MultivalDynamicNode,
     "ADE_MultivalDynamicFloatInput": MultivalDynamicFloatInputNode,
+    "ADE_MultivalDynamicFloats": MultivalDynamicFloatsNode,
     "ADE_MultivalScaledMask": MultivalScaledMaskNode,
     "ADE_MultivalConvertToMask": MultivalConvertToMaskNode,
     ###############################################################################
@@ -152,6 +155,13 @@ NODE_CLASS_MAPPINGS = {
     "ADE_SigmaScheduleToSigmas": SigmaScheduleToSigmasNode,
     "ADE_NoisedImageInjection": NoisedImageInjectionNode,
     "ADE_NoisedImageInjectOptions": NoisedImageInjectOptionsNode,
+    # Scheduling
+    PromptSchedulingNode.NodeID: PromptSchedulingNode,
+    PromptSchedulingLatentsNode.NodeID: PromptSchedulingLatentsNode,
+    ValueSchedulingNode.NodeID: ValueSchedulingNode,
+    ValueSchedulingLatentsNode.NodeID: ValueSchedulingLatentsNode,
+    AddValuesReplaceNode.NodeID: AddValuesReplaceNode,
+    FloatToFloatsNode.NodeID: FloatToFloatsNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -206,6 +216,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Multival Nodes
     "ADE_MultivalDynamic": "Multival 🎭🅐🅓",
     "ADE_MultivalDynamicFloatInput": "Multival [Float List] 🎭🅐🅓",
+    "ADE_MultivalDynamicFloats": "Multival [Floats] 🎭🅐🅓",
     "ADE_MultivalScaledMask": "Multival Scaled Mask 🎭🅐🅓",
     "ADE_MultivalConvertToMask": "Multival to Mask 🎭🅐🅓",
     ###############################################################################
@@ -301,6 +312,13 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SigmaScheduleToSigmas": "Sigma Schedule To Sigmas 🎭🅐🅓",
     "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",
     "ADE_NoisedImageInjectOptions": "Image Injection Options 🎭🅐🅓",
+    # Scheduling
+    PromptSchedulingNode.NodeID: PromptSchedulingNode.NodeName,
+    PromptSchedulingLatentsNode.NodeID: PromptSchedulingLatentsNode.NodeName,
+    ValueSchedulingNode.NodeID: ValueSchedulingNode.NodeName,
+    ValueSchedulingLatentsNode.NodeID: ValueSchedulingLatentsNode.NodeName,
+    AddValuesReplaceNode.NodeID: AddValuesReplaceNode.NodeName,
+    FloatToFloatsNode.NodeID:FloatToFloatsNode.NodeName,
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

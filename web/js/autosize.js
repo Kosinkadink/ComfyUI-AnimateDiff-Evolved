@@ -1,13 +1,6 @@
 import { app } from '../../../scripts/app.js'
 app.registerExtension({
     name: "AnimateDiffEvolved.autosize",
-    async nodeCreated(node) {
-        if(node.adeAutosize) {
-            let size = node.computeSize(0);
-            size[0] += node.adeAutosize?.padding || 0;
-            node.setSize(size);
-        }
-    },
     async getCustomWidgets() {
         return {
             ADEAUTOSIZE(node, inputName, inputData) {
@@ -20,11 +13,18 @@ app.registerExtension({
                         return [0, -4];
                     }
                 }
-                node.adeAutosize = inputData[1];
                 if (!node.widgets) {
                     node.widgets = []
                 }
                 node.widgets.push(w)
+                let origOnCreated = node.onNodeCreated
+                node.onNodeCreated = function() {
+                    let r = origOnCreated?.apply(this, arguments)
+                    let size = this.computeSize();
+                    size[0] += inputData[1].padding || 0;
+                    this.setSize(size);
+                    return r
+                }
                 return w;
             }
         }

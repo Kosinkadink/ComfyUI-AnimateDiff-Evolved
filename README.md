@@ -3,12 +3,12 @@
 Improved [AnimateDiff](https://github.com/guoyww/AnimateDiff/) integration for ComfyUI, as well as advanced sampling options dubbed Evolved Sampling usable outside of AnimateDiff. Please read the AnimateDiff repo README and Wiki for more information about how it works at its core.
 
 AnimateDiff workflows will often make use of these helpful node packs:
-- [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) for prompt-travel functionality with the BatchPromptSchedule node. Maintained by FizzleDorf.
 - [ComfyUI-Advanced-ControlNet](https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet) for making ControlNets work with Context Options and controlling which latents should be affected by the ControlNet inputs. Includes SparseCtrl support. Maintained by me.
 - [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) for loading videos, combining images into videos, and doing various image/latent operations like appending, splitting, duplicating, selecting, or counting. Actively maintained by AustinMroz and I.
 - [comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux) for ControlNet preprocessors not present in vanilla ComfyUI. Maintained by Fannovel16.
 - [ComfyUI_IPAdapter_plus](https://github.com/cubiq/ComfyUI_IPAdapter_plus) for IPAdapter support. Maintained by cubiq (matt3o).
 - [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) for miscellaneous nodes including selecting coordinates for animated GLIGEN. Maintained by kijai.
+- [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes) for an alternate way to do prompt-travel functionality with the BatchPromptSchedule node. Maintained by FizzleDorf.
 
 # Installation
 
@@ -49,7 +49,7 @@ NOTE: you can also use custom locations for models/motion loras by making use of
 - FreeInit and FreeNoise support (FreeInit is under iteration opts, FreeNoise is in SampleSettings' noise_type dropdown)
 - Mixable Motion LoRAs from [original AnimateDiff repository](https://github.com/guoyww/animatediff/) implemented. Caveat: the original loras really only work on v2-based motion models like ```mm_sd_v15_v2```, ```mm-p_0.5.pth```, and ```mm-p_0.75.pth```.
      - UPDATE: New motion LoRAs without the v2 limitation can now be trained via the [AnimateDiff-MotionDirector repo](https://github.com/ExponentialML/AnimateDiff-MotionDirector). Shoutout to ExponentialML for implementing MotionDirector for AnimateDiff purposes!
-- Prompt travel using BatchPromptSchedule node from [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes)
+- Prompt travel using built-in Prompt Scheduling nodes, or BatchPromptSchedule node from [ComfyUI_FizzNodes](https://github.com/FizzleDorf/ComfyUI_FizzNodes)
 - Scale and Effect multival inputs to control motion amount and motion model influence on generation.
      - Can be float, list of floats, or masks
 - Custom noise scheduling via Noise Types, Noise Layers, and seed_override/seed_offset/batch_offset in Sample Settings and related nodes
@@ -78,7 +78,7 @@ NOTE: you can also use custom locations for models/motion loras by making use of
 - ContextRef and NaiveReuse (novel cross-context consistency techniques)
 
 ## Upcoming Features
-- Example workflows for **every feature** in AnimateDiff-Evolved repo, and hopefully a long Youtube video showing all features (Goal: before Elden Ring DLC releases. Working on it right now.)
+- Example workflows for **every feature** in AnimateDiff-Evolved repo, nodes will have usage descriptions (currently Value/Prompt Scheduling nodes have them), and YouTube tutorials/documentation
 - [UniCtrl](https://github.com/XuweiyiChen/UniCtrl) support
 - Unet-Ref support so that a bunch of papers can be ported over
 - [StoryDiffusion](https://github.com/HVision-NKU/StoryDiffusion) implementation
@@ -86,7 +86,6 @@ NOTE: you can also use custom locations for models/motion loras by making use of
 - Maskable Motion LoRA
 - Timestep schedulable GLIGEN coordinates
 - Dynamic memory management for motion models that load/unload at different start/end_percents
-- Built-in prompt travel implementation
 - Anything else AnimateDiff-related that comes out
 
 
@@ -351,35 +350,44 @@ The ```mask_optional``` parameter determines where on the initial noise the nois
 # Samples (download or drag images of the workflows into ComfyUI to instantly load the corresponding workflows!)
 
 NOTE: I've scaled down the gifs to 0.75x size to make them take up less space on the README.
+The updated workflows have included Context Options and Sample Settings connected. The Context Options (and FreeNoise) do nothing unless context windows are triggered.
 
-### txt2img
-
-| Result |
-|---|
-| ![readme_00006](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/b615a4aa-db3e-4b24-b88f-b694e52f6364) |
-| Workflow |
-| ![t2i_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/6eb47506-b503-482b-9baf-4c238f30a9c2)   |
-
-### txt2img - (prompt travel)
+### txt2vid
 
 | Result |
 |---|
-| ![readme_00010](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/c27a2029-2c69-4272-b40f-64408e9e2ea6) |
+| ![readme_00461](https://github.com/user-attachments/assets/e46e1a8b-cb50-4c6c-ad0e-07bfd75c6657) |
 | Workflow |
-| ![t2i_prompttravel_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/e5a72ea1-628d-423e-98ed-f20e1bcc5320) |
+| ![workflow-txt2vid](https://github.com/user-attachments/assets/999f90a6-5958-4c7d-8dd6-4847f6de0d37) |
 
-
-
-### txt2img - 48 frame animation with 16 context_length (Context Options◆Standard Static) + FreeNoise
+### txt2vid - (prompt travel)
 
 | Result |
 |---|
-| ![readme_00012](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/684f6e79-d653-482f-899a-1900dc56cd8f) |
+| ![readme_00463](https://github.com/user-attachments/assets/4c3e698c-2388-437a-b7a1-7857403a569a) |
 | Workflow |
-| ![t2i_context_freenoise_wf](https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved/assets/7365912/9d0e53fa-49d6-483d-a660-3f41d7451002) |
+| ![workflow-txt2vid-travel](https://github.com/user-attachments/assets/c3ce95bb-b98a-40d6-bb9c-66dabf325eb7) |
+
+### txt2vid - 32 frame animation with 16 context_length
+
+| Result |
+|---|
+| ![readme_00475](https://github.com/user-attachments/assets/576d0293-1d32-4e9e-8ee8-124fc9421276) |
+| Workflow |
+| ![workflow-txt2vid-32frames](https://github.com/user-attachments/assets/0a320d9c-604b-4ac1-afe9-cc5c747f2118) |
+
+### txt2vid - 32 frame animation with 16 context_length + ContextRef
+
+Compared to without ContextRef, this tries to make the rest of the animation be more similar to the first context window.
+
+| Result |
+|---|
+| ![readme_00474](https://github.com/user-attachments/assets/0870cea5-071c-42b1-acfb-4174bcb12d6f) |
+| Workflow |
+| ![workflow-txt2vid-32frames-contextref](https://github.com/user-attachments/assets/99ed4955-4a14-471b-9a53-d7791496de37) |
 
 
-# Old Samples (TODO: update all of these + add new ones when I get sleep)
+# Old Samples (TODO: update all of these + add new ones SOON)
 
 ### txt2img - 32 frame animation with 16 context_length (uniform) - PanLeft and ZoomOut Motion LoRAs
 
