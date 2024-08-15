@@ -78,6 +78,7 @@ class ValueSchedulingLatentsNode:
             },
             "optional": {
                 "print_schedule": ("BOOLEAN", {"default": False}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             },
         }
     
@@ -105,6 +106,7 @@ class ValueSchedulingNode:
             "optional": {
                 "print_schedule": ("BOOLEAN", {"default": False}),
                 "max_length": ("INT", {"default": 0, "min": 0, "max": BIGMAX, "step": 1}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             },
         }
 
