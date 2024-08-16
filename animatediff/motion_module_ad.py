@@ -60,6 +60,55 @@ class AnimateDiffInfo:
         return f"{self.mm_name}:{self.mm_version}:{self.mm_format}:{self.sd_type}"
 
 
+#######################
+# Facilitate Per-Block Effect and Scale Control
+class PerAttn:
+    def __init__(self, attn_idx: Union[int, None], scale: Union[float, Tensor, None]):
+        self.attn_idx = attn_idx
+        self.scale = scale
+    
+    def matches(self, id: int):
+        if self.attn_idx is None:
+            return True
+        return self.attn_idx == id
+
+
+class PerBlockId:
+    def __init__(self, block_type: str, block_idx: Union[int, None], module_idx: Union[int, None]):
+        self.block_type = block_type
+        self.block_idx = block_idx
+        self.module_idx = module_idx
+    
+    def matches(self, other: 'PerBlockId') -> bool:
+        # block_type
+        if other.block_type != self.block_type:
+            return False
+        # block_idx
+        if other.block_idx is None:
+            return True
+        elif other.block_idx != self.block_idx:
+            return False
+        # module_idx
+        if other.module_idx is None:
+            return True
+        return other.module_idx == self.module_idx
+    
+    def __str__(self):
+        return f"PerBlockId({self.block_type},{self.block_idx},{self.module_idx})"
+
+
+class PerBlock:
+    def __init__(self, id: PerBlockId, effect: Union[float, Tensor, None]=None,
+                 per_attn_scale: Union[list[PerAttn], None]=None):
+        self.id = id
+        self.effect = effect
+        self.per_attn_scale = per_attn_scale
+
+    def matches(self, id: PerBlockId):
+        return self.id.matches(id)
+#----------------------
+#######################
+
 def is_hotshotxl(mm_state_dict: dict[str, Tensor]) -> bool:
     # use pos_encoder naming to determine if hotshotxl model
     for key in mm_state_dict.keys():
@@ -628,6 +677,7 @@ class VanillaTemporalModule(nn.Module):
         self.block_type = block_type
         self.block_idx = block_idx
         self.module_idx = module_idx
+        self.id = PerBlockId(block_type=block_type, block_idx=block_idx, module_idx=module_idx)
         # effect vars
         self.effect = None
         self.temp_effect_mask: Tensor = None
@@ -668,7 +718,15 @@ class VanillaTemporalModule(nn.Module):
     def set_scale_mask(self, mask: Tensor):
         self.temporal_transformer.set_scale_mask(mask)
 
-    def set_effect(self, multival: Union[float, Tensor]):
+    def set_scale(self, multiplier: Union[float, Tensor, None], per_block_list: Union[list[PerBlock], None]=None):
+        self.temporal_transformer.set_scale(multiplier)
+
+    def set_effect(self, multival: Union[float, Tensor], per_block_list: Union[list[PerBlock], None]=None):
+        if per_block_list is not None:
+            for per_block in per_block_list:
+                if self.id.matches(per_block.id) and per_block.effect is not None:
+                    multival = per_block.effect
+                    break
         if type(multival) == Tensor:
             self.effect = multival
         elif multival is not None and math.isclose(multival, 1.0):
@@ -677,7 +735,7 @@ class VanillaTemporalModule(nn.Module):
             self.effect = multival
         self.temp_effect_mask = None
     
-    def set_cameractrl_effect(self, multival: Union[float, Tensor]):
+    def set_cameractrl_effect(self, multival: Union[float, Tensor, None]):
         if type(multival) == Tensor:
             pass
         elif multival is None:
@@ -741,6 +799,7 @@ class VanillaTemporalModule(nn.Module):
         return self.camera_features is not None and self.block_type != BlockType.MID# and self.module_idx == 0
 
     def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None):
+        #logger.info(f"block_type: {self.block_type}, block_idx: {self.block_idx}, module_idx: {self.module_idx}")
         mm_kwargs = None
         if self.should_handle_camera_features():
             mm_kwargs = {"camera_feature": self.camera_features[self.block_idx]}
@@ -843,6 +902,14 @@ class TemporalTransformer3DModel(nn.Module):
         self.raw_scale_mask = mask
         self.temp_scale_mask = None
 
+    def set_scale(self, scale: Union[float, Tensor, None]):
+        if type(scale) == Tensor:
+            self.set_scale_mask(scale)
+            self.set_scale_multiplier(None)
+        else:
+            self.set_scale_mask(None)
+            self.set_scale_multiplier(scale)
+
     def set_cameractrl_effect(self, multival: Union[float, Tensor]):
         self.raw_cameractrl_effect = multival
         self.temp_cameractrl_effect = None
@@ -926,7 +993,7 @@ class TemporalTransformer3DModel(nn.Module):
             self.temp_cameractrl_effect = None
         # otherwise, calculate temp_cameractrl
         self.prev_cameractrl_hidden_states_batch = batch
-        mask = prepare_mask_batch(self.raw_scale_mask, shape=(self.full_length, 1, height, width))
+        mask = prepare_mask_batch(self.raw_cameractrl_effect, shape=(self.full_length, 1, height, width))
         mask = repeat_to_batch_size(mask, self.full_length)
         # if mask not the same amount length as full length, make it match
         if self.full_length != mask.shape[0]:
@@ -1044,9 +1111,15 @@ class TemporalTransformerBlock(nn.Module):
         self.ff = FeedForward(dim, dropout=dropout, glu=(activation_fn == "geglu"), operations=ops)
         self.ff_norm = ops.LayerNorm(dim)
 
-    def set_scale_multiplier(self, multiplier: Union[float, None]):
-        for block in self.attention_blocks:
-            block.set_scale_multiplier(multiplier)
+    def set_scale_multiplier(self, multiplier: Union[float, None], per_attn_list: Union[list[PerAttn], None]=None):
+        for idx, block in enumerate(self.attention_blocks):
+            mult = multiplier
+            if per_attn_list is not None:
+                for per_attn in per_attn_list:
+                    if per_attn.attn_idx == idx:
+                        mult = per_attn.scale
+                        break
+            block.set_scale_multiplier(mult)
 
     def set_sub_idxs(self, sub_idxs: list[int]):
         for block in self.attention_blocks:
@@ -1064,7 +1137,7 @@ class TemporalTransformerBlock(nn.Module):
         video_length: int=None,
         scale_mask: Tensor=None,
         cameractrl_effect: Union[float, Tensor] = None,
-        view_options: ContextOptions=None,
+        view_options: Union[ContextOptions, None]=None,
         mm_kwargs: dict[str]=None,
     ):
         # make view_options None if context_length > video_length, or if equal and equal not allowed
