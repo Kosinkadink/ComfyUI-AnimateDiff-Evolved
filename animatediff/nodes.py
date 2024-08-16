@@ -39,6 +39,8 @@ from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, Swe
                                 WeightAdjustIndivAttnAddNode, WeightAdjustIndivAttnMultNode)
 from .nodes_scheduling import (PromptSchedulingNode, PromptSchedulingLatentsNode, ValueSchedulingNode, ValueSchedulingLatentsNode,
                                AddValuesReplaceNode, FloatToFloatsNode)
+from .nodes_per_block import (ADBlockComboNode, ADBlockIndivNode, PerBlockHighLevelNode,
+                              PerBlock_SD15_LowLevelNode, PerBlock_SD15_MidLevelNode, PerBlock_SDXL_LowLevelNode, PerBlock_SDXL_MidLevelNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect, PerturbedAttentionGuidanceMultival, RescaleCFGMultival
 from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated,
                                AnimateDiffModelSettings, AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
@@ -162,6 +164,14 @@ NODE_CLASS_MAPPINGS = {
     ValueSchedulingLatentsNode.NodeID: ValueSchedulingLatentsNode,
     AddValuesReplaceNode.NodeID: AddValuesReplaceNode,
     FloatToFloatsNode.NodeID: FloatToFloatsNode,
+    # Per-Block
+    ADBlockComboNode.NodeID: ADBlockComboNode,
+    ADBlockIndivNode.NodeID: ADBlockIndivNode,
+    PerBlockHighLevelNode.NodeID: PerBlockHighLevelNode,
+    PerBlock_SD15_MidLevelNode.NodeID: PerBlock_SD15_MidLevelNode,
+    PerBlock_SD15_LowLevelNode.NodeID: PerBlock_SD15_LowLevelNode,
+    PerBlock_SDXL_MidLevelNode.NodeID: PerBlock_SDXL_MidLevelNode,
+    PerBlock_SDXL_LowLevelNode.NodeID: PerBlock_SDXL_LowLevelNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -319,6 +329,14 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     ValueSchedulingLatentsNode.NodeID: ValueSchedulingLatentsNode.NodeName,
     AddValuesReplaceNode.NodeID: AddValuesReplaceNode.NodeName,
     FloatToFloatsNode.NodeID:FloatToFloatsNode.NodeName,
+    # Per-Block
+    ADBlockComboNode.NodeID: ADBlockComboNode.NodeName,
+    ADBlockIndivNode.NodeID: ADBlockIndivNode.NodeName,
+    PerBlockHighLevelNode.NodeID: PerBlockHighLevelNode.NodeName,
+    PerBlock_SD15_MidLevelNode.NodeID: PerBlock_SD15_MidLevelNode.NodeName,
+    PerBlock_SD15_LowLevelNode.NodeID: PerBlock_SD15_LowLevelNode.NodeName,
+    PerBlock_SDXL_MidLevelNode.NodeID: PerBlock_SDXL_MidLevelNode.NodeName,
+    PerBlock_SDXL_LowLevelNode.NodeID: PerBlock_SDXL_LowLevelNode.NodeName,
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

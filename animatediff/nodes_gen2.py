@@ -9,8 +9,9 @@ from .logger import logger
 from .utils_model import BIGMAX, BetaSchedules, get_available_motion_models
 from .utils_motion import ADKeyframeGroup, ADKeyframe, InputPIA
 from .motion_lora import MotionLoraList
+from .motion_module_ad import AllPerBlocks
 from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module,
-                              load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2)
+                              load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2, validate_per_block_compatibility)
 from .sample_settings import SampleSettings
 
 
@@ -94,7 +95,8 @@ class ApplyAnimateDiffModelNode:
                 "effect_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 80}),
+                "per_block": ("PER_BLOCK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -104,7 +106,7 @@ class ApplyAnimateDiffModelNode:
 
     def apply_motion_model(self, motion_model: MotionModelPatcher, start_percent: float=0.0, end_percent: float=1.0,
                            motion_lora: MotionLoraList=None, ad_keyframes: ADKeyframeGroup=None,
-                           scale_multival=None, effect_multival=None,
+                           scale_multival=None, effect_multival=None, per_block: AllPerBlocks=None,
                            prev_m_models: MotionModelGroup=None,):
         # set up motion models list
         if prev_m_models is None:
@@ -122,6 +124,9 @@ class ApplyAnimateDiffModelNode:
                 load_motion_lora_as_patches(motion_model, lora)
         motion_model.scale_multival = scale_multival
         motion_model.effect_multival = effect_multival
+        if per_block is not None:
+            validate_per_block_compatibility(motion_model=motion_model, all_per_blocks=per_block)
+            motion_model.per_block_list = per_block.per_block_list
         motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
         motion_model.timestep_percent_range = (start_percent, end_percent)
         # add to beginning, so that after injection, it will be the earliest of prev_m_models to be run
@@ -141,7 +146,8 @@ class ApplyAnimateDiffModelBasicNode:
                 "scale_multival": ("MULTIVAL",),
                 "effect_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 40}),
+                "per_block": ("PER_BLOCK",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -151,11 +157,12 @@ class ApplyAnimateDiffModelBasicNode:
 
     def apply_motion_model(self,
                            motion_model: MotionModelPatcher, motion_lora: MotionLoraList=None,
-                           scale_multival=None, effect_multival=None, ad_keyframes=None):
+                           scale_multival=None, effect_multival=None, ad_keyframes=None,
+                           per_block: AllPerBlocks=None):
         # just a subset of normal ApplyAnimateDiffModelNode inputs
         return ApplyAnimateDiffModelNode.apply_motion_model(self, motion_model, motion_lora=motion_lora,
                                                             scale_multival=scale_multival, effect_multival=effect_multival,
-                                                            ad_keyframes=ad_keyframes)
+                                                            ad_keyframes=ad_keyframes, per_block=per_block)
 
 
 class LoadAnimateDiffModelNode:

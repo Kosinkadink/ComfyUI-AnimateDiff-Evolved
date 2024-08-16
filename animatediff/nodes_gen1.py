@@ -10,7 +10,10 @@ from .logger import logger
 from .utils_model import BetaSchedules, get_available_motion_loras, get_available_motion_models, get_motion_lora_path
 from .utils_motion import ADKeyframeGroup, get_combined_multival
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, load_motion_lora_as_patches, load_motion_module_gen1, load_motion_module_gen2, validate_model_compatibility_gen2
+from .motion_module_ad import AllPerBlocks
+from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup,
+                              load_motion_lora_as_patches, load_motion_module_gen1, load_motion_module_gen2, validate_model_compatibility_gen2,
+                              validate_per_block_compatibility)
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .sampling import motion_sample_factory
 
@@ -33,6 +36,7 @@ class AnimateDiffLoaderGen1:
                 "sample_settings": ("SAMPLE_SETTINGS",),
                 "scale_multival": ("MULTIVAL",),
                 "effect_multival": ("MULTIVAL",),
+                "per_block": ("PER_BLOCK",),
             }
         }
 
@@ -45,6 +49,7 @@ class AnimateDiffLoaderGen1:
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
         context_options: ContextOptionsGroup=None, motion_lora: MotionLoraList=None, ad_settings: AnimateDiffSettings=None,
         sample_settings: SampleSettings=None, scale_multival=None, effect_multival=None, ad_keyframes: ADKeyframeGroup=None,
+        per_block: AllPerBlocks=None,
     ):
         # load motion module and motion settings, if included
         motion_model = load_motion_module_gen2(model_name=model_name, motion_model_settings=ad_settings)
@@ -56,6 +61,9 @@ class AnimateDiffLoaderGen1:
                 load_motion_lora_as_patches(motion_model, lora)
         motion_model.scale_multival = scale_multival
         motion_model.effect_multival = effect_multival
+        if per_block is not None:
+            validate_per_block_compatibility(motion_model=motion_model, all_per_blocks=per_block)
+            motion_model.per_block_list = per_block.per_block_list
         motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
         
         # create injection params

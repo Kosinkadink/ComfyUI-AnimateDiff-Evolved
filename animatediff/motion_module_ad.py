@@ -1,6 +1,7 @@
 import math
 from typing import Iterable, Tuple, Union, TYPE_CHECKING
 import re
+from dataclasses import dataclass
 
 import torch
 from einops import rearrange, repeat
@@ -20,7 +21,8 @@ from .context import ContextFuseMethod, ContextOptions, get_context_weights, get
 from .adapter_animatelcm_i2v import AdapterEmbed
 if TYPE_CHECKING:  # avoids circular import
     from .adapter_cameractrl import CameraPoseEncoder
-from .utils_motion import CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, prepare_mask_batch
+from .utils_motion import (CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, prepare_mask_batch,
+                           get_combined_multival)
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
 
@@ -74,7 +76,7 @@ class PerAttn:
 
 
 class PerBlockId:
-    def __init__(self, block_type: str, block_idx: Union[int, None], module_idx: Union[int, None]):
+    def __init__(self, block_type: str, block_idx: Union[int, None]=None, module_idx: Union[int, None]=None):
         self.block_type = block_type
         self.block_idx = block_idx
         self.module_idx = module_idx
@@ -99,13 +101,19 @@ class PerBlockId:
 
 class PerBlock:
     def __init__(self, id: PerBlockId, effect: Union[float, Tensor, None]=None,
-                 per_attn_scale: Union[list[PerAttn], None]=None):
+                 scales: Union[list[Union[float, Tensor, None]], None]=None):
         self.id = id
         self.effect = effect
-        self.per_attn_scale = per_attn_scale
+        self.scales = scales
 
     def matches(self, id: PerBlockId):
         return self.id.matches(id)
+    
+
+@dataclass
+class AllPerBlocks:
+    per_block_list: list[PerBlock]
+    sd_type: Union[str, None] = None
 #----------------------
 #######################
 
@@ -282,6 +290,7 @@ class AnimateDiffModel(nn.Module):
                                           temporal_pe_max_len=self.encoding_max_len, block_type=BlockType.MID, ops=ops)
         self.AD_video_length: int = 24
         self.effect_model = 1.0
+        self.effect_per_block_list = None
         # AnimateLCM-I2V stuff - create AdapterEmbed if keys present for it
         self.img_encoder: AdapterEmbed = None
         if has_img_encoder(mm_state_dict):
@@ -475,21 +484,22 @@ class AnimateDiffModel(nn.Module):
         if self.mid_block is not None:
             self.mid_block.set_scale(scale, per_block_list)
     
-    def set_effect(self, multival: Union[float, Tensor]):
+    def set_effect(self, multival: Union[float, Tensor, None], per_block_list: Union[list[PerBlock], None]=None):
         # keep track of if model is in effect
         if multival is None:
             self.effect_model = 1.0
         else:
             self.effect_model = multival
+        self.effect_per_block_list = per_block_list
         # pass down effect multival to all blocks
         if self.down_blocks is not None:
             for block in self.down_blocks:
-                block.set_effect(multival)
+                block.set_effect(multival, per_block_list)
         if self.up_blocks is not None:
             for block in self.up_blocks:
-                block.set_effect(multival)
+                block.set_effect(multival, per_block_list)
         if self.mid_block is not None:
-            self.mid_block.set_effect(multival)
+            self.mid_block.set_effect(multival, per_block_list)
 
     def is_in_effect(self):
         if type(self.effect_model) == Tensor:
@@ -590,9 +600,9 @@ class MotionModule(nn.Module):
         for motion_module in self.motion_modules:
             motion_module.set_scale(scale, per_block_list)
 
-    def set_effect(self, multival: Union[float, Tensor]):
+    def set_effect(self, multival: Union[float, Tensor], per_block_list: Union[list[PerBlock], None]=None):
         for motion_module in self.motion_modules:
-            motion_module.set_effect(multival)
+            motion_module.set_effect(multival, per_block_list)
     
     def set_cameractrl_effect(self, multival: Union[float, Tensor]):
         for motion_module in self.motion_modules:
@@ -695,7 +705,8 @@ class VanillaTemporalModule(nn.Module):
         if per_block_list is not None:
             for per_block in per_block_list:
                 if self.id.matches(per_block.id) and per_block.effect is not None:
-                    multival = per_block.effect
+                    multival = get_combined_multival(multival, per_block.effect)
+                    logger.info(f"block_type: {self.block_type}, block_idx: {self.block_idx}, module_idx: {self.module_idx}")
                     break
         if type(multival) == Tensor:
             self.effect = multival
