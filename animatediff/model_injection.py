@@ -821,7 +821,7 @@ class MotionModelPatcher(ModelPatcher):
 
     def pre_run(self, model: ModelPatcherAndInjector):
         self.cleanup()
-        self.model.set_scale(self.scale_multival)
+        self.model.set_scale(self.scale_multival, self.per_block_list)
         self.model.set_effect(self.effect_multival, self.per_block_list)
         self.model.set_cameractrl_effect(self.cameractrl_multival)
         if self.model.img_encoder is not None:
@@ -885,7 +885,7 @@ class MotionModelPatcher(ModelPatcher):
             self.combined_pia_mask = get_combined_input(self.pia_input, self.current_pia_input, x)
             self.combined_pia_effect = get_combined_input_effect_multival(self.pia_input, self.current_pia_input)
             # apply scale and effect
-            self.model.set_scale(self.combined_scale)
+            self.model.set_scale(self.combined_scale, self.per_block_list)
             self.model.set_effect(self.combined_effect, self.per_block_list) # TODO: set combined_per_block_list
             self.model.set_cameractrl_effect(self.combined_cameractrl_effect)
         # apply effect - if not within range, set effect to 0, effectively turning model off

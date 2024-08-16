@@ -2,6 +2,7 @@ import math
 from typing import Iterable, Tuple, Union, TYPE_CHECKING
 import re
 from dataclasses import dataclass
+from collections.abc import Iterable
 
 import torch
 from einops import rearrange, repeat
@@ -21,8 +22,8 @@ from .context import ContextFuseMethod, ContextOptions, get_context_weights, get
 from .adapter_animatelcm_i2v import AdapterEmbed
 if TYPE_CHECKING:  # avoids circular import
     from .adapter_cameractrl import CameraPoseEncoder
-from .utils_motion import (CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, prepare_mask_batch,
-                           get_combined_multival)
+from .utils_motion import (CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, extend_list_to_batch_size,
+                           prepare_mask_batch, get_combined_multival)
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
 
@@ -685,6 +686,7 @@ class VanillaTemporalModule(nn.Module):
             cross_frame_attention_mode=cross_frame_attention_mode,
             temporal_pe=temporal_pe,
             temporal_pe_max_len=temporal_pe_max_len,
+            block_id=self.id,
             ops=ops
         )
 
@@ -699,14 +701,14 @@ class VanillaTemporalModule(nn.Module):
         self.temporal_transformer.set_video_length(video_length, full_length)
 
     def set_scale(self, scale: Union[float, Tensor, None], per_block_list: Union[list[PerBlock], None]=None):
-        self.temporal_transformer.set_scale(scale)
+        self.temporal_transformer.set_scale(scale, per_block_list)
 
     def set_effect(self, multival: Union[float, Tensor], per_block_list: Union[list[PerBlock], None]=None):
         if per_block_list is not None:
             for per_block in per_block_list:
                 if self.id.matches(per_block.id) and per_block.effect is not None:
                     multival = get_combined_multival(multival, per_block.effect)
-                    logger.info(f"block_type: {self.block_type}, block_idx: {self.block_idx}, module_idx: {self.module_idx}")
+                    #logger.info(f"block_type: {self.block_type}, block_idx: {self.block_idx}, module_idx: {self.module_idx}")
                     break
         if type(multival) == Tensor:
             self.effect = multival
@@ -826,13 +828,13 @@ class TemporalTransformer3DModel(nn.Module):
         cross_frame_attention_mode=None,
         temporal_pe=False,
         temporal_pe_max_len=24,
+        block_id: PerBlockId=None,
         ops=comfy.ops.disable_weight_init,
     ):
         super().__init__()
+        self.id = block_id
         self.video_length = 16
         self.full_length = 16
-        self.raw_scale_mask: Union[Tensor, None] = None
-        self.temp_scale_mask: Union[Tensor, None] = None
         self.sub_idxs: Union[list[int], None] = None
         self.prev_hidden_states_batch = 0
 
@@ -871,31 +873,50 @@ class TemporalTransformer3DModel(nn.Module):
         )
         self.proj_out = ops.Linear(inner_dim, in_channels)
 
+        self.raw_scale_masks: Union[list[Tensor], None] = [None] * self.get_attention_count()
+        self.temp_scale_masks: Union[list[Tensor], None] = [None] * self.get_attention_count()
+
+    def get_attention_count(self):
+        if len(self.transformer_blocks) > 0:
+            return len(self.transformer_blocks[0].attention_blocks)
+        return 0
+
     def set_video_length(self, video_length: int, full_length: int):
         self.video_length = video_length
         self.full_length = full_length
 
-    def set_scale_multiplier(self, multiplier: Union[float, None]):
+    def set_scale_multiplier(self, idx: int, multiplier: Union[float, list[float], None]):
+        # if not isinstance(multiplier, Iterable):
+        #     multiplier = [multiplier]
+        # multiplier = extend_list_to_batch_size(multiplier, self.get_attention_count())
         for block in self.transformer_blocks:
-            mult = multiplier
-            block.set_scale_multiplier(mult)
+            block.set_scale_multiplier(idx, multiplier)
 
-    def set_scale_mask(self, mask: Tensor):
-        self.raw_scale_mask = mask
-        self.temp_scale_mask = None
+    def set_scale_mask(self, idx: int, mask: Tensor):
+        self.raw_scale_masks[idx] = mask
+        self.temp_scale_masks[idx] = None
 
-    def set_scale(self, scale: Union[float, Tensor, None], per_attn_list: Union[list[PerAttn], None]=None):
-        # if per_attn_list is not None:
-        #     for per_attn in per_attn_list:
-        #         if per_attn.attn_idx == idx:
-        #             mult = per_attn.scale
-        #             break
-        if type(scale) == Tensor:
-            self.set_scale_mask(scale)
-            self.set_scale_multiplier(None)
-        else:
-            self.set_scale_mask(None)
-            self.set_scale_multiplier(scale)
+    def set_scale(self, scale: Union[float, Tensor, None], per_block_list: Union[list[PerBlock], None]=None):
+        if per_block_list is not None:
+            for per_block in per_block_list:
+                if self.id.matches(per_block.id) and len(per_block.scales) > 0:
+                    scales = []
+                    for sub_scale in per_block.scales:
+                        scales.append(get_combined_multival(scale, sub_scale))
+                    #logger.info(f"scale - block_type: {self.id.block_type}, block_idx: {self.id.block_idx}, module_idx: {self.id.module_idx}")
+                    scale = scales
+                    break
+        
+        if type(scale) == Tensor or not isinstance(scale, Iterable):
+            scale = [scale]
+        scale = extend_list_to_batch_size(scale, self.get_attention_count())
+        for idx, sub_scale in enumerate(scale):
+            if type(sub_scale) == Tensor:
+                self.set_scale_mask(idx, sub_scale)
+                self.set_scale_multiplier(idx, None)
+            else:
+                self.set_scale_mask(idx, None)
+                self.set_scale_multiplier(idx, sub_scale)
 
     def set_cameractrl_effect(self, multival: Union[float, Tensor]):
         self.raw_cameractrl_effect = multival
@@ -906,8 +927,8 @@ class TemporalTransformer3DModel(nn.Module):
             block.set_sub_idxs(sub_idxs)
 
     def reset_temp_vars(self):
-        del self.temp_scale_mask
-        self.temp_scale_mask = None
+        del self.temp_scale_masks
+        self.temp_scale_masks = [None] * self.get_attention_count()
         self.prev_hidden_states_batch = 0
         del self.temp_cameractrl_effect
         self.temp_cameractrl_effect = None
@@ -915,25 +936,36 @@ class TemporalTransformer3DModel(nn.Module):
         for block in self.transformer_blocks:
             block.reset_temp_vars()
 
-    def get_scale_mask(self, hidden_states: Tensor) -> Union[Tensor, None]:
+    def get_scale_masks(self, hidden_states: Tensor) -> Union[Tensor, None]:
+        masks = []
+        prev_mask = None
+        prev_idx = 0
+        for idx in range(len(self.raw_scale_masks)):
+            if prev_mask is self.raw_scale_masks[idx]:
+                masks.append(self.temp_scale_masks[prev_idx])
+            else:
+                masks.append(self.get_scale_mask(idx=idx, hidden_states=hidden_states))
+            prev_idx = idx
+        return masks
+
+    def get_scale_mask(self, idx: int, hidden_states: Tensor) -> Union[Tensor, None]:
         # if no raw mask, return None
-        if self.raw_scale_mask is None:
+        if self.raw_scale_masks[idx] is None:
             return None
         shape = hidden_states.shape
         batch, channel, height, width = shape
         # if temp mask already calculated, return it
-        if self.temp_scale_mask != None:
+        if self.temp_scale_masks[idx] != None:
             # check if hidden_states batch matches
             if batch == self.prev_hidden_states_batch:
                 if self.sub_idxs is not None:
-                    return self.temp_scale_mask[:, self.sub_idxs, :]
-                return self.temp_scale_mask
+                    return self.temp_scale_masks[idx][:, self.sub_idxs, :]
+                return self.temp_scale_masks[idx]
             # if does not match, reset cached temp_scale_mask and recalculate it
-            del self.temp_scale_mask
-            self.temp_scale_mask = None
+            self.temp_scale_masks[idx] = None
         # otherwise, calculate temp mask
         self.prev_hidden_states_batch = batch
-        mask = prepare_mask_batch(self.raw_scale_mask, shape=(self.full_length, 1, height, width))
+        mask = prepare_mask_batch(self.raw_scale_masks[idx], shape=(self.full_length, 1, height, width))
         mask = repeat_to_batch_size(mask, self.full_length)
         # if mask not the same amount length as full length, make it match
         if self.full_length != mask.shape[0]:
@@ -950,13 +982,13 @@ class TemporalTransformer3DModel(nn.Module):
         if batched_number > 1:
             mask = torch.cat([mask] * batched_number, dim=0)
         # cache mask and set to proper device
-        self.temp_scale_mask = mask
+        self.temp_scale_masks[idx] = mask
         # move temp_scale_mask to proper dtype + device
-        self.temp_scale_mask = self.temp_scale_mask.to(dtype=hidden_states.dtype, device=hidden_states.device)
+        self.temp_scale_masks[idx] = self.temp_scale_masks[idx].to(dtype=hidden_states.dtype, device=hidden_states.device)
         # return subset of masks, if needed
         if self.sub_idxs is not None:
-            return self.temp_scale_mask[:, self.sub_idxs, :]
-        return self.temp_scale_mask
+            return self.temp_scale_masks[idx][:, self.sub_idxs, :]
+        return self.temp_scale_masks[idx]
 
     def get_cameractrl_effect(self, hidden_states: Tensor) -> Union[float, Tensor, None]:
         # if no raw camera_Ctrl, return None
@@ -1007,7 +1039,7 @@ class TemporalTransformer3DModel(nn.Module):
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, view_options: ContextOptions=None, mm_kwargs: dict[str]=None):
         batch, channel, height, width = hidden_states.shape
         residual = hidden_states
-        scale_mask = self.get_scale_mask(hidden_states)
+        scale_masks = self.get_scale_masks(hidden_states)
         cameractrl_effect = self.get_cameractrl_effect(hidden_states)
         # add some casts for fp8 purposes - does not affect speed otherwise
         hidden_states = self.norm(hidden_states).to(hidden_states.dtype)
@@ -1024,7 +1056,7 @@ class TemporalTransformer3DModel(nn.Module):
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
                 video_length=self.video_length,
-                scale_mask=scale_mask,
+                scale_masks=scale_masks,
                 cameractrl_effect=cameractrl_effect,
                 view_options=view_options,
                 mm_kwargs=mm_kwargs
@@ -1097,10 +1129,8 @@ class TemporalTransformerBlock(nn.Module):
         self.ff = FeedForward(dim, dropout=dropout, glu=(activation_fn == "geglu"), operations=ops)
         self.ff_norm = ops.LayerNorm(dim)
 
-    def set_scale_multiplier(self, multiplier: Union[float, None]):
-        for idx, block in enumerate(self.attention_blocks):
-            mult = multiplier
-            block.set_scale_multiplier(mult)
+    def set_scale_multiplier(self, idx: int, multiplier: Union[float, None]):
+        self.attention_blocks[idx].set_scale_multiplier(multiplier)
 
     def set_sub_idxs(self, sub_idxs: list[int]):
         for block in self.attention_blocks:
@@ -1116,7 +1146,7 @@ class TemporalTransformerBlock(nn.Module):
         encoder_hidden_states: Tensor=None,
         attention_mask: Tensor=None,
         video_length: int=None,
-        scale_mask: Tensor=None,
+        scale_masks: list[Tensor]=None,
         cameractrl_effect: Union[float, Tensor] = None,
         view_options: Union[ContextOptions, None]=None,
         mm_kwargs: dict[str]=None,
@@ -1128,7 +1158,7 @@ class TemporalTransformerBlock(nn.Module):
             elif view_options.context_length == video_length and not view_options.use_on_equal_length:
                 view_options = None
         if not view_options:
-            for attention_block, norm in zip(self.attention_blocks, self.norms):
+            for attention_block, norm, scale_mask in zip(self.attention_blocks, self.norms, scale_masks):
                 norm_hidden_states = norm(hidden_states).to(hidden_states.dtype)
                 hidden_states = (
                     attention_block(
@@ -1163,7 +1193,7 @@ class TemporalTransformerBlock(nn.Module):
                 sub_hidden_states = rearrange(hidden_states[:, sub_idxs], "b f d c -> (b f) d c")
                 if has_camera_feature:
                     mm_kwargs["camera_feature"] = orig_camera_feature[:, sub_idxs, :]
-                for attention_block, norm in zip(self.attention_blocks, self.norms):
+                for attention_block, norm, scale_mask in zip(self.attention_blocks, self.norms, scale_masks):
                     norm_hidden_states = norm(sub_hidden_states).to(sub_hidden_states.dtype)
                     sub_hidden_states = (
                         attention_block(
