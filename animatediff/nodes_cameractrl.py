@@ -209,6 +209,7 @@ class ApplyAnimateDiffWithCameraCtrl:
                 "cameractrl_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
+                "per_block": ("PER_BLOCK",),
             }
         }
     
@@ -218,10 +219,10 @@ class ApplyAnimateDiffWithCameraCtrl:
 
     def apply_motion_model(self, motion_model: MotionModelPatcher, cameractrl_poses: list[list[float]], start_percent: float=0.0, end_percent: float=1.0,
                            motion_lora: MotionLoraList=None, ad_keyframes: ADKeyframeGroup=None,
-                           scale_multival=None, effect_multival=None, cameractrl_multival=None,
+                           scale_multival=None, effect_multival=None, cameractrl_multival=None, per_block=None,
                            prev_m_models: MotionModelGroup=None,):
         new_m_models = ApplyAnimateDiffModelNode.apply_motion_model(self, motion_model, start_percent=start_percent, end_percent=end_percent,
-                                                                    motion_lora=motion_lora, ad_keyframes=ad_keyframes,
+                                                                    motion_lora=motion_lora, ad_keyframes=ad_keyframes, per_block=per_block,
                                                                     scale_multival=scale_multival, effect_multival=effect_multival, prev_m_models=prev_m_models)
         # most recent added model will always be first in list;
         curr_model = new_m_models[0].models[0]
