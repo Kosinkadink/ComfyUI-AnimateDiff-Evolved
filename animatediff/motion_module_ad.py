@@ -2,7 +2,7 @@ import math
 from typing import Iterable, Tuple, Union, TYPE_CHECKING
 import re
 from dataclasses import dataclass
-from collections.abc import Iterable
+from collections.abc import Iterable as IterColl
 
 import torch
 from einops import rearrange, repeat
@@ -886,9 +886,6 @@ class TemporalTransformer3DModel(nn.Module):
         self.full_length = full_length
 
     def set_scale_multiplier(self, idx: int, multiplier: Union[float, list[float], None]):
-        # if not isinstance(multiplier, Iterable):
-        #     multiplier = [multiplier]
-        # multiplier = extend_list_to_batch_size(multiplier, self.get_attention_count())
         for block in self.transformer_blocks:
             block.set_scale_multiplier(idx, multiplier)
 
@@ -907,7 +904,7 @@ class TemporalTransformer3DModel(nn.Module):
                     scale = scales
                     break
         
-        if type(scale) == Tensor or not isinstance(scale, Iterable):
+        if type(scale) == Tensor or not isinstance(scale, IterColl):
             scale = [scale]
         scale = extend_list_to_batch_size(scale, self.get_attention_count())
         for idx, sub_scale in enumerate(scale):
