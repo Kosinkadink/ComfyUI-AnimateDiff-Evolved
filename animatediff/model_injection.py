@@ -1379,7 +1379,7 @@ def validate_model_compatibility_gen2(model: ModelPatcher, motion_model: MotionM
 
 
 def validate_per_block_compatibility(motion_model: MotionModelPatcher, all_per_blocks: AllPerBlocks):
-    if all_per_blocks is None:
+    if all_per_blocks is None or all_per_blocks.sd_type is None:
         return
     mm_info = motion_model.model.mm_info
     if all_per_blocks.sd_type != mm_info.sd_type:
