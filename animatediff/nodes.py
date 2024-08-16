@@ -40,7 +40,8 @@ from .nodes_ad_settings import (AnimateDiffSettingsNode, ManualAdjustPENode, Swe
 from .nodes_scheduling import (PromptSchedulingNode, PromptSchedulingLatentsNode, ValueSchedulingNode, ValueSchedulingLatentsNode,
                                AddValuesReplaceNode, FloatToFloatsNode)
 from .nodes_per_block import (ADBlockComboNode, ADBlockIndivNode, PerBlockHighLevelNode,
-                              PerBlock_SD15_LowLevelNode, PerBlock_SD15_MidLevelNode, PerBlock_SDXL_LowLevelNode, PerBlock_SDXL_MidLevelNode)
+                              PerBlock_SD15_LowLevelNode, PerBlock_SD15_MidLevelNode, PerBlock_SD15_FromFloatsNode,
+                              PerBlock_SDXL_LowLevelNode, PerBlock_SDXL_MidLevelNode, PerBlock_SDXL_FromFloatsNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect, PerturbedAttentionGuidanceMultival, RescaleCFGMultival
 from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated,
                                AnimateDiffModelSettings, AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
@@ -170,8 +171,10 @@ NODE_CLASS_MAPPINGS = {
     PerBlockHighLevelNode.NodeID: PerBlockHighLevelNode,
     PerBlock_SD15_MidLevelNode.NodeID: PerBlock_SD15_MidLevelNode,
     PerBlock_SD15_LowLevelNode.NodeID: PerBlock_SD15_LowLevelNode,
+    PerBlock_SD15_FromFloatsNode.NodeID: PerBlock_SD15_FromFloatsNode,
     PerBlock_SDXL_MidLevelNode.NodeID: PerBlock_SDXL_MidLevelNode,
     PerBlock_SDXL_LowLevelNode.NodeID: PerBlock_SDXL_LowLevelNode,
+    PerBlock_SDXL_FromFloatsNode.NodeID: PerBlock_SDXL_FromFloatsNode,
     # Extras Nodes
     "ADE_AnimateDiffUnload": AnimateDiffUnload,
     "ADE_EmptyLatentImageLarge": EmptyLatentImageLarge,
@@ -335,8 +338,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     PerBlockHighLevelNode.NodeID: PerBlockHighLevelNode.NodeName,
     PerBlock_SD15_MidLevelNode.NodeID: PerBlock_SD15_MidLevelNode.NodeName,
     PerBlock_SD15_LowLevelNode.NodeID: PerBlock_SD15_LowLevelNode.NodeName,
+    PerBlock_SD15_FromFloatsNode.NodeID: PerBlock_SD15_FromFloatsNode.NodeName,
     PerBlock_SDXL_MidLevelNode.NodeID: PerBlock_SDXL_MidLevelNode.NodeName,
     PerBlock_SDXL_LowLevelNode.NodeID: PerBlock_SDXL_LowLevelNode.NodeName,
+    PerBlock_SDXL_FromFloatsNode.NodeID: PerBlock_SDXL_FromFloatsNode.NodeName,
     # Extras Nodes
     "ADE_AnimateDiffUnload": "AnimateDiff Unload 🎭🅐🅓",
     "ADE_EmptyLatentImageLarge": "Empty Latent Image (Big Batch) 🎭🅐🅓",

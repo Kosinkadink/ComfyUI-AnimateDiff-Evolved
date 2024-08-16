@@ -1,8 +1,10 @@
 from typing import Union
 from torch import Tensor
 
+from .documentation import short_desc, register_description, coll, DocHelper
 from .motion_module_ad import PerBlock, PerBlockId, BlockType, AllPerBlocks
 from .utils_model import ModelTypeSD
+from .utils_motion import extend_list_to_batch_size
 
 
 class ADBlockHolder:
@@ -267,6 +269,55 @@ class PerBlock_SD15_LowLevelNode:
         return (AllPerBlocks(blocks, ModelTypeSD.SD1_5),)
 
 
+class PerBlock_SD15_FromFloatsNode:
+    NodeID = 'ADE_PerBlock_SD15_FromFloats'
+    NodeName = 'AD Per Block Floats (SD1.5) 🎭🅐🅓'
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "effect_21_floats": ("FLOATS",),
+                "scale_21_floats": ("FLOATS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
+        }
+    
+    RETURN_TYPES = ("PER_BLOCK",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/per block"
+    FUNCTION = "create_per_block"
+
+    Desc = [
+        short_desc('Use Floats from Value Schedules to select SD1.5 effect/scale values for blocks.'),
+        'SD1.5 Motion Modules contain 21 blocks:',
+        'idx 0 - start of down blocks (down_0__0)',
+        'idx 7 - end of down blocks   (down_3__1)',
+        'idx 8 - mid block            (mid)',
+        'idx 9 - start of up blocks   (up_0__0)',
+        'idx 20 - end of up blocks    (up_3__2)',
+    ]
+    register_description(NodeID, Desc)
+
+    def create_per_block(self,
+                         effect_21_floats: Union[list[float], None]=None,
+                         scale_21_floats: Union[list[float], None]=None):
+        if effect_21_floats is None and scale_21_floats is None:
+            return (None,)
+        # SD1.5 has 21 blocks
+        block_total = 21
+        holders = [ADBlockHolder() for _ in range(block_total)]
+        if effect_21_floats is not None:
+            effect_21_floats = extend_list_to_batch_size(effect_21_floats, block_total)
+            for effect, holder in zip(effect_21_floats, holders):
+                holder.effect = effect
+        if scale_21_floats is not None:
+            scale_21_floats = extend_list_to_batch_size(scale_21_floats, block_total)
+            for scale, holder in zip(scale_21_floats, holders):
+                holder.scales = [scale, scale]
+        return PerBlock_SD15_LowLevelNode.create_per_block(self, *holders)
+
+
 class PerBlock_SDXL_MidLevelNode:
     NodeID = 'ADE_PerBlock_SDXL_MidLevel'
     NodeName = 'AD Per Block+ (SDXL) 🎭🅐🅓'
@@ -392,3 +443,52 @@ class PerBlock_SDXL_LowLevelNode:
         if len(blocks) == 0:
             return (None,)
         return (AllPerBlocks(blocks, ModelTypeSD.SDXL),)
+
+
+class PerBlock_SDXL_FromFloatsNode:
+    NodeID = 'ADE_PerBlock_SDXL_FromFloats'
+    NodeName = 'AD Per Block Floats (SDXL) 🎭🅐🅓'
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            },
+            "optional": {
+                "effect_16_floats": ("FLOATS",),
+                "scale_16_floats": ("FLOATS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
+        }
+    
+    RETURN_TYPES = ("PER_BLOCK",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/per block"
+    FUNCTION = "create_per_block"
+
+    Desc = [
+        short_desc('Use Floats from Value Schedules to select SDXL effect/scale values for blocks.'),
+        'SDXL Motion Modules contain 16 blocks:',
+        'idx 0 - start of down blocks (down_0__0)',
+        'idx 5 - end of down blocks   (down_2__1)',
+        'idx 6 - mid block            (mid)',
+        'idx 7 - start of up blocks   (up_0__0)',
+        'idx 15 - end of up blocks    (up_2__2)',
+    ]
+    register_description(NodeID, Desc)
+
+    def create_per_block(self,
+                         effect_16_floats: Union[list[float], None]=None,
+                         scale_16_floats: Union[list[float], None]=None):
+        if effect_16_floats is None and scale_16_floats is None:
+            return (None,)
+        # SDXL has 16 blocks
+        block_total = 16
+        holders = [ADBlockHolder() for _ in range(block_total)]
+        if effect_16_floats is not None:
+            effect_16_floats = extend_list_to_batch_size(effect_16_floats, block_total)
+            for effect, holder in zip(effect_16_floats, holders):
+                holder.effect = effect
+        if scale_16_floats is not None:
+            scale_16_floats = extend_list_to_batch_size(scale_16_floats, block_total)
+            for scale, holder in zip(scale_16_floats, holders):
+                holder.scales = [scale, scale]
+        return PerBlock_SDXL_LowLevelNode.create_per_block(self, *holders)
