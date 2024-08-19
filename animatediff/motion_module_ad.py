@@ -920,6 +920,7 @@ class TemporalTransformer3DModel(nn.Module):
         self.temp_cameractrl_effect = None
 
     def set_sub_idxs(self, sub_idxs: list[int]):
+        self.sub_idxs = sub_idxs
         for block in self.transformer_blocks:
             block.set_sub_idxs(sub_idxs)
 
