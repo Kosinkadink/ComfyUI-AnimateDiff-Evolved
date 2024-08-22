@@ -40,8 +40,9 @@ class AnimateDiffFormat:
     HOTSHOTXL = "HotshotXL"
     ANIMATELCM = "AnimateLCM"
     PIA = "PIA"
+    FANCYVIDEO = "FancyVideo"
 
-    _LIST = [ANIMATEDIFF, HOTSHOTXL, ANIMATELCM, PIA]
+    _LIST = [ANIMATEDIFF, HOTSHOTXL, ANIMATELCM, PIA, FANCYVIDEO]
 
 
 class AnimateDiffVersion:
@@ -141,6 +142,12 @@ def is_pia(mm_state_dict: dict[str, Tensor]) -> bool:
     return False
 
 
+def is_fancyvideo(mm_state_dict: dict[str, Tensor]) -> bool:
+    if 'FancyVideo' in mm_state_dict:
+        return True
+    return False
+
+
 def get_down_block_max(mm_state_dict: dict[str, Tensor]) -> int:
     # keep track of biggest down_block count in module
     biggest_block = 0
@@ -195,7 +202,16 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
     # log_name = mm_name.split('\\')[-1]
     # with open(Path(__file__).parent.parent.parent / rf"keys_{log_name}.txt", "w") as afile:
     #     for key, value in mm_state_dict.items():
-    #         afile.write(f"{key}:\t{value.shape}\n")
+    #         if key == 'module':
+    #             for inkey, invalue in value.items():
+    #                 if hasattr(invalue, 'shape'):
+    #                     afile.write(f"{inkey}:\t{invalue.shape}\n")
+    #                 else:
+    #                     afile.write(f"{inkey}:\t{invalue}\n")
+    #         elif hasattr(value, 'shape'):
+    #             afile.write(f"{key}:\t{value.shape}\n")
+    #         else:
+    #             afile.write(f"{key}:\t{type(value)}\n")
     # determine what SD model the motion module is intended for
     sd_type: str = None
     down_block_max = get_down_block_max(mm_state_dict)
@@ -213,6 +229,9 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
         mm_format = AnimateDiffFormat.ANIMATELCM
     if is_pia(mm_state_dict):
         mm_format = AnimateDiffFormat.PIA
+    if is_fancyvideo(mm_state_dict):
+        mm_format = AnimateDiffFormat.FANCYVIDEO
+        mm_state_dict.pop("FancyVideo")
     # for AnimateLCM-I2V purposes, check for img_encoder keys
     contains_img_encoder = has_img_encoder(mm_state_dict)
     # remove all non-temporal keys (in case model has extra stuff in it)
@@ -221,6 +240,8 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
             if mm_format == AnimateDiffFormat.ANIMATELCM and contains_img_encoder and key.startswith("img_encoder."):
                 continue
             if mm_format == AnimateDiffFormat.PIA and key.startswith("conv_in."):
+                continue
+            if mm_format == AnimateDiffFormat.FANCYVIDEO:
                 continue
             del mm_state_dict[key]
     # determine the model's version

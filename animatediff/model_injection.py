@@ -1,5 +1,6 @@
 import copy
 from typing import Union, Callable
+from collections import namedtuple
 
 from einops import rearrange
 from torch import Tensor
@@ -19,7 +20,7 @@ from comfy.sd import CLIP, VAE
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention, PerBlock, AllPerBlocks,
+from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, AnimateDiffInfo, EncoderOnlyAnimateDiffModel, VersatileAttention, PerBlock, AllPerBlocks,
                                has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, InputPIA,
@@ -1263,9 +1264,8 @@ def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: M
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(model.model_dtype())
     ad_wrapper.to(model.offload_device)
-    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
-    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=not is_animatelcm)
-    # TODO: report load_result of motion_module loading?
+    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=False)
+    verify_load_result(load_result=load_result, mm_info=mm_info)
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
     motion_model = MotionModelPatcher(model=ad_wrapper, load_device=model.load_device, offload_device=model.offload_device)
     # load motion_lora, if present
@@ -1288,17 +1288,43 @@ def load_motion_module_gen2(model_name: str, motion_model_settings: AnimateDiffS
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
-    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
-    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=not is_animatelcm)
-    # TODO: manually check load_results for AnimateLCM models
-    if is_animatelcm:
-        pass
-    # TODO: report load_result of motion_module loading?
+    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=False)
+    verify_load_result(load_result=load_result, mm_info=mm_info)
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
     motion_model = MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
                                       offload_device=comfy.model_management.unet_offload_device())
     return motion_model
 
+
+IncompatibleKeys = namedtuple('IncompatibleKeys', ['missing_keys', 'unexpected_keys'])
+def verify_load_result(load_result: IncompatibleKeys, mm_info: AnimateDiffInfo):
+    error_msgs: list[str] = []
+    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
+
+    remove_missing_idxs = []
+    remove_unexpected_idxs = []
+    for idx, key in enumerate(load_result.missing_keys):
+        # NOTE: AnimateLCM has no pe keys in the model file, so any errors associated with missing pe keys can be ignored
+        if is_animatelcm and "pos_encoder.pe" in key:
+            remove_missing_idxs.append(idx)
+    # remove any keys to ignore in reverse order (to preserve idx correlation)
+    for idx in reversed(remove_unexpected_idxs):
+        load_result.unexpected_keys.pop(idx)
+    for idx in reversed(remove_missing_idxs):
+        load_result.missing_keys.pop(idx)
+    # copied over from torch.nn.Module.module class Module's load_state_dict func
+    if len(load_result.unexpected_keys) > 0:
+        error_msgs.insert(
+            0, 'Unexpected key(s) in state_dict: {}. '.format(
+                ', '.join(f'"{k}"' for k in load_result.unexpected_keys)))
+    if len(load_result.missing_keys) > 0:
+        error_msgs.insert(
+            0, 'Missing key(s) in state_dict: {}. '.format(
+                ', '.join(f'"{k}"' for k in load_result.missing_keys)))
+    if len(error_msgs) > 0:
+        raise RuntimeError('Error(s) in loading state_dict for {}:\n\t{}'.format(
+                            mm_info.mm_name, "\n\t".join(error_msgs)))
+    
 
 def create_fresh_motion_module(motion_model: MotionModelPatcher) -> MotionModelPatcher:
     ad_wrapper = AnimateDiffModel(mm_state_dict=motion_model.model.state_dict(), mm_info=motion_model.model.mm_info)
