@@ -158,7 +158,7 @@ class ValueSchedulingLatentsNode:
     FUNCTION = "create_schedule"
 
     Desc = [
-        short_desc('Create a list of values, its length matching passed-in latent count.'),
+        short_desc('Create a list of values with automatic interpolation, its length matching passed-in latent count.'),
         {'Format': desc_format_values},
         {coll('Inputs'): DocHelper.combine(desc_values, desc_latent, desc_print_schedule)},
     ]
@@ -195,7 +195,7 @@ class ValueSchedulingNode:
     FUNCTION = "create_schedule"
 
     Desc = [
-        short_desc('Create a list of values, its length matching passed-in latent count.'),
+        short_desc('Create a list of values with automatic interpolation.'),
         {'Format': desc_format_values},
         {coll('Inputs'): DocHelper.combine(desc_values, desc_max_length, desc_print_schedule)},
     ]
