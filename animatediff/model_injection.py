@@ -67,6 +67,12 @@ class ModelPatcherAndInjector(ModelPatcher):
         self.motion_injection_params: InjectionParams = InjectionParams()
         self.sample_settings: SampleSettings = SampleSettings()
         self.motion_models: MotionModelGroup = None
+        # backwards-compatible calculate_weight
+        if hasattr(comfy.lora, "calculate_weight"):
+            self.do_calculate_weight = comfy.lora.calculate_weight
+        else:
+            self.do_calculate_weight = self.calculate_weight
+
     
     def clone(self, hooks_only=False):
         cloned = ModelPatcherAndInjector(self)
@@ -380,7 +386,7 @@ class ModelPatcherAndInjector(ModelPatcher):
 
         # TODO: handle model_params_lowvram stuff if necessary
         temp_weight = comfy.model_management.cast_to_device(weight, weight.device, torch.float32, copy=True)
-        out_weight = self.calculate_weight(combined_patches[key], temp_weight, key).to(weight.dtype)
+        out_weight = self.do_calculate_weight(combined_patches[key], temp_weight, key).to(weight.dtype)
         if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
             self.cached_hooked_patches.setdefault(lora_hooks, {})
             self.cached_hooked_patches[lora_hooks][key] = out_weight
