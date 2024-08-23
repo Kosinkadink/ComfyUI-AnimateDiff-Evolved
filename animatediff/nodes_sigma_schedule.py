@@ -44,7 +44,7 @@ class RawSigmaScheduleNode:
                 #"cosine_s": ("FLOAT", {"default": 8e-3, "min": 0.0, "max": 1.0, "step": 0.000001}),
                 "sampling": (ModelSamplingType._FULL_LIST,),
                 "lcm_original_timesteps": ("INT", {"default": 50, "min": 1, "max": 1000}),
-                "lcm_zsnr": ("BOOLEAN", {"default": False}),
+                "zsnr": ("BOOLEAN", {"default": False}),
             }
         }
     
@@ -53,14 +53,15 @@ class RawSigmaScheduleNode:
     FUNCTION = "get_sigma_schedule"
 
     def get_sigma_schedule(self, raw_beta_schedule: str, linear_start: float, linear_end: float,# cosine_s: float,
-                           sampling: str, lcm_original_timesteps: int, lcm_zsnr: bool):
+                           sampling: str, lcm_original_timesteps: int, zsnr: bool, lcm_zsnr: bool=None):
+        if lcm_zsnr is not None:
+            zsnr = lcm_zsnr
         new_config = ModelSamplingConfig(beta_schedule=raw_beta_schedule, linear_start=linear_start, linear_end=linear_end)
         if sampling != ModelSamplingType.LCM:
             lcm_original_timesteps=None
-            lcm_zsnr=False
         model_type = ModelSamplingType.from_alias(sampling)    
         new_model_sampling = BetaSchedules._to_model_sampling(alias=BetaSchedules.AUTOSELECT, model_type=model_type, config_override=new_config, original_timesteps=lcm_original_timesteps)
-        if lcm_zsnr:
+        if zsnr:
             SigmaSchedule.apply_zsnr(new_model_sampling=new_model_sampling)
         return (SigmaSchedule(model_sampling=new_model_sampling, model_type=model_type),)
 

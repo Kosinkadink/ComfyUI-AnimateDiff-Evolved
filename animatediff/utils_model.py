@@ -194,7 +194,7 @@ class BetaSchedules:
         return ModelSamplingConfig(cls.to_name(alias), linear_start=linear_start, linear_end=linear_end)
     
     @classmethod
-    def _to_model_sampling(cls, alias: str, model_type: ModelType, config_override: ModelSamplingConfig=None, original_timesteps: int=None):
+    def _to_model_sampling(cls, alias: str, model_type: ModelType, config_override: Union[ModelSamplingConfig,None]=None, original_timesteps: Union[int,None]=None):
         if alias == cls.USE_EXISTING:
             return None
         elif config_override != None:
