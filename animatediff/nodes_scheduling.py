@@ -134,7 +134,7 @@ class PromptSchedulingNode:
         options = PromptOptions(interp=tensor_interp, prepend_text=prepend_text, append_text=append_text,
                                 values_replace=values_replace, print_schedule=print_schedule)
         conditioning = evaluate_prompt_schedule(prompts, max_length, clip, options)
-        return (conditioning)
+        return (conditioning,)
 
 
 class ValueSchedulingLatentsNode:
