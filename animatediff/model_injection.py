@@ -815,6 +815,7 @@ class MotionModelPatcher(ModelPatcher):
         to_return = super().load(device_to=device_to, lowvram_model_memory=lowvram_model_memory, *args, **kwargs)
         if lowvram_model_memory > 0:
             self._patch_lowvram_extras(device_to=device_to)
+        self._handle_float8_pe_tensors()
         return to_return
 
     def _patch_lowvram_extras(self, device_to=None):
@@ -833,6 +834,17 @@ class MotionModelPatcher(ModelPatcher):
             self.patch_weight_to_device(key, device_to)
             if device_to is not None:
                 comfy.utils.set_attr(self.model, key, comfy.utils.get_attr(self.model, key).to(device_to))
+
+    def _handle_float8_pe_tensors(self):
+        remaining_tensors = list(self.model.state_dict().keys())
+        pe_tensors = [x for x in remaining_tensors if '.pe' in x]
+        is_first = True
+        for key in pe_tensors:
+            if is_first:
+                is_first = False
+                if comfy.utils.get_attr(self.model, key).dtype not in [torch.float8_e5m2, torch.float8_e4m3fn]:
+                    break
+            comfy.utils.set_attr(self.model, key, comfy.utils.get_attr(self.model, key).half())
 
     def pre_run(self, model: ModelPatcherAndInjector):
         self.cleanup()
