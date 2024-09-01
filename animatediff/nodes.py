@@ -24,7 +24,7 @@ from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGSimpleNode, CustomCFGKeyframeNode, CustomCFGKeyframeSimpleNode, CustomCFGKeyframeInterpolationNode, CustomCFGKeyframeFromListNode,
                            CFGExtrasPAGNode, CFGExtrasPAGSimpleNode, CFGExtrasRescaleCFGNode, CFGExtrasRescaleCFGSimpleNode,
-                           NoisedImageInjectionNode, NoisedImageInjectOptionsNode)
+                           NoisedImageInjectionNode, NoisedImageInjectOptionsNode, NoiseCalibrationNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode, SigmaScheduleToSigmasNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode,
@@ -158,6 +158,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_SigmaScheduleToSigmas": SigmaScheduleToSigmasNode,
     "ADE_NoisedImageInjection": NoisedImageInjectionNode,
     "ADE_NoisedImageInjectOptions": NoisedImageInjectOptionsNode,
+    "ADE_NoiseCalibration": NoiseCalibrationNode,
     # Scheduling
     PromptSchedulingNode.NodeID: PromptSchedulingNode,
     PromptSchedulingLatentsNode.NodeID: PromptSchedulingLatentsNode,
@@ -325,6 +326,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SigmaScheduleToSigmas": "Sigma Schedule To Sigmas 🎭🅐🅓",
     "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",
     "ADE_NoisedImageInjectOptions": "Image Injection Options 🎭🅐🅓",
+    "ADE_NoiseCalibration": "Noise Calibration 🎭🅐🅓",
     # Scheduling
     PromptSchedulingNode.NodeID: PromptSchedulingNode.NodeName,
     PromptSchedulingLatentsNode.NodeID: PromptSchedulingLatentsNode.NodeName,

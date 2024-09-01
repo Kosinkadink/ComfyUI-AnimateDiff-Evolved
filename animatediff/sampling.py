@@ -515,6 +515,9 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
                                                               seed=seed,
                                                               sample_settings=model.sample_settings, noise_extra_args=noise_extra_args,
                                                               **iter_kwargs)
+                if model.sample_settings.noise_calibration is not None:
+                    latents, noise = model.sample_settings.noise_calibration.perform_calibration(sample_func=orig_comfy_sample, model=model, latents=latents, noise=noise,
+                                                                                                 is_custom=is_custom, args=args, kwargs=kwargs)
                 args[-1] = latents
 
                 if model.motion_models is not None:

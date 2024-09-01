@@ -7,7 +7,7 @@ from comfy.sd import VAE
 from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
                               NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
-                              SeedNoiseGeneration, SampleSettings,
+                              SeedNoiseGeneration, SampleSettings, NoiseCalibration,
                               CustomCFGKeyframeGroup, CustomCFGKeyframe, CFGExtrasGroup, CFGExtras,
                               NoisedImageToInjectGroup, NoisedImageToInject, NoisedImageInjectOptions)
 from .utils_model import BIGMIN, BIGMAX, MAX_RESOLUTION, SigmaSchedule, InterpolationMethod
@@ -33,6 +33,7 @@ class SampleSettingsNode:
                 "custom_cfg": ("CUSTOM_CFG",),
                 "sigma_schedule": ("SIGMA_SCHEDULE",),
                 "image_inject": ("IMAGE_INJECT",),
+                "noise_calib": ("NOISE_CALIBRATION",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -44,10 +45,11 @@ class SampleSettingsNode:
 
     def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None,
                         iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False,
-                        custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None, image_inject: NoisedImageToInjectGroup=None):
+                        custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None, image_inject: NoisedImageToInjectGroup=None,
+                        noise_calib: NoiseCalibration=None):
         sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers,
                                            iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps,
-                                           custom_cfg=custom_cfg, sigma_schedule=sigma_schedule, image_injection=image_inject)
+                                           custom_cfg=custom_cfg, sigma_schedule=sigma_schedule, image_injection=image_inject, noise_calibration=noise_calib)
         return (sampling_settings,)
 
 
@@ -218,6 +220,29 @@ class FreeInitOptionsNode:
                                     filter=filter, d_s=d_s, d_t=d_t, n=n_butterworth, init_type=init_type,
                                     iter_batch_offset=iter_batch_offset, iter_seed_offset=iter_seed_offset)
         return (iter_opts,)
+
+
+class NoiseCalibrationNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "calib_iterations": ("INT", {"default": 1, "min": 1, "step": 1}),
+                "thresh_freq": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
+        }
+    
+    RETURN_TYPES = ("NOISE_CALIBRATION",)
+    RETURN_NAMES = ("NOISE_CALIB",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_noisecalibration"
+
+    def create_noisecalibration(self, calib_iterations: int, thresh_freq: float):
+        noise_calib = NoiseCalibration(scale=thresh_freq, calib_iterations=calib_iterations)
+        return (noise_calib,)
 
 
 class CustomCFGNode:
