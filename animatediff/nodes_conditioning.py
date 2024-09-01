@@ -97,7 +97,7 @@ class PairedConditioningSetMaskAndCombineHooked:
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
                 "opt_timesteps": ("TIMESTEPS_COND",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -129,7 +129,7 @@ class ConditioningSetMaskAndCombineHooked:
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("LORA_HOOK",),
                 "opt_timesteps": ("TIMESTEPS_COND",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 55}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -158,7 +158,7 @@ class PairedConditioningSetUnmaskedAndCombineHooked:
             },
             "optional": {
                 "opt_lora_hook": ("LORA_HOOK",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -256,7 +256,7 @@ class ConditioningTimestepsNode:
                 "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001})
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 25}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -277,7 +277,7 @@ class SetLoraHookKeyframes:
                 "hook_kf": ("LORA_HOOK_KEYFRAMES",),
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 40}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -302,7 +302,7 @@ class CreateLoraHookKeyframe:
             },
             "optional": {
                 "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 5}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -337,7 +337,7 @@ class CreateLoraHookKeyframeInterpolation:
             },
             "optional": {
                 "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -560,7 +560,7 @@ class SetModelLoraHook:
                 "lora_hook": ("LORA_HOOK",),
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 5}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -610,7 +610,7 @@ class CombineLoraHooks:
             "optional": {
                 "lora_hook_A": ("LORA_HOOK",),
                 "lora_hook_B": ("LORA_HOOK",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -634,7 +634,7 @@ class CombineLoraHookFourOptional:
                 "lora_hook_B": ("LORA_HOOK",),
                 "lora_hook_C": ("LORA_HOOK",),
                 "lora_hook_D": ("LORA_HOOK",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -664,7 +664,7 @@ class CombineLoraHookEightOptional:
                 "lora_hook_F": ("LORA_HOOK",),
                 "lora_hook_G": ("LORA_HOOK",),
                 "lora_hook_H": ("LORA_HOOK",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 

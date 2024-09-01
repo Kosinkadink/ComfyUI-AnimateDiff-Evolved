@@ -273,7 +273,7 @@ class CameraCtrlADKeyframeNode:
                 "cameractrl_multival": ("MULTIVAL",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -373,7 +373,7 @@ class CameraCtrlPoseBasic:
             },
             "optional": {
                 "prev_poses": ("CAMERACTRL_POSES",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 

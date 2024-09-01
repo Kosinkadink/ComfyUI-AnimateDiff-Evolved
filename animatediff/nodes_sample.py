@@ -33,7 +33,7 @@ class SampleSettingsNode:
                 "custom_cfg": ("CUSTOM_CFG",),
                 "sigma_schedule": ("SIGMA_SCHEDULE",),
                 "image_inject": ("IMAGE_INJECT",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -65,7 +65,7 @@ class NoiseLayerReplaceNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -101,7 +101,7 @@ class NoiseLayerAddNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -140,7 +140,7 @@ class NoiseLayerAddWeightedNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -202,7 +202,7 @@ class FreeInitOptionsNode:
             "optional": {
                 "iter_batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
                 "iter_seed_offset": ("INT", {"default": 1, "min": BIGMIN, "max": BIGMAX}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 55}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -229,7 +229,7 @@ class CustomCFGNode:
             },
             "optional": {
                 "cfg_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -253,7 +253,7 @@ class CustomCFGSimpleNode:
             },
             "optional": {
                 "cfg_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -277,7 +277,7 @@ class CustomCFGKeyframeNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 80}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -337,7 +337,7 @@ class CustomCFGKeyframeInterpolationNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -424,7 +424,7 @@ class CFGExtrasPAGNode:
             },
             "optional": {
                 "prev_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 45}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -509,7 +509,7 @@ class CFGExtrasRescaleCFGSimpleNode:
             },
             "optional": {
                 "prev_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 45}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
 
@@ -569,7 +569,7 @@ class NoisedImageInjectOptionsNode:
             "optional": {
                 "composite_x": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
                 "composite_y": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     

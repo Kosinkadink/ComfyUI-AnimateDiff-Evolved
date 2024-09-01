@@ -120,7 +120,7 @@ class NaiveReuse_KeyframeInterpolationNode:
             "optional": {
                 "prev_kf": ("NAIVEREUSE_KEYFRAME",),
                 "mult_multival": ("MULTIVAL",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -305,7 +305,7 @@ class ContextRef_KeyframeInterpolationNode:
                 "mult_multival": ("MULTIVAL",),
                 "mode_replace": ("CONTEXTREF_MODE",),
                 "tune_replace": ("CONTEXTREF_TUNE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -354,7 +354,7 @@ class ContextRef_KeyframeFromListNode:
                 "mult_multival": ("MULTIVAL",),
                 "mode_replace": ("CONTEXTREF_MODE",),
                 "tune_replace": ("CONTEXTREF_TUNE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -398,7 +398,7 @@ class ContextRef_ModeFirst:
             "required": {
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 25}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             },
         }
     
@@ -419,7 +419,7 @@ class ContextRef_ModeSliding:
             },
             "optional": {
                 "sliding_width": ("INT", {"default": 2, "min": 2, "max": BIGMAX, "step": 1}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 42}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -441,7 +441,7 @@ class ContextRef_ModeIndexes:
             "optional": {
                 "switch_on_idxs": ("STRING", {"default": ""}),
                 "always_include_0": ("BOOLEAN", {"default": True},),
-                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             },
         }
     
@@ -470,7 +470,7 @@ class ContextRef_TuneAttnAdain:
                 "adain_style_fidelity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "adain_ref_weight": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "adain_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 65}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -496,7 +496,7 @@ class ContextRef_TuneAttn:
                 "attn_style_fidelity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "attn_ref_weight": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "attn_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 15}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     

@@ -35,7 +35,7 @@ class ManualAdjustPENode:
             },
             "optional": {
                 "prev_pe_adjust": ("PE_ADJUST",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -67,7 +67,7 @@ class SweetspotStretchPENode:
             },
             "optional": {
                 "prev_pe_adjust": ("PE_ADJUST",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -95,7 +95,7 @@ class FullStretchPENode:
             },
             "optional": {
                 "prev_pe_adjust": ("PE_ADJUST",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -258,7 +258,7 @@ class WeightAdjustIndivAttnAddNode:
             },
             "optional": {
                 "prev_weight_adjust": ("WEIGHT_ADJUST",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -305,7 +305,7 @@ class WeightAdjustIndivAttnMultNode:
             },
             "optional": {
                 "prev_weight_adjust": ("WEIGHT_ADJUST",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     

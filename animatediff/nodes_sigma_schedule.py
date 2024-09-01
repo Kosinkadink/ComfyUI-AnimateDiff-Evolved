@@ -76,7 +76,7 @@ class WeightedAverageSigmaScheduleNode:
                 "weight_A": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 80}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -104,7 +104,7 @@ class InterpolatedWeightedAverageSigmaScheduleNode:
                 "interpolation": (InterpolationMethod._LIST,),
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -135,7 +135,7 @@ class SplitAndCombineSigmaScheduleNode:
                 "idx_split_percent": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001})
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 40}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -164,7 +164,7 @@ class SigmaScheduleToSigmasNode:
                 "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
