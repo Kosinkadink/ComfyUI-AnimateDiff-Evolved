@@ -793,6 +793,13 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_current_pia_input: InputPIA = None
         self.pia_multival: Union[float, Tensor] = None
 
+        # FancyVideo
+        self.orig_fancy_images: Tensor = None
+        self.fancy_vae: VAE = None
+        self.cached_fancy_c_concat: comfy.conds.CONDNoiseShape = None  # cached
+        self.prev_fancy_latents_shape: tuple = None
+        self.fancy_multival: Union[float, Tensor] = None
+
         # temporary variables
         self.current_used_steps = 0
         self.current_keyframe: ADKeyframe = None
@@ -930,7 +937,7 @@ class MotionModelPatcher(ModelPatcher):
         # update previous_t
         self.previous_t = curr_t
 
-    def prepare_img_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str], latent_format):
+    def prepare_alcmi2v_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str], latent_format):
         # if no img_encoder, done
         if self.model.img_encoder is None:
             return
@@ -1009,10 +1016,7 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_pia_latents_shape = None
         # otherwise, x shape should be the cached pia_latents_shape
         # get currently used models so they can be properly reloaded after perfoming VAE Encoding
-        if hasattr(comfy.model_management, "loaded_models"):
-            cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
-        else:
-            cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
         try:
             b, c, h ,w = x.shape
             usable_ref = self.orig_pia_images[:b]
@@ -1052,8 +1056,52 @@ class MotionModelPatcher(ModelPatcher):
         finally:
             comfy.model_management.load_models_gpu(cached_loaded_models)
 
+    def get_fancy_c_concat(self, model: BaseModel, x: Tensor) -> Tensor:
+        # if have cached shape, check if matches - if so, return cached fancy_latents
+        if self.prev_fancy_latents_shape is not None:
+            if self.prev_fancy_latents_shape[0] == x.shape[0] and self.prev_fancy_latents_shape[-2] == x.shape[-2] and self.prev_fancy_latents_shape[-1] == x.shape[-1]:
+                # TODO: if mask is also the same for this timestep, then retucn cached
+                return self.cached_fancy_c_concat
+        self.prev_fancy_latents_shape = None
+        # otherwise, x shape should be the cached fancy_latents_shape
+        # get currently used models so they can be properly reloaded after performing VAE Encoding
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
+        try:
+            b, c, h, w = x.shape
+            usable_ref = self.orig_fancy_images[:b]
+            # resize images to latent's dims
+            usable_ref = usable_ref.movedim(-1,1)
+            usable_ref = comfy.utils.common_upscale(samples=usable_ref, width=w*self.fancy_vae.downscale_ratio, height=h*self.fancy_vae.downscale_ratio,
+                                                    upscale_method="bilinear", crop="center")
+            usable_ref = usable_ref.movedim(1,-1)
+            # VAE encode images
+            logger.info("VAE Encoding FancyVideo input images...")
+            usable_ref: Tensor = model.process_latent_in(vae_encode_raw_batched(vae=self.fancy_vae, pixels=usable_ref, show_pbar=False))
+            logger.info("VAE Encoding FancyVideo input images complete.")
+            self.prev_fancy_latents_shape = x.shape
+            # TODO: experiment with indexes that aren't the first
+            # pad usable_ref with zeros
+            ref_length = usable_ref.shape[0]
+            pad_length = b - ref_length
+            zero_ref = torch.zeros([pad_length, c, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            usable_ref = torch.cat([usable_ref, zero_ref], dim=0)
+            del zero_ref
+            # create mask
+            mask_ones = torch.ones([ref_length, 1, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            mask_zeros = torch.zeros([pad_length, 1, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            mask = torch.cat([mask_ones, mask_zeros], dim=0)
+            # TODO: experiment with mask strength
+            # cache fancy c_concat - ref first, then mask
+            self.cached_fancy_c_concat = comfy.conds.CONDNoiseShape(torch.cat([usable_ref, mask], dim=1))
+            return self.cached_fancy_c_concat
+        finally:
+            comfy.model_management.load_models_gpu(cached_loaded_models)
+
     def is_pia(self):
         return self.model.mm_info.mm_format == AnimateDiffFormat.PIA and self.orig_pia_images is not None
+
+    def is_fancyvideo(self):
+        return self.model.mm_info.mm_format == AnimateDiffFormat.FANCYVIDEO
 
     def cleanup(self):
         if self.model is not None:
@@ -1175,10 +1223,10 @@ class MotionModelGroup:
         for motion_model in self.models:
             motion_model.prepare_current_keyframe(x=x, t=t)
 
-    def get_pia_models(self):
+    def get_special_models(self):
         pia_motion_models: list[MotionModelPatcher] = []
         for motion_model in self.models:
-            if motion_model.is_pia():
+            if motion_model.is_pia() or motion_model.is_fancyvideo():
                 pia_motion_models.append(motion_model)
         return pia_motion_models
 

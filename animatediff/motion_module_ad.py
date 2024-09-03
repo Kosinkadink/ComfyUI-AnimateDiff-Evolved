@@ -11,6 +11,7 @@ from torch import Tensor, nn
 from comfy.ldm.modules.attention import FeedForward, SpatialTransformer
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
+from comfy.ldm.modules.diffusionmodules.util import timestep_embedding
 from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
 from comfy.controlnet import broadcast_image_to
@@ -22,6 +23,7 @@ from .context import ContextFuseMethod, ContextOptions, get_context_weights, get
 from .adapter_animatelcm_i2v import AdapterEmbed
 if TYPE_CHECKING:  # avoids circular import
     from .adapter_cameractrl import CameraPoseEncoder
+from .adapter_fancyvideo import FancyVideoCondEmbedding, FancyVideoKeys, initialize_weights_to_zero
 from .utils_motion import (CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, extend_list_to_batch_size,
                            prepare_mask_batch, get_combined_multival)
 from .utils_model import BetaSchedules, ModelTypeSD
@@ -135,7 +137,7 @@ def is_animatelcm(mm_state_dict: dict[str, Tensor]) -> bool:
     return True
 
 
-def is_pia(mm_state_dict: dict[str, Tensor]) -> bool:
+def has_conv_in(mm_state_dict: dict[str, Tensor]) -> bool:
     # check if conv_in.weight and .bias are present
     if "conv_in.weight" in mm_state_dict and "conv_in.bias" in mm_state_dict:
         return True
@@ -197,6 +199,20 @@ def has_img_encoder(mm_state_dict: dict[str, Tensor]):
     return False
 
 
+def has_fps_embedding(mm_state_dict: dict[str, Tensor]):
+    for key in mm_state_dict.keys():
+        if key.startswith("fps_embedding."):
+            return True
+    return False
+
+
+def has_motion_embedding(mm_state_dict: dict[str, Tensor]):
+    for key in mm_state_dict.keys():
+        if key.startswith("motion_embedding."):
+            return True
+    return False
+
+
 def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> Tuple[dict[str, Tensor], AnimateDiffInfo]:
     # from pathlib import Path
     # log_name = mm_name.split('\\')[-1]
@@ -227,7 +243,7 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
         mm_format = AnimateDiffFormat.HOTSHOTXL
     if is_animatelcm(mm_state_dict):
         mm_format = AnimateDiffFormat.ANIMATELCM
-    if is_pia(mm_state_dict):
+    if has_conv_in(mm_state_dict):
         mm_format = AnimateDiffFormat.PIA
     if is_fancyvideo(mm_state_dict):
         mm_format = AnimateDiffFormat.FANCYVIDEO
@@ -241,7 +257,7 @@ def normalize_ad_state_dict(mm_state_dict: dict[str, Tensor], mm_name: str) -> T
                 continue
             if mm_format == AnimateDiffFormat.PIA and key.startswith("conv_in."):
                 continue
-            if mm_format == AnimateDiffFormat.FANCYVIDEO:
+            if mm_format == AnimateDiffFormat.FANCYVIDEO and key in FancyVideoKeys:
                 continue
             del mm_state_dict[key]
     # determine the model's version
@@ -319,11 +335,18 @@ class AnimateDiffModel(nn.Module):
             self.init_img_encoder()
         # CameraCtrl stuff
         self.camera_encoder: 'CameraPoseEncoder' = None
-        # PIA stuff - create conv_in if keys are present for it
+        # PIA/FancyVideo stuff - create conv_in if keys are present for it
         self.conv_in: comfy.ops.disable_weight_init.Conv2d = None
         self.orig_conv_in: comfy.ops.disable_weight_init.Conv2d = None
-        if is_pia(mm_state_dict):
+        if has_conv_in(mm_state_dict):
             self.init_conv_in(mm_state_dict)
+        # FancyVideo fps_embedding and motion_embedding
+        self.fps_embedding: FancyVideoCondEmbedding = None
+        self.motion_embedding: FancyVideoCondEmbedding = None
+        if has_fps_embedding(mm_state_dict):
+            self.init_fps_embedding(mm_state_dict)
+        if has_motion_embedding(mm_state_dict):
+            self.init_motion_embedding(mm_state_dict)
 
     def init_img_encoder(self):
         del self.img_encoder
@@ -335,7 +358,7 @@ class AnimateDiffModel(nn.Module):
 
     def init_conv_in(self, mm_state_dict: dict[str, Tensor]):
         '''
-        Used for PIA
+        Used for PIA/FancyVideo
         '''
         del self.conv_in
         # hardcoded values, for now
@@ -346,6 +369,54 @@ class AnimateDiffModel(nn.Module):
         # create conv_in with proper params
         self.conv_in = self.ops.conv_nd(2, in_channels, model_channels, 3, padding=1,
                                         dtype=comfy.model_management.unet_dtype(), device=comfy.model_management.unet_offload_device())
+
+    def init_fps_embedding(self, mm_state_dict: dict[str, Tensor]):
+        '''
+        Used for FancyVideo
+        '''
+        del self.fps_embedding
+        in_channels = mm_state_dict["fps_embedding.linear.weight"].size(1) # expected to be 320
+        cond_embed_dim = mm_state_dict["fps_embedding.linear.weight"].size(0) # expected to be 1280
+        self.fps_embedding = FancyVideoCondEmbedding(in_channels=in_channels, cond_embed_dim=cond_embed_dim)
+        self.fps_embedding.apply(initialize_weights_to_zero)
+
+    def init_motion_embedding(self, mm_state_dict: dict[str, Tensor]):
+        '''
+        Used for FancyVideo
+        '''
+        del self.motion_embedding
+        in_channels = mm_state_dict["motion_embedding.linear.weight"].size(1) # expected to be 320
+        cond_embed_dim = mm_state_dict["motion_embedding.linear.weight"].size(0) # expected to be 1280
+        self.motion_embedding = FancyVideoCondEmbedding(in_channels=in_channels, cond_embed_dim=cond_embed_dim)
+        self.motion_embedding.apply(initialize_weights_to_zero)
+
+    def get_fancyvideo_emb_patches(self, dtype, device, fps=16, motion_score=1.0):
+        patches = []
+        if self.fps_embedding is not None:
+            if fps is not None:
+                def fps_emb_patch(x: Tensor, emb: Tensor, model_channels: int, transformer_options: dict[str]):
+                    nonlocal fps
+                    if fps is None:
+                        return emb
+                    fps = torch.tensor(fps).to(dtype=emb.dtype, device=emb.device)
+                    fps = fps.expand(x.shape[0])
+                    fps_emb = timestep_embedding(fps, model_channels, repeat_only=False).to(dtype=emb.dtype)
+                    fps_emb = self.fps_embedding(fps_emb)
+                    return emb + fps_emb
+                patches.append(fps_emb_patch)
+        if self.motion_embedding is not None:
+            if motion_score is not None:
+                def motion_emb_patch(x: Tensor, emb: Tensor, model_channels: int, transformer_options: dict[str]):
+                    nonlocal motion_score
+                    if motion_score is None:
+                        return emb
+                    motion_score = torch.tensor(motion_score).to(dtype=emb.dtype, device=emb.device)
+                    motion_score = motion_score.expand(x.shape[0])
+                    motion_emb = timestep_embedding(motion_score, model_channels, repeat_only=False).to(dtype=emb.dtype)
+                    motion_emb = self.motion_embedding(motion_emb)
+                    return emb + motion_emb
+                patches.append(motion_emb_patch)
+        return patches
 
     def get_device_debug(self):
         return self.down_blocks[0].motion_modules[0].temporal_transformer.proj_in.weight.device
@@ -456,7 +527,7 @@ class AnimateDiffModel(nn.Module):
             for idx in sorted(idx_to_pop, reverse=True):
                 block.pop(idx)
 
-    def inject_unet_conv_in_pia(self, model: BaseModel):
+    def inject_unet_conv_in_pia_fancyvideo(self, model: BaseModel):
         if self.conv_in is None:
             return
         # TODO: make sure works with lowvram
@@ -480,7 +551,7 @@ class AnimateDiffModel(nn.Module):
         # now can apply combined_conv_in to unet block
         model.diffusion_model.input_blocks[0][0] = combined_conv_in
     
-    def restore_unet_conv_in_pia(self, model: BaseModel):
+    def restore_unet_conv_in_pia_fancyvideo(self, model: BaseModel):
         if self.orig_conv_in is not None:
             model.diffusion_model.input_blocks[0][0] = self.orig_conv_in.to(model.diffusion_model.input_blocks[0][0].weight.device)
             self.orig_conv_in = None

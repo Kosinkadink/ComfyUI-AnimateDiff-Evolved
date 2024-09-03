@@ -75,23 +75,38 @@ class AnimateDiffHelper_GlobalState:
         if self.model_patcher is not None:
             self.model_patcher.prepare_hooked_patches_current_keyframe(t=timestep, hook_groups=hook_groups)
 
-    def perform_special_model_features(self, model: BaseModel, conds: list, x_in: Tensor):
+    def perform_special_model_features(self, model: BaseModel, conds: list, x_in: Tensor, model_options: dict[str]):
         if self.motion_models is not None:
-            pia_models = self.motion_models.get_pia_models()
-            if len(pia_models) > 0:
-                for pia_model in pia_models:
-                    if pia_model.model.is_in_effect():
-                        pia_model.model.inject_unet_conv_in_pia(model)
-                        conds = get_conds_with_c_concat(conds,
-                                                        pia_model.get_pia_c_concat(model, x_in))
+            special_models = self.motion_models.get_special_models()
+            if len(special_models) > 0:
+                for special_model in special_models:
+                    if special_model.model.is_in_effect():
+                        if special_model.is_pia():
+                            special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
+                            conds = get_conds_with_c_concat(conds,
+                                                            special_model.get_pia_c_concat(model, x_in))
+                        elif special_model.is_fancyvideo():
+                            # TODO: handle other weights
+                            special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
+                            conds = get_conds_with_c_concat(conds,
+                                                            special_model.get_fancy_c_concat(model, x_in))
+                            # add fps_embedding/motion_embedding patches
+                            emb_patches = special_model.model.get_fancyvideo_emb_patches(dtype=x_in.dtype, device=x_in.device)
+                            transformer_patches = model_options["transformer_options"].get("patches", {})
+                            transformer_patches["emb_patch"] = emb_patches
+                            model_options["transformer_options"]["patches"] = transformer_patches
         return conds
 
     def restore_special_model_features(self, model: BaseModel):
         if self.motion_models is not None:
-            pia_models = self.motion_models.get_pia_models()
-            if len(pia_models) > 0:
-                for pia_model in reversed(pia_models):
-                    pia_model.model.restore_unet_conv_in_pia(model)
+            special_models = self.motion_models.get_special_models()
+            if len(special_models) > 0:
+                for special_model in reversed(special_models):
+                    if special_model.is_pia():
+                        special_model.model.restore_unet_conv_in_pia_fancyvideo(model)
+                    elif special_model.is_fancyvideo():
+                        # TODO: fill out
+                        special_model.model.restore_unet_conv_in_pia_fancyvideo(model)
 
     def reset(self):
         self.initialized = False
@@ -215,7 +230,7 @@ def apply_model_factory(orig_apply_model: Callable):
         ad_params = kwargs["transformer_options"]["ad_params"]
         if ADGS.motion_models is not None:
             for motion_model in ADGS.motion_models.models:
-                motion_model.prepare_img_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=self.latent_format)
+                motion_model.prepare_alcmi2v_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=self.latent_format)
                 motion_model.prepare_camera_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
         del x
         return orig_apply_model(*args, **kwargs)
@@ -612,7 +627,15 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
     ADGS.initialize(model)
     ADGS.prepare_current_keyframes(x=x, timestep=timestep)
     try:
-        cond, uncond = ADGS.perform_special_model_features(model, [cond, uncond], x)
+        # add AD/evolved-sampling params to model_options (transformer_options)
+        model_options = model_options.copy()
+        if "transformer_options" not in model_options:
+            model_options["transformer_options"] = {}
+        else:
+            model_options["transformer_options"] = model_options["transformer_options"].copy()
+        model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
+
+        cond, uncond = ADGS.perform_special_model_features(model, [cond, uncond], x, model_options)
 
         # only use cfg1_optimization if not using custom_cfg or explicitly set to 1.0
         uncond_ = uncond
@@ -622,15 +645,7 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
             cfg_multival = ADGS.sample_settings.custom_cfg.cfg_multival
             if type(cfg_multival) != Tensor and math.isclose(cfg_multival, 1.0) and model_options.get("disable_cfg1_optimization", False) == False:
                 uncond_ = None
-            del cfg_multival 
-
-        # add AD/evolved-sampling params to model_options (transformer_options)
-        model_options = model_options.copy()
-        if "transformer_options" not in model_options:
-            model_options["transformer_options"] = {}
-        else:
-            model_options["transformer_options"] = model_options["transformer_options"].copy()
-        model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
+            del cfg_multival
 
         if not ADGS.is_using_sliding_context():
             cond_pred, uncond_pred = calc_conds_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)

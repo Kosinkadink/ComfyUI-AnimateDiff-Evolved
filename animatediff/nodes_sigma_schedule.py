@@ -45,6 +45,9 @@ class RawSigmaScheduleNode:
                 "sampling": (ModelSamplingType._FULL_LIST,),
                 "lcm_original_timesteps": ("INT", {"default": 50, "min": 1, "max": 1000}),
                 "zsnr": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     

@@ -526,12 +526,12 @@ class NoiseCalibration:
         sigmas = sigmas[:2]
         args[2] = sigmas
         # divide by scale factor
-        sigma = sigmas[0]
+        sigma = sigmas[0] / (model.model.latent_format.scale_factor)
         alpha_cumprod = 1 / ((sigma * sigma) + 1)
         sqrt_alpha_prod = alpha_cumprod ** 0.5
         sqrt_one_minus_alpha_prod = (1 - alpha_cumprod) ** 0.5
         zero_noise = torch.zeros_like(noise)
-        new_latents = latents
+        new_latents = latents# / (model.model.latent_format.scale_factor)
         #new_latents = latents * (model.model.latent_format.scale_factor)
         for _ in range(self.calib_iterations):
             # TODO: do i need to use DDIM noising, or will ComfyUI's work?
@@ -540,14 +540,14 @@ class NoiseCalibration:
             #x = latents + noise * sigma #torch.sqrt(1.0 + sigma ** 2.0)
             # replace latents in args with x
             args[-1] = x
-            e_t_theta = sample_func(model, zero_noise, *args, **kwargs)
+            e_t_theta = sample_func(model, zero_noise, *args, **kwargs) * (model.model.latent_format.scale_factor)
             x_0_t = (x - sqrt_one_minus_alpha_prod * e_t_theta) / sqrt_alpha_prod
             freq_delta = (self.get_low_or_high_fft(x_0_t, self.scale, is_low=False) - self.get_low_or_high_fft(new_latents, self.scale, is_low=False))
             noise = e_t_theta + sqrt_alpha_prod / sqrt_one_minus_alpha_prod * freq_delta
         #return latents, noise
         #x = latents * sqrt_alpha_prod + noise * sqrt_one_minus_alpha_prod
         #return zero_noise, x #noise * (model.model.latent_format.scale_factor)
-        return latents, noise * (model.model.latent_format.scale_factor)
+        return latents, noise# * (model.model.latent_format.scale_factor)
 
     def _perform_calibration_not_custom(self, sample_func: Callable, model: ModelPatcher, latents: Tensor, noise: Tensor, args: list, kwargs: dict):
         return latents, noise

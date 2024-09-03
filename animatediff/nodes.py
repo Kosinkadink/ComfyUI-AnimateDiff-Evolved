@@ -11,6 +11,7 @@ from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateD
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
 from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
+from .nodes_fancyvideo import (ApplyAnimateDiffFancyVideo,)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalDynamicFloatsNode, MultivalConvertToMaskNode
 from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
                                  SetModelLoraHook, SetClipLoraHook,
@@ -213,6 +214,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_InputPIA_PaperPresets": InputPIA_PaperPresetsNode,
     "ADE_PIA_AnimateDiffKeyframe": PIA_ADKeyframeNode,
     "ADE_InjectPIAIntoAnimateDiffModel": LoadAnimateDiffAndInjectPIANode,
+    # FancyVideo
+    ApplyAnimateDiffFancyVideo.NodeID: ApplyAnimateDiffFancyVideo,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
@@ -381,6 +384,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_InputPIA_PaperPresets": "PIA Input [Paper Presets] 🎭🅐🅓②",
     "ADE_PIA_AnimateDiffKeyframe": "AnimateDiff-PIA Keyframe 🎭🅐🅓",
     "ADE_InjectPIAIntoAnimateDiffModel": "🧪Inject PIA into AnimateDiff Model 🎭🅐🅓②",
+    # FancyVideo
+    ApplyAnimateDiffFancyVideo.NodeID: ApplyAnimateDiffFancyVideo.NodeName,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "🚫AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
