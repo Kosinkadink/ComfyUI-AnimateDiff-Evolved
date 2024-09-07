@@ -390,28 +390,28 @@ class AnimateDiffModel(nn.Module):
         self.motion_embedding = FancyVideoCondEmbedding(in_channels=in_channels, cond_embed_dim=cond_embed_dim)
         self.motion_embedding.apply(initialize_weights_to_zero)
 
-    def get_fancyvideo_emb_patches(self, dtype, device, fps=16, motion_score=1.0):
+    def get_fancyvideo_emb_patches(self, dtype, device, fps=25, motion_score=3.0):
         patches = []
         if self.fps_embedding is not None:
             if fps is not None:
-                def fps_emb_patch(x: Tensor, emb: Tensor, model_channels: int, transformer_options: dict[str]):
+                def fps_emb_patch(emb: Tensor, model_channels: int, transformer_options: dict[str]):
                     nonlocal fps
                     if fps is None:
                         return emb
                     fps = torch.tensor(fps).to(dtype=emb.dtype, device=emb.device)
-                    fps = fps.expand(x.shape[0])
+                    fps = fps.expand(emb.shape[0])
                     fps_emb = timestep_embedding(fps, model_channels, repeat_only=False).to(dtype=emb.dtype)
                     fps_emb = self.fps_embedding(fps_emb)
                     return emb + fps_emb
                 patches.append(fps_emb_patch)
         if self.motion_embedding is not None:
             if motion_score is not None:
-                def motion_emb_patch(x: Tensor, emb: Tensor, model_channels: int, transformer_options: dict[str]):
+                def motion_emb_patch(emb: Tensor, model_channels: int, transformer_options: dict[str]):
                     nonlocal motion_score
                     if motion_score is None:
                         return emb
                     motion_score = torch.tensor(motion_score).to(dtype=emb.dtype, device=emb.device)
-                    motion_score = motion_score.expand(x.shape[0])
+                    motion_score = motion_score.expand(emb.shape[0])
                     motion_emb = timestep_embedding(motion_score, model_channels, repeat_only=False).to(dtype=emb.dtype)
                     motion_emb = self.motion_embedding(motion_emb)
                     return emb + motion_emb

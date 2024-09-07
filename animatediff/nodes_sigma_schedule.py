@@ -59,7 +59,12 @@ class RawSigmaScheduleNode:
                            sampling: str, lcm_original_timesteps: int, zsnr: bool, lcm_zsnr: bool=None):
         if lcm_zsnr is not None:
             zsnr = lcm_zsnr
-        new_config = ModelSamplingConfig(beta_schedule=raw_beta_schedule, linear_start=linear_start, linear_end=linear_end)
+        # from pathlib import Path
+        # log_name = 'enforce_zero_terminal_snr_betas'
+        # betas_file = Path(__file__).parent.parent / rf"{log_name}.pt"
+        # given_betas = torch.load(betas_file, weights_only=True)
+        # given_betas[-1] = 0.0
+        new_config = ModelSamplingConfig(beta_schedule=raw_beta_schedule, linear_start=linear_start, linear_end=linear_end)#, given_betas=given_betas)
         if sampling != ModelSamplingType.LCM:
             lcm_original_timesteps=None
         model_type = ModelSamplingType.from_alias(sampling)    
