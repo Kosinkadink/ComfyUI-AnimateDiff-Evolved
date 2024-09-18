@@ -201,7 +201,7 @@ class PIA_ADKeyframeNode:
                 "pia_input": ("PIA_INPUT",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 5}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -253,7 +253,7 @@ class InputPIA_PaperPresetsNode:
             "optional": {
                 "mult_multival": ("MULTIVAL",),
                 "print_values": ("BOOLEAN", {"default": False},),
-                "autosize": ("ADEAUTOSIZE", {"padding": 60}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 #"effect_multival": ("MULTIVAL",),
             }
         }

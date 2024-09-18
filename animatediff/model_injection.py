@@ -1,5 +1,6 @@
 import copy
 from typing import Union, Callable
+from collections import namedtuple
 
 from einops import rearrange
 from torch import Tensor
@@ -19,7 +20,7 @@ from comfy.sd import CLIP, VAE
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention, PerBlock, AllPerBlocks,
+from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, AnimateDiffInfo, EncoderOnlyAnimateDiffModel, VersatileAttention, PerBlock, AllPerBlocks,
                                has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, InputPIA,
@@ -792,6 +793,13 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_current_pia_input: InputPIA = None
         self.pia_multival: Union[float, Tensor] = None
 
+        # FancyVideo
+        self.orig_fancy_images: Tensor = None
+        self.fancy_vae: VAE = None
+        self.cached_fancy_c_concat: comfy.conds.CONDNoiseShape = None  # cached
+        self.prev_fancy_latents_shape: tuple = None
+        self.fancy_multival: Union[float, Tensor] = None
+
         # temporary variables
         self.current_used_steps = 0
         self.current_keyframe: ADKeyframe = None
@@ -929,7 +937,7 @@ class MotionModelPatcher(ModelPatcher):
         # update previous_t
         self.previous_t = curr_t
 
-    def prepare_img_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str], latent_format):
+    def prepare_alcmi2v_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str], latent_format):
         # if no img_encoder, done
         if self.model.img_encoder is None:
             return
@@ -1008,10 +1016,7 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_pia_latents_shape = None
         # otherwise, x shape should be the cached pia_latents_shape
         # get currently used models so they can be properly reloaded after perfoming VAE Encoding
-        if hasattr(comfy.model_management, "loaded_models"):
-            cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
-        else:
-            cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
         try:
             b, c, h ,w = x.shape
             usable_ref = self.orig_pia_images[:b]
@@ -1051,8 +1056,52 @@ class MotionModelPatcher(ModelPatcher):
         finally:
             comfy.model_management.load_models_gpu(cached_loaded_models)
 
+    def get_fancy_c_concat(self, model: BaseModel, x: Tensor) -> Tensor:
+        # if have cached shape, check if matches - if so, return cached fancy_latents
+        if self.prev_fancy_latents_shape is not None:
+            if self.prev_fancy_latents_shape[0] == x.shape[0] and self.prev_fancy_latents_shape[-2] == x.shape[-2] and self.prev_fancy_latents_shape[-1] == x.shape[-1]:
+                # TODO: if mask is also the same for this timestep, then retucn cached
+                return self.cached_fancy_c_concat
+        self.prev_fancy_latents_shape = None
+        # otherwise, x shape should be the cached fancy_latents_shape
+        # get currently used models so they can be properly reloaded after performing VAE Encoding
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
+        try:
+            b, c, h, w = x.shape
+            usable_ref = self.orig_fancy_images[:b]
+            # resize images to latent's dims
+            usable_ref = usable_ref.movedim(-1,1)
+            usable_ref = comfy.utils.common_upscale(samples=usable_ref, width=w*self.fancy_vae.downscale_ratio, height=h*self.fancy_vae.downscale_ratio,
+                                                    upscale_method="bilinear", crop="center")
+            usable_ref = usable_ref.movedim(1,-1)
+            # VAE encode images
+            logger.info("VAE Encoding FancyVideo input images...")
+            usable_ref: Tensor = model.process_latent_in(vae_encode_raw_batched(vae=self.fancy_vae, pixels=usable_ref, show_pbar=False))
+            logger.info("VAE Encoding FancyVideo input images complete.")
+            self.prev_fancy_latents_shape = x.shape
+            # TODO: experiment with indexes that aren't the first
+            # pad usable_ref with zeros
+            ref_length = usable_ref.shape[0]
+            pad_length = b - ref_length
+            zero_ref = torch.zeros([pad_length, c, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            usable_ref = torch.cat([usable_ref, zero_ref], dim=0)
+            del zero_ref
+            # create mask
+            mask_ones = torch.ones([ref_length, 1, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            mask_zeros = torch.zeros([pad_length, 1, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            mask = torch.cat([mask_ones, mask_zeros], dim=0)
+            # TODO: experiment with mask strength
+            # cache fancy c_concat - ref first, then mask
+            self.cached_fancy_c_concat = comfy.conds.CONDNoiseShape(torch.cat([usable_ref, mask], dim=1))
+            return self.cached_fancy_c_concat
+        finally:
+            comfy.model_management.load_models_gpu(cached_loaded_models)
+
     def is_pia(self):
         return self.model.mm_info.mm_format == AnimateDiffFormat.PIA and self.orig_pia_images is not None
+
+    def is_fancyvideo(self):
+        return self.model.mm_info.mm_format == AnimateDiffFormat.FANCYVIDEO
 
     def cleanup(self):
         if self.model is not None:
@@ -1174,10 +1223,10 @@ class MotionModelGroup:
         for motion_model in self.models:
             motion_model.prepare_current_keyframe(x=x, t=t)
 
-    def get_pia_models(self):
+    def get_special_models(self):
         pia_motion_models: list[MotionModelPatcher] = []
         for motion_model in self.models:
-            if motion_model.is_pia():
+            if motion_model.is_pia() or motion_model.is_fancyvideo():
                 pia_motion_models.append(motion_model)
         return pia_motion_models
 
@@ -1281,9 +1330,8 @@ def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: M
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(model.model_dtype())
     ad_wrapper.to(model.offload_device)
-    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
-    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=not is_animatelcm)
-    # TODO: report load_result of motion_module loading?
+    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=False)
+    verify_load_result(load_result=load_result, mm_info=mm_info)
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
     motion_model = MotionModelPatcher(model=ad_wrapper, load_device=model.load_device, offload_device=model.offload_device)
     # load motion_lora, if present
@@ -1306,17 +1354,43 @@ def load_motion_module_gen2(model_name: str, motion_model_settings: AnimateDiffS
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
-    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
-    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=not is_animatelcm)
-    # TODO: manually check load_results for AnimateLCM models
-    if is_animatelcm:
-        pass
-    # TODO: report load_result of motion_module loading?
+    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=False)
+    verify_load_result(load_result=load_result, mm_info=mm_info)
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
     motion_model = MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
                                       offload_device=comfy.model_management.unet_offload_device())
     return motion_model
 
+
+IncompatibleKeys = namedtuple('IncompatibleKeys', ['missing_keys', 'unexpected_keys'])
+def verify_load_result(load_result: IncompatibleKeys, mm_info: AnimateDiffInfo):
+    error_msgs: list[str] = []
+    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
+
+    remove_missing_idxs = []
+    remove_unexpected_idxs = []
+    for idx, key in enumerate(load_result.missing_keys):
+        # NOTE: AnimateLCM has no pe keys in the model file, so any errors associated with missing pe keys can be ignored
+        if is_animatelcm and "pos_encoder.pe" in key:
+            remove_missing_idxs.append(idx)
+    # remove any keys to ignore in reverse order (to preserve idx correlation)
+    for idx in reversed(remove_unexpected_idxs):
+        load_result.unexpected_keys.pop(idx)
+    for idx in reversed(remove_missing_idxs):
+        load_result.missing_keys.pop(idx)
+    # copied over from torch.nn.Module.module class Module's load_state_dict func
+    if len(load_result.unexpected_keys) > 0:
+        error_msgs.insert(
+            0, 'Unexpected key(s) in state_dict: {}. '.format(
+                ', '.join(f'"{k}"' for k in load_result.unexpected_keys)))
+    if len(load_result.missing_keys) > 0:
+        error_msgs.insert(
+            0, 'Missing key(s) in state_dict: {}. '.format(
+                ', '.join(f'"{k}"' for k in load_result.missing_keys)))
+    if len(error_msgs) > 0:
+        raise RuntimeError('Error(s) in loading state_dict for {}:\n\t{}'.format(
+                            mm_info.mm_name, "\n\t".join(error_msgs)))
+    
 
 def create_fresh_motion_module(motion_model: MotionModelPatcher) -> MotionModelPatcher:
     ad_wrapper = AnimateDiffModel(mm_state_dict=motion_model.model.state_dict(), mm_info=motion_model.model.mm_info)

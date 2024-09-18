@@ -174,6 +174,7 @@ class LoadAnimateDiffModelNode:
             },
             "optional": {
                 "ad_settings": ("AD_SETTINGS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
             }
         }
 
