@@ -372,6 +372,7 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
                 prev_holder = CondHolder(idx=i, prompt=real_prompt, raw_prompt=prev_holder.raw_prompt, cond=cond, pooled=pooled, hold=prev_holder.hold)
             real_cond[i] = prev_holder.cond
             real_pooled[i] = prev_holder.pooled
+            real_holders[i] = prev_holder
         else:
             prev_holder = real_holders[i]
         pbar.update(1)
