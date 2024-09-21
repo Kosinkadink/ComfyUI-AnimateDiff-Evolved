@@ -16,6 +16,7 @@ import comfy.sampler_helpers
 import comfy.utils
 from comfy.controlnet import ControlBase
 from comfy.model_base import BaseModel
+from comfy.model_patcher import ModelPatcher
 import comfy.conds
 import comfy.ops
 
@@ -25,7 +26,7 @@ from .context_extras import ContextRefMode
 from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
 from .utils_model import ModelTypeSD, MachineState, vae_encode_raw_batched, vae_decode_raw_batched
 from .utils_motion import composite_extend, get_combined_multival, prepare_mask_batch, extend_to_batch_size
-from .model_injection import InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher
+from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup, MotionModelPatcher
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
 from .logger import logger
 
@@ -35,7 +36,7 @@ from .logger import logger
 # Global variable to use to more conveniently hack variable access into samplers
 class AnimateDiffHelper_GlobalState:
     def __init__(self):
-        self.model_patcher: ModelPatcherAndInjector = None
+        self.model_patcher: ModelPatcher = None
         self.motion_models: MotionModelGroup = None
         self.params: InjectionParams = None
         self.sample_settings: SampleSettings = None
@@ -53,15 +54,6 @@ class AnimateDiffHelper_GlobalState:
                 self.params.context_options.initialize_timesteps(model)
             if self.sample_settings.custom_cfg is not None:
                 self.sample_settings.custom_cfg.initialize_timesteps(model)
-
-    def hooks_initialize(self, model: BaseModel, hook_groups: list[LoraHookGroup]):
-        # this function is to be run the first time all gathered
-        if not self.hooks_initialized:
-            self.hooks_initialized = True
-            for hook_group in hook_groups:
-                for hook in hook_group.hooks:
-                    hook.reset()
-                    hook.initialize_timesteps(model)
 
     def prepare_current_keyframes(self, x: Tensor, timestep: Tensor):
         if self.motion_models is not None:
@@ -247,7 +239,7 @@ def diffusion_model_forward_groupnormed_factory(orig_diffusion_model_forward: Ca
 ##################################################################################
 
 
-def apply_params_to_motion_models(motion_models: MotionModelGroup, params: InjectionParams):
+def apply_params_to_motion_models_old(motion_models: MotionModelGroup, params: InjectionParams):
     params = params.clone()
     for context in params.context_options.contexts:
         if context.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
@@ -287,66 +279,106 @@ def apply_params_to_motion_models(motion_models: MotionModelGroup, params: Injec
     return params
 
 
+def apply_params_to_motion_models(helper: ModelPatcherHelper, params: InjectionParams):
+    params = params.clone()
+    for context in params.context_options.contexts:
+        if context.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
+            context.context_length = params.full_length
+    # TODO: check (and message) should be different based on use_on_equal_length setting
+    if params.context_options.context_length:
+        pass
+
+    allow_equal = params.context_options.use_on_equal_length
+    if params.context_options.context_length:
+        enough_latents = params.full_length >= params.context_options.context_length if allow_equal else params.full_length > params.context_options.context_length
+    else:
+        enough_latents = False
+    if params.context_options.context_length and enough_latents:
+        logger.info(f"Sliding context window sampling activated - latents passed in ({params.full_length}) greater than context_length {params.context_options.context_length}.")
+    else:
+        logger.info(f"Regular sampling activated - latents passed in ({params.full_length}) less or equal to context_length {params.context_options.context_length}.")
+        params.reset_context()
+    if helper.get_motion_models():
+        # if no context_length, treat video length as intended AD frame window
+        if not params.context_options.context_length:
+            for motion_model in helper.get_motion_models():
+                if not motion_model.model.is_length_valid_for_encoding_max_len(params.full_length):
+                    raise ValueError(f"Without a context window, AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames, but received {params.full_length} latents.")
+            helper.set_video_length(params.full_length, params.full_length)
+        # otherwise, treat context_length as intended AD frame window
+        else:
+            for motion_model in helper.get_motion_models():
+                view_options = params.context_options.view_options
+                context_length = view_options.context_length if view_options else params.context_options.context_length
+                if not motion_model.model.is_length_valid_for_encoding_max_len(context_length):
+                    raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_options.context_length}.")
+            helper.set_video_length(params.context_options.context_length, params.full_length)
+        # inject model
+        module_str = "modules" if len(helper.get_motion_models()) > 1 else "module"
+        logger.info(f"Using motion {module_str} {helper.get_name_string(show_version=True)}.")
+    return params
+
+
 class FunctionInjectionHolder:
     def __init__(self):
         self.temp_uninjector: GroupnormUninjectHelper = GroupnormUninjectHelper()
         self.groupnorm_injector: GroupnormInjectHelper = GroupnormInjectHelper()
     
-    def inject_functions(self, model: ModelPatcherAndInjector, params: InjectionParams):
+    def inject_functions(self, helper: ModelPatcherHelper, params: InjectionParams):
         # Save Original Functions - order must match between here and restore_functions
         self.orig_forward_timestep_embed = openaimodel.forward_timestep_embed # needed to account for VanillaTemporalModule
-        self.orig_memory_required = model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
+        self.orig_memory_required = helper.model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_forward_comfy_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
-        self.orig_diffusion_model_forward = model.model.diffusion_model.forward
+        self.orig_diffusion_model_forward = helper.model.model.diffusion_model.forward
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
-        self.orig_get_area_and_mult = comfy.samplers.get_area_and_mult
-        self.orig_get_additional_models = comfy.sampler_helpers.get_additional_models
-        self.orig_apply_model = model.model.apply_model
+        #self.orig_get_area_and_mult = comfy.samplers.get_area_and_mult
+        #self.orig_get_additional_models = comfy.sampler_helpers.get_additional_models
+        self.orig_apply_model = helper.model.model.apply_model
         # Inject Functions
         openaimodel.forward_timestep_embed = forward_timestep_embed_factory()
         if params.unlimited_area_hack:
-            model.model.memory_required = unlimited_memory_required
-        if model.motion_models is not None:
+            helper.model.model.memory_required = unlimited_memory_required
+        if helper.get_motion_models():
             # only apply groupnorm hack if PIA, v2 and not properly applied, or v1
-            info: AnimateDiffInfo = model.motion_models[0].model.mm_info
+            info: AnimateDiffInfo = helper.get_motion_models()[0].model.mm_info
             if ((info.mm_format == AnimateDiffFormat.PIA) or
                 (info.mm_version == AnimateDiffVersion.V2 and not params.apply_v2_properly) or
                 (info.mm_version == AnimateDiffVersion.V1)):
                 self.inject_groupnorm_forward = groupnorm_mm_factory(params)
                 self.inject_groupnorm_forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
                 self.groupnorm_injector = GroupnormInjectHelper(self)
-                model.model.diffusion_model.forward = diffusion_model_forward_groupnormed_factory(self.orig_diffusion_model_forward, self.groupnorm_injector)
+                helper.model.model.diffusion_model.forward = diffusion_model_forward_groupnormed_factory(self.orig_diffusion_model_forward, self.groupnorm_injector)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
                 try:
-                    if model.load_device.type == "mps":
-                        model.model.memory_required = unlimited_memory_required
+                    if helper.model.load_device.type == "mps":
+                        helper.model.model.memory_required = unlimited_memory_required
                 except Exception:
                     pass
             # if img_encoder or camera_encoder present, inject apply_model to handle correctly
-            for motion_model in model.motion_models:
+            for motion_model in helper.get_motion_models():
                 if (motion_model.model.img_encoder is not None) or (motion_model.model.camera_encoder is not None):
-                    model.model.apply_model = apply_model_factory(self.orig_apply_model).__get__(model.model, type(model.model))
+                    helper.model.model.apply_model = apply_model_factory(self.orig_apply_model).__get__(helper.model.model, type(helper.model.model))
                     break
             del info
         comfy.samplers.sampling_function = evolved_sampling_function
-        comfy.samplers.get_area_and_mult = get_area_and_mult_ADE
-        comfy.sampler_helpers.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
+        #comfy.samplers.get_area_and_mult = get_area_and_mult_ADE
+        #comfy.sampler_helpers.get_additional_models = get_additional_models_factory(self.orig_get_additional_models, model.motion_models)
         # create temp_uninjector to help facilitate uninjecting functions
         self.temp_uninjector = GroupnormUninjectHelper(self)
 
-    def restore_functions(self, model: ModelPatcherAndInjector):
+    def restore_functions(self, helper: ModelPatcherHelper):
         # Restoration
         try:
-            model.model.memory_required = self.orig_memory_required
+            helper.model.model.memory_required = self.orig_memory_required
             openaimodel.forward_timestep_embed = self.orig_forward_timestep_embed
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_forward_comfy_cast_weights
-            model.model.diffusion_model.forward = self.orig_diffusion_model_forward
+            helper.model.model.diffusion_model.forward = self.orig_diffusion_model_forward
             comfy.samplers.sampling_function = self.orig_sampling_function
-            comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
-            comfy.sampler_helpers.get_additional_models = self.orig_get_additional_models
-            model.model.apply_model = self.orig_apply_model
+            #comfy.samplers.get_area_and_mult = self.orig_get_area_and_mult
+            #comfy.sampler_helpers.get_additional_models = self.orig_get_additional_models
+            helper.model.model.apply_model = self.orig_apply_model
         except AttributeError:
             logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
                          "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
@@ -428,10 +460,140 @@ class ContextRefInjector:
         return can_concat_cond_contextref_injection
 
 
+def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kwargs):
+    # NOTE: OUTER_SAMPLE wrapper patch in ModelPatcher
+    latents = None
+    cached_latents = None
+    cached_noise = None
+    function_injections = FunctionInjectionHolder()
+
+    try:
+        helper = ModelPatcherHelper(guider.model_patcher)
+        args = list(args)
+        # clone params from model
+        params = helper.get_params().clone()
+        # get amount of latents passed in, and store in params
+        noise: Tensor = args[0]
+        latents: Tensor = args[1]
+        params.full_length = latents.size(0)
+        # reset global state - TODO: remove global state
+        ADGS.reset()
+
+        # apply custom noise, if needed
+        disable_noise = math.isclose(noise.max(), 0.0)
+        seed = args[-1]
+
+        # apply params to motion model
+        # TODO: fill out
+        params = apply_params_to_motion_models(helper, params)
+
+        # store and inject funtions
+        function_injections.inject_functions(helper, params)
+
+        # prepare noise_extra_args for noise generation purposes
+        noise_extra_args = {"disable_noise": disable_noise}
+        params.set_noise_extra_args(noise_extra_args)
+        # if noise is not disabled, do noise stuff
+        if not disable_noise:
+            noise = helper.get_sample_settings().prepare_noise(seed, latents, noise, extra_args=noise_extra_args, force_create_noise=False)
+
+        # callback setup
+        original_callback = args[-3]
+        def ad_callback(step, x0, x, total_steps):
+            if original_callback is not None:
+                original_callback(step, x0, x, total_steps)
+            # store denoised latents if image_injection will be used
+            if not helper.get_sample_settings().image_injection.is_empty():
+                ADGS.callback_output_dict["x0"] = x0
+            # update GLOBALSTATE for next iteration
+            ADGS.current_step = ADGS.start_step + step + 1
+        args[-3] = ad_callback
+        ADGS.model_patcher = helper.model
+        ADGS.motion_models = MotionModelGroup(helper.get_motion_models())
+        ADGS.sample_settings = helper.get_sample_settings()
+        ADGS.function_injections = function_injections
+
+        # apply adapt_denoise_steps - does not work here! would need to mess with this elsewhere...
+        # TODO: implement proper wrapper to handle this feature...
+
+        iter_opts = helper.get_sample_settings().iteration_opts
+        iter_opts.initialize(latents)
+        # cache initial noise and latents, if needed
+        if iter_opts.cache_init_latents:
+            cached_latents = latents.clone()
+        if iter_opts.cache_init_noise:
+            cached_noise = noise.clone()
+        # prepare iter opts preprocess kwargs, if needed
+        iter_kwargs = {}
+        # NOTE: original KSampler stuff is not doable here, so skipping
+
+        for curr_i in range(iter_opts.iterations):
+            # handle GLOBALSTATE vars and step tally
+            ADGS.update_with_inject_params(params)
+            ADGS.start_step = kwargs.get("start_step") or 0
+            ADGS.current_step = ADGS.start_step
+            ADGS.last_step = kwargs.get("last_step") or 0
+            if iter_opts.iterations > 1:
+                logger.info(f"Iteration {curr_i+1}/{iter_opts.iterations}")
+            # perform any iter_opts preprocessing on latents
+            latents, noise = iter_opts.preprocess_latents(curr_i=curr_i, model=helper.model, latents=latents, noise=noise,
+                                                          cached_latents=cached_latents, cached_noise=cached_noise,
+                                                          seed=seed,
+                                                          sample_settings=helper.get_sample_settings(), noise_extra_args=noise_extra_args,
+                                                          **iter_kwargs)
+            if helper.get_sample_settings().noise_calibration is not None:
+                    latents, noise = helper.get_sample_settings().noise_calibration.perform_calibration(sample_func=executor, model=helper.model, latents=latents, noise=noise,
+                                                                                                 is_custom=True, args=args, kwargs=kwargs)
+            # finalize latent_image in args
+            args[1] = latents
+
+            helper.pre_run()
+
+            if ADGS.sample_settings.image_injection.is_empty():
+                latents = executor(guider, *tuple(args), **kwargs)
+            else:
+                ADGS.sample_settings.image_injection.initialize_timesteps(helper.model.model)
+                sigmas = args[3]
+                sigmas_list, injection_list = ADGS.sample_settings.image_injection.custom_ksampler_get_injections(helper.model, sigmas)
+                # useful logging
+                if len(injection_list) > 0:
+                    inj_str = "s" if len(injection_list) > 1 else ""
+                    logger.info(f"Found {len(injection_list)} applicable image injection{inj_str}; sampling will be split into {len(sigmas_list)}.")
+                else:
+                    logger.info(f"Found 0 applicable image injections within the step bounds of this sampler; sampling unaffected.")
+                is_first = True
+                new_noise = noise
+                for i in range(len(sigmas_list)):
+                    args[0] = new_noise
+                    args[1] = latents
+                    args[3] = sigmas_list[i]
+                    latents = executor(guider, *tuple(args), **kwargs)
+                    if is_first:
+                        new_noise = torch.zeros_like(latents)
+                    # if injection expected, perform injection
+                    if i < len(injection_list):
+                        to_inject = injection_list[i]
+                        latents = perform_image_injection(helper.model.model, latents, to_inject)
+        return latents
+    finally:
+        del noise
+        del latents
+        del cached_latents
+        del cached_noise
+        # reset global state
+        ADGS.reset()
+        # clean motion_models
+        helper.cleanup_motion_models()
+        # restore injected functions
+        function_injections.restore_functions(helper)
+        del function_injections
+        del helper
+
+
 def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) -> Callable:
-    def motion_sample(model: ModelPatcherAndInjector, noise: Tensor, *args, **kwargs):
+    def motion_sample(model: ModelPatcher, noise: Tensor, *args, **kwargs):
         # check if model is intended for injecting
-        if type(model) != ModelPatcherAndInjector:
+        if type(model) != ModelPatcher:
             return orig_comfy_sample(model, noise, *args, **kwargs)
         # otherwise, injection time
         latents = None
@@ -452,7 +614,7 @@ def motion_sample_factory(orig_comfy_sample: Callable, is_custom: bool=False) ->
             seed = kwargs["seed"]
 
             # apply params to motion model
-            params = apply_params_to_motion_models(model.motion_models, params)
+            params = apply_params_to_motion_models_old(model.motion_models, params)
 
             # store and inject functions
             function_injections.inject_functions(model, params)
@@ -672,7 +834,7 @@ def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: Noised
     if hasattr(comfy.model_management, "loaded_models"):
         cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
     else:
-        cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
+        cached_loaded_models: list[ModelPatcher] = [x.model for x in comfy.model_management.current_loaded_models]
     try:
         orig_device = latents.device
         orig_dtype = latents.dtype

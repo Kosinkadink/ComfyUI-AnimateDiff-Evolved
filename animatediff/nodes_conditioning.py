@@ -11,7 +11,6 @@ import comfy.utils
 
 from .conditioning import (COND_CONST, TimestepsCond, set_mask_conds, set_mask_and_combine_conds, set_unmasked_and_combine_conds,
                            LoraHook, LoraHookGroup, LoraHookKeyframe, LoraHookKeyframeGroup)
-from .model_injection import ModelPatcherAndInjector, CLIPWithHooks, load_hooked_lora_for_models, load_model_as_hooked_lora_for_models
 from .utils_model import BIGMAX, InterpolationMethod
 from .logger import logger
 
@@ -443,7 +442,7 @@ class MaskableLoraLoader:
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_lora"
 
-    def load_lora(self, model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora_name: str, strength_model: float, strength_clip: float):
+    def load_lora(self, model: Union[ModelPatcher], clip: CLIP, lora_name: str, strength_model: float, strength_clip: float):
         if strength_model == 0 and strength_clip == 0:
             return (model, clip)
         

@@ -16,7 +16,7 @@ from .ad_settings import AnimateDiffSettings, AdjustGroup, AdjustPE, AdjustWeigh
 from .context import ContextOptionsGroup, ContextOptions, ContextSchedules
 from .logger import logger
 from .utils_model import Folders, BetaSchedules, get_available_motion_models
-from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module_gen1
+from .model_injection import InjectionParams, MotionModelGroup, load_motion_module_gen1
 
 
 class AnimateDiffLoader_Deprecated:

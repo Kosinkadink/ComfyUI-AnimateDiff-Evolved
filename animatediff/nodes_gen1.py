@@ -11,7 +11,7 @@ from .utils_model import BetaSchedules, get_available_motion_loras, get_availabl
 from .utils_motion import ADKeyframeGroup, get_combined_multival
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .motion_module_ad import AllPerBlocks
-from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup,
+from .model_injection import (InjectionParams, MotionModelGroup,
                               load_motion_lora_as_patches, load_motion_module_gen1, load_motion_module_gen2, validate_model_compatibility_gen2,
                               validate_per_block_compatibility)
 from .sample_settings import SampleSettings, SeedNoiseGeneration

@@ -51,8 +51,8 @@ from .nodes_lora import AnimateDiffLoraLoader
 from .logger import logger
 
 # override comfy_sample.sample with animatediff-support version
-comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
-comfy_sample.sample_custom = motion_sample_factory(comfy_sample.sample_custom, is_custom=True)
+#comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
+#comfy_sample.sample_custom = motion_sample_factory(comfy_sample.sample_custom, is_custom=True)
 
 
 NODE_CLASS_MAPPINGS = {
