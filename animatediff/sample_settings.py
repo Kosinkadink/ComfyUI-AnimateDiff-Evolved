@@ -476,7 +476,7 @@ class FreeInitOptions(IterationOptions):
             alpha_cumprod = 1 / ((sigma * sigma) + 1)
             sqrt_alpha_prod = alpha_cumprod ** 0.5
             sqrt_one_minus_alpha_prod = (1 - alpha_cumprod) ** 0.5
-            noised_latents = latents * sqrt_alpha_prod + noise * sqrt_one_minus_alpha_prod
+            noised_latents = latents * sqrt_alpha_prod + noise.to(dtype=latents.dtype, device=latents.device) * sqrt_one_minus_alpha_prod
             # 2. create random noise z_rand for high frequency
             temp_sample_settings = sample_settings.clone()
             temp_sample_settings.batch_offset += self.iter_batch_offset * curr_i
@@ -484,7 +484,7 @@ class FreeInitOptions(IterationOptions):
             z_rand = temp_sample_settings.prepare_noise(seed=seed, latents=latents, noise=None,
                                                     extra_args=noise_extra_args, force_create_noise=True)
             # 3. noise reinitialization - combines low freq. noise from noised_latents and high freq. noise from z_rand
-            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand.to(dtype=latents.dtype, device=latents.device), LPF=self.freq_filter)
+            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand, LPF=self.freq_filter)
             return cached_latents, noised_latents
         elif self.init_type == self.DINKINIT_V1:
             # NOTE: This was my first attempt at implementing FreeInit; it sorta works due to my alpha_cumprod shenanigans,
@@ -492,7 +492,7 @@ class FreeInitOptions(IterationOptions):
             # 1. apply initial noise with appropriate step sigma
             sigma = self.get_sigma(model, self.step-1000).to(latents.device)
             alpha_cumprod = 1 / ((sigma * sigma) + 1) #1 / ((sigma * sigma)) # 1 / ((sigma * sigma) + 1)
-            noised_latents = (latents + (cached_noise * sigma)) * alpha_cumprod
+            noised_latents = (latents + (cached_noise.to(dtype=latents.dtype, device=latents.device) * sigma)) * alpha_cumprod
             # 2. create random noise z_rand for high frequency
             temp_sample_settings = sample_settings.clone()
             temp_sample_settings.batch_offset += self.iter_batch_offset * curr_i
@@ -501,7 +501,7 @@ class FreeInitOptions(IterationOptions):
                                                     extra_args=noise_extra_args, force_create_noise=True)
             ####z_rand = torch.randn_like(latents, dtype=latents.dtype, device=latents.device)
             # 3. noise reinitialization - combines low freq. noise from noised_latents and high freq. noise from z_rand
-            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand.to(dtype=latents.dtype, device=latents.device), LPF=self.freq_filter)
+            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand, LPF=self.freq_filter)
             return cached_latents, noised_latents
         else:
             raise ValueError(f"FreeInit init_type '{self.init_type}' is not recognized.")

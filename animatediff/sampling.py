@@ -484,7 +484,6 @@ def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kw
         seed = args[-1]
 
         # apply params to motion model
-        # TODO: fill out
         params = apply_params_to_motion_models(helper, params)
 
         # store and inject funtions
@@ -525,7 +524,7 @@ def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kw
             cached_noise = noise.clone()
         # prepare iter opts preprocess kwargs, if needed
         iter_kwargs = {}
-        # NOTE: original KSampler stuff is not doable here, so skipping
+        # NOTE: original KSampler stuff is not doable here, so skipping...
 
         for curr_i in range(iter_opts.iterations):
             # handle GLOBALSTATE vars and step tally
@@ -545,6 +544,7 @@ def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kw
                     latents, noise = helper.get_sample_settings().noise_calibration.perform_calibration(sample_func=executor, model=helper.model, latents=latents, noise=noise,
                                                                                                  is_custom=True, args=args, kwargs=kwargs)
             # finalize latent_image in args
+            args[0] = noise
             args[1] = latents
 
             helper.pre_run()
