@@ -36,6 +36,7 @@ class ModelPatcherHelper:
     MOTION_MODELS = "ADE_motion_models"
     SAMPLE_SETTINGS = "ADE_sample_settings"
     PARAMS = "ADE_params"
+    ADE = "ADE"
 
     def __init__(self, model: ModelPatcher):
         self.model = model
@@ -90,7 +91,7 @@ class ModelPatcherHelper:
         self.model.set_attachments(self.PARAMS, params)
 
     def set_outer_sample_wrapper(self, wrapper):
-        self.model.add_wrapper(WrappersMP.OUTER_SAMPLE, wrapper)
+        self.model.add_wrapper_with_key(WrappersMP.OUTER_SAMPLE, self.ADE, wrapper)
 
     
     def pre_run(self):

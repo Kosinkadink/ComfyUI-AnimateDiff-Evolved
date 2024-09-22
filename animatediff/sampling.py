@@ -528,6 +528,8 @@ def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kw
 
         for curr_i in range(iter_opts.iterations):
             # handle GLOBALSTATE vars and step tally
+            # NOTE: only KSampler/KSampler (Advanced) would have steps;
+            # explore modifying ComfyUI to provide this when possible?
             ADGS.update_with_inject_params(params)
             ADGS.start_step = kwargs.get("start_step") or 0
             ADGS.current_step = ADGS.start_step
@@ -810,7 +812,7 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
             del cfg_multival
 
         if not ADGS.is_using_sliding_context():
-            cond_pred, uncond_pred = calc_conds_batch_wrapper(model, [cond, uncond_], x, timestep, model_options)
+            cond_pred, uncond_pred = comfy.samplers.calc_cond_batch(model, [cond, uncond_], x, timestep, model_options)
         else:
             cond_pred, uncond_pred = sliding_calc_conds_batch(model, [cond, uncond_], x, timestep, model_options)
 
@@ -887,7 +889,7 @@ def wrapped_cfg_sliding_calc_cond_batch_factory(orig_calc_cond_batch):
             # when inside sliding_calc_conds_batch, should return to original calc_cond_batch
             comfy.samplers.calc_cond_batch = orig_calc_cond_batch
             if not ADGS.is_using_sliding_context():
-                return calc_conds_batch_wrapper(model, conds, x_in, timestep, model_options)
+                return comfy.samplers.calc_cond_batch(model, conds, x_in, timestep, model_options)
             else:
                 return sliding_calc_conds_batch(model, conds, x_in, timestep, model_options)
         finally:
