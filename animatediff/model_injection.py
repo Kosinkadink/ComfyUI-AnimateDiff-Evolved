@@ -21,7 +21,7 @@ from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
 from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, AnimateDiffInfo, EncoderOnlyAnimateDiffModel, VersatileAttention, PerBlock, AllPerBlocks,
-                               has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
+                               VanillaTemporalModule, has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, InputPIA,
                            get_combined_multival, get_combined_input, get_combined_input_effect_multival,
@@ -33,7 +33,6 @@ from .sample_settings import SampleSettings, SeedNoiseGeneration
 
 
 class ModelPatcherHelper:
-    MOTION_MODELS = "ADE_motion_models"
     SAMPLE_SETTINGS = "ADE_sample_settings"
     PARAMS = "ADE_params"
     ADE = "ADE"
@@ -41,24 +40,57 @@ class ModelPatcherHelper:
     def __init__(self, model: ModelPatcher):
         self.model = model
 
+    def set_all_properties(self, outer_sampler_wrapper: Callable, calc_cond_batch_wrapper: Callable,
+                           params: 'InjectionParams', sample_settings: SampleSettings=None, motion_models: 'MotionModelGroup'=None):
+        self.set_outer_sample_wrapper(outer_sampler_wrapper)
+        self.set_calc_cond_batch_wrapper(calc_cond_batch_wrapper)
+        self.set_sample_settings(sample_settings = sample_settings if sample_settings is not None else SampleSettings())
+        self.set_params(params)
+        if motion_models is not None:
+            self.set_motion_models(motion_models.models.copy())
+            self.set_forward_timestep_embed_patch()
+        else:
+            self.remove_motion_models()
+            self.remove_forward_timestep_embed_patch()
+
     def get_adgs(self):
         pass
 
     def get_motion_models(self) -> list['MotionModelPatcher']:
-        return self.model.additional_models.get(self.MOTION_MODELS, [])
-    
+        return self.model.additional_models.get(self.ADE, [])
+
     def set_motion_models(self, motion_models: list['MotionModelPatcher']):
-        self.model.set_additional_models(self.MOTION_MODELS, motion_models)
-        self.model.set_injections(self.MOTION_MODELS,
+        self.model.set_additional_models(self.ADE, motion_models)
+        self.model.set_injections(self.ADE,
                                   [PatcherInjection(inject=inject_motion_models, eject=eject_motion_models)])
 
     def remove_motion_models(self):
-        if self.MOTION_MODELS in self.model.additional_models:
-            self.model.additional_models.pop(self.MOTION_MODELS)
-            self.model.injections.pop(self.MOTION_MODELS)
+        self.model.remove_additional_models(self.ADE)
+        self.model.remove_injections(self.ADE)
+
     def cleanup_motion_models(self):
         for motion_model in self.get_motion_models():
             motion_model.cleanup()
+
+
+    def set_forward_timestep_embed_patch(self):
+        self.remove_forward_timestep_embed_patch()
+        self.model.set_model_forward_timestep_embed_patch(create_forward_timestep_embed_patch())
+
+    def remove_forward_timestep_embed_patch(self):
+        if "transformer_options" in self.model.model_options:
+            transformer_options = self.model.model_options["transformer_options"]
+            if "patches" in transformer_options:
+                patches = transformer_options["patches"]
+                if "forward_timestep_embed_patch" in patches:
+                    forward_timestep_patches: list = patches["forward_timestep_embed_patch"]
+                    to_remove = []
+                    for idx, patch in enumerate(forward_timestep_patches):
+                        if patch[1] == forward_timestep_embed_patch_ade:
+                            to_remove.append(idx)
+                    for idx in to_remove:
+                        forward_timestep_patches.pop(idx)
+
 
     ##########################
     # motion models helpers
@@ -90,10 +122,19 @@ class ModelPatcherHelper:
     def set_params(self, params: 'InjectionParams'):
         self.model.set_attachments(self.PARAMS, params)
 
-    def set_outer_sample_wrapper(self, wrapper):
-        self.model.add_wrapper_with_key(WrappersMP.OUTER_SAMPLE, self.ADE, wrapper)
 
+    def set_outer_sample_wrapper(self, wrapper: Callable):
+        self.model.remove_wrappers_with_key(WrappersMP.OUTER_SAMPLE, self.ADE)
+        self.model.add_wrapper_with_key(WrappersMP.OUTER_SAMPLE, self.ADE, wrapper)
     
+    def set_calc_cond_batch_wrapper(self, wrapper: Callable):
+        self.model.remove_wrappers_with_key(WrappersMP.CALC_COND_BATCH, self.ADE)
+        self.model.add_wrapper_with_key(WrappersMP.CALC_COND_BATCH, self.ADE, wrapper)
+
+    def remove_wrappers(self):
+        self.model.remove_wrappers_with_key(WrappersMP.OUTER_SAMPLE, self.ADE)
+        self.model.remove_wrappers_with_key(WrappersMP.CALC_COND_BATCH, self.ADE)
+
     def pre_run(self):
         # TODO: could implement this as a ModelPatcher ON_PRE_RUN callback
         for motion_model in self.get_motion_models():
@@ -113,6 +154,13 @@ def eject_motion_models(patcher: ModelPatcher):
     motion_models = helper.get_motion_models()
     for mm in motion_models:
         mm.model.eject(patcher)
+
+
+def create_forward_timestep_embed_patch():
+    return (VanillaTemporalModule, forward_timestep_embed_patch_ade)
+
+def forward_timestep_embed_patch_ade(layer, x, emb, context, transformer_options, output_shape, time_context, num_video_frames, image_only_indicator, *args, **kwargs):
+    return layer(x, context)
 
 
 class MotionModelPatcher(ModelPatcher):
@@ -977,12 +1025,11 @@ def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: AnimateDiffSet
 
 
 class InjectionParams:
-    def __init__(self, unlimited_area_hack: bool=False, apply_mm_groupnorm_hack: bool=True, model_name: str="",
+    def __init__(self, unlimited_area_hack: bool=False, apply_mm_groupnorm_hack: bool=True,
                  apply_v2_properly: bool=True) -> None:
         self.full_length = None
         self.unlimited_area_hack = unlimited_area_hack
         self.apply_mm_groupnorm_hack = apply_mm_groupnorm_hack
-        self.model_name = model_name
         self.apply_v2_properly = apply_v2_properly
         self.context_options: ContextOptionsGroup = ContextOptionsGroup.default()
         self.motion_model_settings = AnimateDiffSettings() # Gen1
@@ -1008,8 +1055,7 @@ class InjectionParams:
     
     def clone(self) -> 'InjectionParams':
         new_params = InjectionParams(
-            self.unlimited_area_hack, self.apply_mm_groupnorm_hack,
-            self.model_name, apply_v2_properly=self.apply_v2_properly,
+            self.unlimited_area_hack, self.apply_mm_groupnorm_hack, apply_v2_properly=self.apply_v2_properly,
             )
         new_params.full_length = self.full_length
         new_params.set_context(self.context_options)

@@ -1,7 +1,5 @@
 import comfy.sample as comfy_sample
 
-from .sampling import motion_sample_factory
-
 from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext)
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ADKeyframeNode,
                          LoadAnimateDiffModelNode)
@@ -49,10 +47,6 @@ from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAd
 from .nodes_lora import AnimateDiffLoraLoader
 
 from .logger import logger
-
-# override comfy_sample.sample with animatediff-support version
-#comfy_sample.sample = motion_sample_factory(comfy_sample.sample)
-#comfy_sample.sample_custom = motion_sample_factory(comfy_sample.sample_custom, is_custom=True)
 
 
 NODE_CLASS_MAPPINGS = {

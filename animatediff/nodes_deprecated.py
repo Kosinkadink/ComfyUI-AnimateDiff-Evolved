@@ -50,8 +50,6 @@ class AnimateDiffLoader_Deprecated:
         # set injection params
         params = InjectionParams(
                 unlimited_area_hack=unlimited_area_hack,
-                apply_mm_groupnorm_hack=True,
-                model_name=model_name,
                 apply_v2_properly=False,
         )
         # inject for use in sampling code
@@ -108,8 +106,6 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         # set injection params
         params = InjectionParams(
                 unlimited_area_hack=unlimited_area_hack,
-                apply_mm_groupnorm_hack=True,
-                model_name=model_name,
                 apply_v2_properly=False,
         )
         context_group = ContextOptionsGroup()

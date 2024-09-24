@@ -67,7 +67,7 @@ class AnimateDiffLoaderGen1:
         motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
         
         # create injection params
-        params = InjectionParams(unlimited_area_hack=False, model_name=motion_model.model.mm_info.mm_name)
+        params = InjectionParams(unlimited_area_hack=False)
         # apply context options
         if context_options:
             params.set_context(context_options)
@@ -149,7 +149,6 @@ class LegacyAnimateDiffLoaderWithContext:
         # set injection params
         params = InjectionParams(
                 unlimited_area_hack=False,
-                model_name=model_name,
                 apply_v2_properly=apply_v2_models_properly,
         )
         if context_options:

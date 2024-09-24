@@ -14,7 +14,7 @@ from .model_injection import (ModelPatcherHelper,
                               InjectionParams, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module,
                               load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2, validate_per_block_compatibility)
 from .sample_settings import SampleSettings
-from .sampling import outer_sample_wrapper
+from .sampling import outer_sample_wrapper, sliding_calc_cond_batch
 
 
 class UseEvolvedSamplingNode:
@@ -40,30 +40,27 @@ class UseEvolvedSamplingNode:
                              sample_settings: SampleSettings=None):
         model = model.clone()
         helper = ModelPatcherHelper(model)
+        params = InjectionParams()
         if m_models is not None:
             m_models = m_models.clone()
             # for each motion model, confirm that it is compatible with SD model
             for motion_model in m_models.models:
                 validate_model_compatibility_gen2(model=model, motion_model=motion_model)
-            # create injection params
-            model_name_list = [motion_model.model.mm_info.mm_name for motion_model in m_models.models]
-            model_names = ",".join(model_name_list)
             # TODO: check if any apply_v2_properly is set to False
-            params = InjectionParams(unlimited_area_hack=False, model_name=model_names)
-            helper.set_motion_models(m_models.models.copy())
-        else:
-            params = InjectionParams()
-            helper.remove_motion_models()
         # apply context options
         if context_options:
             params.set_context(context_options)
         
-        sample_settings = sample_settings if sample_settings is not None else SampleSettings()
-        # attach sample settings and params to model
-        helper.set_sample_settings(sample_settings)
-        helper.set_params(params)
-        helper.set_outer_sample_wrapper(outer_sample_wrapper)
+        # attach all properties to model to enable AnimateDiff functionality
+        helper.set_all_properties(
+            outer_sampler_wrapper=outer_sample_wrapper,
+            calc_cond_batch_wrapper=sliding_calc_cond_batch,
+            params=params,
+            sample_settings=sample_settings,
+            motion_models=m_models,
+        )
 
+        sample_settings = helper.get_sample_settings()
         if sample_settings.custom_cfg is not None:
             logger.info("[Sample Settings] custom_cfg is set; will override any KSampler cfg values or patches.")
 
@@ -79,71 +76,6 @@ class UseEvolvedSamplingNode:
                 else:
                     beta_schedule = BetaSchedules.USE_EXISTING
                     
-            new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
-            if new_model_sampling is not None:
-                model.add_object_patch("model_sampling", new_model_sampling)
-        
-        del m_models
-        return (model,)
-
-
-class UseEvolvedSamplingNodeOld:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "model": ("MODEL",),
-                "beta_schedule": (BetaSchedules.ALIAS_LIST, {"default": BetaSchedules.AUTOSELECT}),
-            },
-            "optional": {
-                "m_models": ("M_MODELS",),
-                "context_options": ("CONTEXT_OPTIONS",),
-                "sample_settings": ("SAMPLE_SETTINGS",),
-                #"beta_schedule_override": ("BETA_SCHEDULE",),
-            }
-        }
-    
-    RETURN_TYPES = ("MODEL",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②"
-    FUNCTION = "use_evolved_sampling"
-
-    def use_evolved_sampling(self, model: ModelPatcher, beta_schedule: str, m_models: MotionModelGroup=None, context_options: ContextOptionsGroup=None,
-                             sample_settings: SampleSettings=None, beta_schedule_override=None):
-        if m_models is not None:
-            m_models = m_models.clone()
-            # for each motion model, confirm that it is compatible with SD model
-            for motion_model in m_models.models:
-                validate_model_compatibility_gen2(model=model, motion_model=motion_model)
-            # create injection params
-            model_name_list = [motion_model.model.mm_info.mm_name for motion_model in m_models.models]
-            model_names = ",".join(model_name_list)
-            # TODO: check if any apply_v2_properly is set to False
-            params = InjectionParams(unlimited_area_hack=False, model_name=model_names)
-        else:
-            params = InjectionParams()
-        # apply context options
-        if context_options:
-            params.set_context(context_options)
-        # need to use a ModelPatcher that supports injection of motion modules into unet
-        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
-        model.motion_models = m_models
-        model.sample_settings = sample_settings if sample_settings is not None else SampleSettings()
-        model.motion_injection_params = params
-
-        if model.sample_settings.custom_cfg is not None:
-            logger.info("[Sample Settings] custom_cfg is set; will override any KSampler cfg values or patches.")
-
-        if model.sample_settings.sigma_schedule is not None:
-            logger.info("[Sample Settings] sigma_schedule is set; will override beta_schedule.")
-            model.add_object_patch("model_sampling", model.sample_settings.sigma_schedule.clone().model_sampling)
-        else:
-            # save model_sampling from BetaSchedule as object patch
-            # if autoselect, get suggested beta_schedule from motion model
-            if beta_schedule == BetaSchedules.AUTOSELECT:
-                if model.motion_models is None or model.motion_models.is_empty():
-                    beta_schedule = BetaSchedules.USE_EXISTING
-                else:
-                    beta_schedule = model.motion_models[0].model.get_best_beta_schedule(log=True)
             new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
             if new_model_sampling is not None:
                 model.add_object_patch("model_sampling", new_model_sampling)
