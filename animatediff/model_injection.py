@@ -110,14 +110,14 @@ class ModelPatcherHelper:
 
 
     def get_sample_settings(self) -> SampleSettings:
-        return self.model.attachments.get(self.SAMPLE_SETTINGS, None)
+        return self.model.get_attachment(self.SAMPLE_SETTINGS)
     
     def set_sample_settings(self, sample_settings: SampleSettings):
         self.model.set_attachments(self.SAMPLE_SETTINGS, sample_settings)
     
 
     def get_params(self) -> 'InjectionParams':
-        return self.model.attachments.get(self.PARAMS)
+        return self.model.get_attachment(self.PARAMS)
     
     def set_params(self, params: 'InjectionParams'):
         self.model.set_attachments(self.PARAMS, params)
