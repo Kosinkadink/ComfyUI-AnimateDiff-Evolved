@@ -15,7 +15,7 @@ from .model_injection import (ModelPatcherHelper, InjectionParams, MotionModelGr
                               load_motion_lora_as_patches, load_motion_module_gen1, load_motion_module_gen2, validate_model_compatibility_gen2,
                               validate_per_block_compatibility)
 from .sample_settings import SampleSettings, SeedNoiseGeneration
-from .sampling import outer_sample_wrapper
+from .sampling import outer_sample_wrapper, sliding_calc_cond_batch
 
 
 class AnimateDiffLoaderGen1:
@@ -82,15 +82,18 @@ class AnimateDiffLoaderGen1:
         if params.motion_model_settings.mask_attn_scale is not None:
             motion_model.scale_multival = get_combined_multival(scale_multival, (params.motion_model_settings.mask_attn_scale * params.motion_model_settings.attn_scale))
         
-        sample_settings = sample_settings if sample_settings is not None else SampleSettings()
         # need to use a ModelPatcher that supports injection of motion modules into unet
         model = model.clone()
         helper = ModelPatcherHelper(model)
-        helper.set_motion_models([motion_model])
-        helper.set_sample_settings(sample_settings)
-        helper.set_params(params)
-        helper.set_outer_sample_wrapper(outer_sample_wrapper)
+        helper.set_all_properties(
+            outer_sampler_wrapper=outer_sample_wrapper,
+            calc_cond_batch_wrapper=sliding_calc_cond_batch,
+            params=params,
+            sample_settings=sample_settings,
+            motion_models=MotionModelGroup(motion_model),
+        )
         
+        sample_settings = helper.get_sample_settings()
         if sample_settings.custom_cfg is not None:
             logger.info("[Sample Settings] custom_cfg is set; will override any KSampler cfg values or patches.")
 
@@ -135,7 +138,6 @@ class LegacyAnimateDiffLoaderWithContext:
     CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①"
     FUNCTION = "load_mm_and_inject_params"
 
-
     def load_mm_and_inject_params(self,
         model: ModelPatcher,
         model_name: str, beta_schedule: str,# apply_mm_groupnorm_hack: bool,
@@ -166,22 +168,32 @@ class LegacyAnimateDiffLoaderWithContext:
 
         motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
 
-        sample_settings = sample_settings if sample_settings is not None else SampleSettings()
         # need to use a ModelPatcher that supports injection of motion modules into unet
         model = model.clone()
-        helper = ModelPatcherHelper()
-        helper.set_motion_models([motion_model])
-        helper.set_sample_settings(sample_settings)
-        helper.set_params(params)
-        helper.set_outer_sample_wrapper(outer_sample_wrapper)
+        helper = ModelPatcherHelper(model)
+        helper.set_all_properties(
+            outer_sampler_wrapper=outer_sample_wrapper,
+            calc_cond_batch_wrapper=sliding_calc_cond_batch,
+            params=params,
+            sample_settings=sample_settings,
+            motion_models=MotionModelGroup(motion_model),
+        )
 
-        # save model sampling from BetaSchedule as object patch
-        # if autoselect, get suggested beta_schedule from motion model
-        if beta_schedule == BetaSchedules.AUTOSELECT and helper.get_motion_models():
-            beta_schedule = helper.get_motion_models()[0].model.get_best_beta_schedule(log=True)
-        new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
-        if new_model_sampling is not None:
-            model.add_object_patch("model_sampling", new_model_sampling)
+        sample_settings = helper.get_sample_settings()
+        if sample_settings.custom_cfg is not None:
+            logger.info("[Sample Settings] custom_cfg is set; will override any KSampler cfg values or patches.")
+
+        if sample_settings.sigma_schedule is not None:
+            logger.info("[Sample Settings] sigma_schedule is set; will override beta_schedule.")
+            model.add_object_patch("model_sampling", sample_settings.sigma_schedule.clone().model_sampling)
+        else:
+            # save model sampling from BetaSchedule as object patch
+            # if autoselect, get suggested beta_schedule from motion model
+            if beta_schedule == BetaSchedules.AUTOSELECT and helper.get_motion_models():
+                beta_schedule = helper.get_motion_models()[0].model.get_best_beta_schedule(log=True)
+            new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
+            if new_model_sampling is not None:
+                model.add_object_patch("model_sampling", new_model_sampling)
 
         del motion_model
         return (model,)
