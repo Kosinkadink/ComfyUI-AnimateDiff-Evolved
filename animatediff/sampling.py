@@ -16,7 +16,7 @@ import comfy.sampler_helpers
 import comfy.utils
 from comfy.controlnet import ControlBase
 from comfy.model_base import BaseModel
-from comfy.model_patcher import ModelPatcher
+from comfy.model_patcher import ModelPatcher, WrapperExecutor
 import comfy.conds
 import comfy.ops
 
@@ -405,7 +405,7 @@ class ContextRefInjector:
         return can_concat_cond_contextref_injection
 
 
-def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kwargs):
+def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
     # NOTE: OUTER_SAMPLE wrapper patch in ModelPatcher
     latents = None
     cached_latents = None
@@ -413,6 +413,7 @@ def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kw
     function_injections = FunctionInjectionHolder()
 
     try:
+        guider: comfy.samplers.CFGGuider = executor.class_obj
         helper = ModelPatcherHelper(guider.model_patcher)
         args = list(args)
         # clone params from model
@@ -497,7 +498,7 @@ def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kw
             helper.pre_run()
 
             if ADGS.sample_settings.image_injection.is_empty():
-                latents = executor(guider, *tuple(args), **kwargs)
+                latents = executor(*tuple(args), **kwargs)
             else:
                 ADGS.sample_settings.image_injection.initialize_timesteps(helper.model.model)
                 sigmas = args[3]
@@ -514,7 +515,7 @@ def outer_sample_wrapper(executor, guider: comfy.samplers.CFGGuider, *args, **kw
                     args[0] = new_noise
                     args[1] = latents
                     args[3] = sigmas_list[i]
-                    latents = executor(guider, *tuple(args), **kwargs)
+                    latents = executor(*tuple(args), **kwargs)
                     if is_first:
                         new_noise = torch.zeros_like(latents)
                     # if injection expected, perform injection
