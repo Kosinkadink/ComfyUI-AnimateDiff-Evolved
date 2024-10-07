@@ -595,6 +595,7 @@ def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: Noised
         encoded_x0 = vae_encode_raw_batched(to_inject.vae, decoded_images)
 
         # get difference between sampled latents and encoded_x0
+        latents = latents.to(device=encoded_x0.device)
         encoded_x0 = latents - encoded_x0
 
         # get mask, or default to full mask
@@ -619,7 +620,7 @@ def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: Noised
         strength = to_inject.strength_multival
         if type(strength) == Tensor:
             strength = extend_to_batch_size(prepare_mask_batch(strength, composited.shape), b)
-        return composited * strength + latents * (1.0 - strength)
+        return (composited * strength + latents * (1.0 - strength)).to(dtype=orig_dtype, device=orig_device)
     finally:
         comfy.model_management.load_models_gpu(cached_loaded_models)
 
