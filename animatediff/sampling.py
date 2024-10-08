@@ -1,15 +1,11 @@
 from typing import Callable
 
-import collections
 import math
 import torch
 from torch import Tensor
 from torch.nn.functional import group_norm
 from einops import rearrange
-from types import MethodType
 
-import comfy.ldm.modules.attention as attention
-from comfy.ldm.modules.diffusionmodules import openaimodel
 import comfy.model_management
 import comfy.samplers
 import comfy.sampler_helpers
@@ -22,11 +18,11 @@ import comfy.ops
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .context_extras import ContextRefMode
-from .sample_settings import IterationOptions, SampleSettings, SeedNoiseGeneration, NoisedImageToInject
-from .utils_model import ModelTypeSD, MachineState, vae_encode_raw_batched, vae_decode_raw_batched
-from .utils_motion import composite_extend, get_combined_multival, prepare_mask_batch, extend_to_batch_size
-from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup, MotionModelPatcher
-from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion, VanillaTemporalModule
+from .sample_settings import SampleSettings, NoisedImageToInject
+from .utils_model import MachineState, vae_encode_raw_batched, vae_decode_raw_batched
+from .utils_motion import composite_extend, prepare_mask_batch, extend_to_batch_size
+from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup
+from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion
 from .logger import logger
 
 
@@ -145,7 +141,6 @@ ADGS = AnimateDiffHelper_GlobalState()
 
 ##################################################################################
 #### Code Injection ##################################################
-
 def unlimited_memory_required(*args, **kwargs):
     return 0
 
@@ -187,50 +182,8 @@ def diffusion_model_forward_groupnormed_factory(orig_diffusion_model_forward: Ca
         with inject_helper:
             return orig_diffusion_model_forward(*args, **kwargs)
     return diffusion_model_forward_groupnormed
-
-
 ######################################################################
 ##################################################################################
-
-
-def apply_params_to_motion_models_old(motion_models: MotionModelGroup, params: InjectionParams):
-    params = params.clone()
-    for context in params.context_options.contexts:
-        if context.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
-            context.context_length = params.full_length
-    # TODO: check (and message) should be different based on use_on_equal_length setting
-    if params.context_options.context_length:
-        pass
-
-    allow_equal = params.context_options.use_on_equal_length
-    if params.context_options.context_length:
-        enough_latents = params.full_length >= params.context_options.context_length if allow_equal else params.full_length > params.context_options.context_length
-    else:
-        enough_latents = False
-    if params.context_options.context_length and enough_latents:
-        logger.info(f"Sliding context window activated - latents passed in ({params.full_length}) greater than context_length {params.context_options.context_length}.")
-    else:
-        logger.info(f"Regular AnimateDiff activated - latents passed in ({params.full_length}) less or equal to context_length {params.context_options.context_length}.")
-        params.reset_context()
-    if motion_models is not None:
-        # if no context_length, treat video length as intended AD frame window
-        if not params.context_options.context_length:
-            for motion_model in motion_models.models:
-                if not motion_model.model.is_length_valid_for_encoding_max_len(params.full_length):
-                    raise ValueError(f"Without a context window, AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames, but received {params.full_length} latents.")
-            motion_models.set_video_length(params.full_length, params.full_length)
-        # otherwise, treat context_length as intended AD frame window
-        else:
-            for motion_model in motion_models.models:
-                view_options = params.context_options.view_options
-                context_length = view_options.context_length if view_options else params.context_options.context_length
-                if not motion_model.model.is_length_valid_for_encoding_max_len(context_length):
-                    raise ValueError(f"AnimateDiff model {motion_model.model.mm_info.mm_name} has upper limit of {motion_model.model.encoding_max_len} frames for a context window, but received context length of {params.context_options.context_length}.")
-            motion_models.set_video_length(params.context_options.context_length, params.full_length)
-        # inject model
-        module_str = "modules" if len(motion_models.models) > 1 else "module"
-        logger.info(f"Using motion {module_str} {motion_models.get_name_string(show_version=True)}.")
-    return params
 
 
 def apply_params_to_motion_models(helper: ModelPatcherHelper, params: InjectionParams):
@@ -381,28 +334,6 @@ class GroupnormInjectHelper:
         comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.previous_dwi_gn_cast_weights
         self.previous_gn_forward = None
         self.previous_dwi_gn_cast_weights = None     
-
-
-class ContextRefInjector:
-    def __init__(self):
-        self.orig_can_concat_cond = None
-
-    def inject(self):
-        self.orig_can_concat_cond = comfy.samplers.can_concat_cond
-        comfy.samplers.can_concat_cond = ContextRefInjector.can_concat_cond_contextref_factory(self.orig_can_concat_cond)
-
-    def restore(self):
-        if self.orig_can_concat_cond is not None:
-            comfy.samplers.can_concat_cond = self.orig_can_concat_cond
-    
-    @staticmethod
-    def can_concat_cond_contextref_factory(orig_func: Callable):
-        def can_concat_cond_contextref_injection(c1, c2, *args, **kwargs):
-            #return orig_func(c1, c2, *args, **kwargs)
-            if c1 is c2:
-                return True
-            return False
-        return can_concat_cond_contextref_injection
 
 
 def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
@@ -625,23 +556,6 @@ def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: Noised
         comfy.model_management.load_models_gpu(cached_loaded_models)
 
 
-def wrapped_cfg_sliding_calc_cond_batch_factory(orig_calc_cond_batch):
-    def wrapped_cfg_sliding_calc_cond_batch(model, conds, x_in, timestep, model_options):
-        # current call to calc_cond_batch should refer to sliding version
-        try:
-            current_calc_cond_batch = comfy.samplers.calc_cond_batch
-            # when inside sliding_calc_conds_batch, should return to original calc_cond_batch
-            comfy.samplers.calc_cond_batch = orig_calc_cond_batch
-            if not ADGS.is_using_sliding_context():
-                return comfy.samplers.calc_cond_batch(model, conds, x_in, timestep, model_options)
-            else:
-                return sliding_calc_cond_batch(model, conds, x_in, timestep, model_options)
-        finally:
-            # make sure calc_cond_batch will become wrapped again
-            comfy.samplers.calc_cond_batch = current_calc_cond_batch
-    return wrapped_cfg_sliding_calc_cond_batch
-
-
 # initial sliding_calc_conds_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
 def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], x_in: Tensor, timestep, model_options):
@@ -727,7 +641,6 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
     CONTEXTREF_MACHINE_STATE = "contextref_machine_state"
     CONTEXTREF_CLEAN_FUNC = "contextref_clean_func"
     contextref_active = False
-    contextref_injector = None
     contextref_mode = None
     contextref_idxs_set = None
     first_context = True
@@ -753,9 +666,6 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
                     # get mode_override if present, mode otherwise
                     contextref_mode = refcn.get_contextref_mode_replace() or ADGS.params.context_options.extras.context_ref.mode
                 contextref_idxs_set = contextref_mode.indexes.copy()
-                # use injector to ensure only 1 cond or uncond will be batched at a time
-                contextref_injector = ContextRefInjector()
-                contextref_injector.inject()
 
         curr_window_idx = -1
         naivereuse_active = False
@@ -848,7 +758,6 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
         # clean contextref stuff with provided ACN function, if applicable
         if contextref_active:
             model_options["transformer_options"][CONTEXTREF_CLEAN_FUNC]()
-            contextref_injector.restore()
 
     # handle NaiveReuse
     if cached_naive_conds is not None:
