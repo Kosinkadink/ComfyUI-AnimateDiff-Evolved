@@ -4,6 +4,14 @@ See the Wiki for more detail.
 
 ## [Basic txt2vid](./workflows/ade_basic.png)
 
+<details>
+
+<summary>Workflow Image</summary>
+
+![Basic Workflow](./workflows/ade_basic.png)
+
+</details>
+
 Slightly more than the bare minimum.
 
 - Context Options
