@@ -50,3 +50,10 @@ A longer generation that uses a sliding window of 16 frames.
 | :------------------------------------------------------------: | :---------------------------------------------------: |
 | ![Motion LoRA workflow image](./workflows/ade_motionloras.png) | ![Motion LoRA sample](./samples/motionlora_00001.gif) |
 
+## + Latent Upscale
+
+- Classic Upscaling
+  
+|                        Workflow                        |                                                       Sample                                                       |
+| :----------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------: |
+| ![Upscale workflow image](./workflows/ade_upscale_1.png) | ![Upscale sample before](./samples/upscale_base_00001.gif) ![Upscale sample after](./samples/upscale_up_00001.gif) |
