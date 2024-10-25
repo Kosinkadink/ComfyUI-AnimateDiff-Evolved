@@ -39,3 +39,14 @@ A longer generation that uses a sliding window of 16 frames.
 |                           Workflow                           |                        Sample                        |
 | :----------------------------------------------------------: | :--------------------------------------------------: |
 | ![ContextRef workflow image](./workflows/ade_contextref.png) | ![ContextRef sample](./samples/contextref_00001.gif) |
+
+## + Motion LoRAs
+
+- Load AnimateDiff LoRA 🎭🅐🅓
+- Zoom Out
+- Pan Left
+
+|                            Workflow                            |                        Sample                         |
+| :------------------------------------------------------------: | :---------------------------------------------------: |
+| ![Motion LoRA workflow image](./workflows/ade_motionloras.png) | ![Motion LoRA sample](./samples/motionlora_00001.gif) |
+
