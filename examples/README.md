@@ -32,6 +32,12 @@ A longer generation that uses a sliding window of 16 frames.
 - Set Context Extras
 - Context Extras - ContextRef
 
+### No ContextRef
+
+![ContextRef sample](./samples/contextref_00002.gif)
+
+### ContextRef
+
 ![ContextRef sample](./samples/contextref_00001.gif)
 
 ## [+ Motion LoRAs](./workflows/ade_motion_loras.png)
