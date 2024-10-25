@@ -41,6 +41,12 @@ function initHelpDOM() {
             ::-webkit-scrollbar-button {
                 display: none;
             }
+            .VHS_loopedvideo::-webkit-media-controls-mute-button {
+                display:none;
+            }
+            .VHS_loopedvideo::-webkit-media-controls-fullscreen-button {
+                display:none;
+            }
         </style>
     `
     parentDOM.appendChild(scrollbarStyle)
@@ -80,7 +86,7 @@ function initHelpDOM() {
     });
     function setCollapse(el, doCollapse) {
         if (doCollapse) {
-            el.children[0].innerHTML = '[+]'
+            el.children[0].children[0].innerHTML = '+'
             Object.assign(el.children[1].style, {
                 color: '#CCC',
                 overflowX: 'hidden',
@@ -96,7 +102,7 @@ function initHelpDOM() {
                 child.style.display = 'none'
             }
         } else {
-            el.children[0].innerHTML = '[-]'
+            el.children[0].children[0].innerHTML = '-'
             Object.assign(el.children[1].style, {
                 color: '',
                 overflowX: '',
@@ -111,7 +117,7 @@ function initHelpDOM() {
         }
     }
     helpDOM.collapseOnClick = function() {
-        let doCollapse = this.innerHTML[1] == '-'
+        let doCollapse = this.children[0].innerHTML == '-'
         setCollapse(this.parentElement, doCollapse)
     }
     helpDOM.selectHelp = function(name, value) {
@@ -129,7 +135,14 @@ function initHelpDOM() {
             if (!match) {
                 return null
             }
+            //For longer documentation items with fewer collapsable elements,
+            //scroll to make sure the entirety of the selected item is visible
+            //This has the unfortunate side effect of trying to scroll the main
+            //window if the documentation windows is forcibly offscreen,
+            //but it's easy to simply scroll the main window back and seems to
+            //have no visual side effects
             match.scrollIntoView(false)
+            window.scrollTo(0,0)
             for (let i of items.querySelectorAll('.VHS_collapse')) {
                 if (i.contains(match)) {
                     setCollapse(i, false)
@@ -217,15 +230,20 @@ function initHelpDOM() {
                         }
                     } else {
                         //probably widget, but widgets have variable height.
+                        let basey = LiteGraph.NODE_SLOT_HEIGHT * inputRows + 6
                         for (let w of n.widgets) {
-                            let wheight = LiteGraph.NODE_WIDGET_HEIGHT
-                            if (w.computeSize) {
-                                wheight = w.computeSize(n.size[0])
+                            if (w.y) {
+                                basey = w.y
                             }
-                            if (pos[1] < w.y + wheight) {
+                            let wheight = LiteGraph.NODE_WIDGET_HEIGHT+4
+                            if (w.computeSize) {
+                                wheight = w.computeSize(n.size[0])[1]
+                            }
+                            if (pos[1] < basey + wheight) {
                                 helpDOM.selectHelp(w.name, w.value)
                                 break
                             }
+                            basey += wheight
                         }
                     }
                 }
