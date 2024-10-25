@@ -23,6 +23,14 @@ Slightly more than the bare minimum.
 
 ## [+ Prompt Travel](./workflows/ade_prompt_travel.png)
 
+<details>
+
+<summary>Workflow Image</summary>
+
+![Prompt Travel Workflow](./workflows/ade_prompt_travel.png)
+
+</details>
+
 Same as above, but with prompt travel.
 
 - Prompt Scheduling [Latents]
@@ -31,11 +39,27 @@ Same as above, but with prompt travel.
 
 ## [+ context_length (32 frames)](./workflows/ade_longer.png)
 
+<details>
+
+<summary>Workflow Image</summary>
+
+![context_length Workflow](./workflows/ade_longer.png)
+
+</details>
+
 A longer generation that uses a sliding window of 16 frames.
 
 ![Longer sample](./samples/longer_00001.gif)
 
 ## [+ ContextRef](./workflows/ade_contextref.png)
+
+<details>
+
+<summary>Workflow Image</summary>
+
+![ContextRef Workflow](./workflows/ade_contextref.png)
+
+</details>
 
 - Set Context Extras
 - Context Extras - ContextRef
@@ -50,6 +74,14 @@ A longer generation that uses a sliding window of 16 frames.
 
 ## [+ Motion LoRAs](./workflows/ade_motion_loras.png)
 
+<details>
+
+<summary>Workflow Image</summary>
+
+![Motion LoRAs Workflow](./workflows/ade_motion_loras.png)
+
+</details>
+
 - Load AnimateDiff LoRA 🎭🅐🅓
 - Zoom Out
 - Pan Left
@@ -57,6 +89,14 @@ A longer generation that uses a sliding window of 16 frames.
 ![Motion LoRA sample](./samples/motionlora_00001.gif)
 
 ## [+ Latent Upscale](./workflows/ade_upscale_1.png)
+
+<details>
+
+<summary>Workflow Image</summary>
+
+![Latent Upscale Workflow](./workflows/ade_upscale_1.png)
+
+</details>
 
 - Classic Upscaling
   
