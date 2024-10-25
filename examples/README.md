@@ -64,13 +64,9 @@ A longer generation that uses a sliding window of 16 frames.
 - Set Context Extras
 - Context Extras - ContextRef
 
-### No ContextRef
-
-![ContextRef sample](./samples/contextref_00002.gif)
-
-### ContextRef
-
-![ContextRef sample](./samples/contextref_00001.gif)
+|                       Without                        |                         With                         |
+| :--------------------------------------------------: | :--------------------------------------------------: |
+| ![ContextRef sample](./samples/contextref_00002.gif) | ![ContextRef sample](./samples/contextref_00001.gif) |
 
 ## [+ Motion LoRAs](./workflows/ade_motion_loras.png)
 
@@ -100,4 +96,6 @@ A longer generation that uses a sliding window of 16 frames.
 
 - Classic Upscaling
   
-![Upscale sample before](./samples/upscale_base_00001.gif) ![Upscale sample after](./samples/upscale_up_00001.gif)
+  |                            Base                            |                        Upscaled                         |
+  | :--------------------------------------------------------: | :-----------------------------------------------------: |
+  | ![Upscale sample before](./samples/upscale_base_00001.gif) | ![Upscale sample after](./samples/upscale_up_00001.gif) |
