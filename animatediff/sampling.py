@@ -7,6 +7,7 @@ from torch.nn.functional import group_norm
 from einops import rearrange
 
 import comfy.model_management
+import comfy.model_patcher
 import comfy.samplers
 import comfy.sampler_helpers
 import comfy.utils
@@ -29,7 +30,7 @@ from .logger import logger
 ##################################################################################
 ######################################################################
 # Global variable to use to more conveniently hack variable access into samplers
-class AnimateDiffHelper_GlobalState:
+class AnimateDiffGlobalState:
     def __init__(self):
         self.model_patcher: ModelPatcher = None
         self.motion_models: MotionModelGroup = None
@@ -133,8 +134,6 @@ class AnimateDiffHelper_GlobalState:
             "context_length": self.params.context_options.context_length,
             "sub_idxs": self.params.sub_idxs,
         }
-
-ADGS = AnimateDiffHelper_GlobalState()
 ######################################################################
 ##################################################################################
 
@@ -169,6 +168,7 @@ def apply_model_factory(orig_apply_model: Callable):
         x: Tensor = args[0]
         cond_or_uncond = kwargs["transformer_options"]["cond_or_uncond"]
         ad_params = kwargs["transformer_options"]["ad_params"]
+        ADGS: AnimateDiffGlobalState = kwargs["transformer_options"]["ADGS"]
         if ADGS.motion_models is not None:
             for motion_model in ADGS.motion_models.models:
                 motion_model.prepare_alcmi2v_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=self.latent_format)
@@ -346,6 +346,13 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
     try:
         guider: comfy.samplers.CFGGuider = executor.class_obj
         helper = ModelPatcherHelper(guider.model_patcher)
+
+        orig_model_options = guider.model_options
+        guider.model_options = comfy.model_patcher.create_model_options_clone(guider.model_options)
+        # create ADGS in transformer_options
+        ADGS = AnimateDiffGlobalState()
+        guider.model_options["transformer_options"]["ADGS"] = ADGS
+
         args = list(args)
         # clone params from model
         params = helper.get_params().clone()
@@ -353,7 +360,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
         noise: Tensor = args[0]
         latents: Tensor = args[1]
         params.full_length = latents.size(0)
-        # reset global state - TODO: remove global state
+        # reset global state
         ADGS.reset()
 
         # apply custom noise, if needed
@@ -452,13 +459,15 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
                     # if injection expected, perform injection
                     if i < len(injection_list):
                         to_inject = injection_list[i]
-                        latents = perform_image_injection(helper.model.model, latents, to_inject)
+                        latents = perform_image_injection(ADGS, helper.model.model, latents, to_inject)
         return latents
     finally:
+        guider.model_options = orig_model_options
         del noise
         del latents
         del cached_latents
         del cached_noise
+        del orig_model_options
         # reset global state
         ADGS.reset()
         # clean motion_models
@@ -470,6 +479,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
 
 
 def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, cond_scale, model_options: dict={}, seed=None):
+    ADGS: AnimateDiffGlobalState = model_options["transformer_options"]["ADGS"]
     ADGS.initialize(model)
     ADGS.prepare_current_keyframes(x=x, timestep=timestep)
     try:
@@ -504,7 +514,7 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
         ADGS.restore_special_model_features(model)
 
 
-def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:
+def perform_image_injection(ADGS: AnimateDiffGlobalState, model: BaseModel, latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:
     # NOTE: the latents here have already been process_latent_out'ed
     # get currently used models so they can be properly reloaded after perfoming VAE Encoding
     if hasattr(comfy.model_management, "loaded_models"):
@@ -559,6 +569,7 @@ def perform_image_injection(model: BaseModel, latents: Tensor, to_inject: Noised
 # initial sliding_calc_conds_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
 def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], x_in: Tensor, timestep, model_options):
+    ADGS: AnimateDiffGlobalState = model_options["transformer_options"]["ADGS"]
     if not ADGS.is_using_sliding_context():
         return executor(model, conds, x_in, timestep, model_options)
 
