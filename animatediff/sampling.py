@@ -13,7 +13,8 @@ import comfy.sampler_helpers
 import comfy.utils
 from comfy.controlnet import ControlBase
 from comfy.model_base import BaseModel
-from comfy.model_patcher import ModelPatcher, WrapperExecutor
+from comfy.model_patcher import ModelPatcher
+from comfy.patcher_extension import WrapperExecutor
 import comfy.conds
 import comfy.ops
 

@@ -13,7 +13,8 @@ import comfy.conds
 import comfy.lora
 import comfy.model_management
 import comfy.utils
-from comfy.model_patcher import ModelPatcher, PatcherInjection, WrappersMP
+from comfy.model_patcher import ModelPatcher
+from comfy.patcher_extension import WrappersMP, PatcherInjection
 from comfy.model_base import BaseModel
 from comfy.sd import CLIP, VAE
 
