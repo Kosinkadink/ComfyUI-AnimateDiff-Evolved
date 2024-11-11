@@ -232,16 +232,18 @@ class FunctionInjectionHolder:
         self.temp_uninjector: GroupnormUninjectHelper = GroupnormUninjectHelper()
         self.groupnorm_injector: GroupnormInjectHelper = GroupnormInjectHelper()
     
-    def inject_functions(self, helper: ModelPatcherHelper, params: InjectionParams):
+    def inject_functions(self, helper: ModelPatcherHelper, params: InjectionParams, model_options: dict):
         # Save Original Functions - order must match between here and restore_functions
-        self.orig_memory_required = helper.model.model.memory_required # allows for "unlimited area hack" to prevent halving of conds/unconds
+        self.orig_memory_required = None
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_forward_comfy_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
-        self.orig_diffusion_model_forward = helper.model.model.diffusion_model.forward
+        self.orig_diffusion_model_forward = None
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
-        self.orig_apply_model = helper.model.model.apply_model
+        self.orig_apply_model = None
         # Inject Functions
         if params.unlimited_area_hack:
+            # allows for "unlimited area hack" to prevent halving of conds/unconds
+            self.orig_memory_required = helper.model.model.memory_required
             helper.model.model.memory_required = unlimited_memory_required
         if helper.get_motion_models():
             # only apply groupnorm hack if PIA, v2 and not properly applied, or v1
@@ -252,16 +254,19 @@ class FunctionInjectionHolder:
                 self.inject_groupnorm_forward = groupnorm_mm_factory(params)
                 self.inject_groupnorm_forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
                 self.groupnorm_injector = GroupnormInjectHelper(self)
+                self.orig_diffusion_model_forward = helper.model.model.diffusion_model.forward
                 helper.model.model.diffusion_model.forward = diffusion_model_forward_groupnormed_factory(self.orig_diffusion_model_forward, self.groupnorm_injector)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
                 try:
                     if helper.model.load_device.type == "mps":
+                        self.orig_memory_required = helper.model.model.memory_required
                         helper.model.model.memory_required = unlimited_memory_required
                 except Exception:
                     pass
             # if img_encoder or camera_encoder present, inject apply_model to handle correctly
             for motion_model in helper.get_motion_models():
                 if (motion_model.model.img_encoder is not None) or (motion_model.model.camera_encoder is not None):
+                    self.orig_apply_model = helper.model.model.apply_model
                     helper.model.model.apply_model = apply_model_factory(self.orig_apply_model).__get__(helper.model.model, type(helper.model.model))
                     break
             del info
@@ -272,12 +277,15 @@ class FunctionInjectionHolder:
     def restore_functions(self, helper: ModelPatcherHelper):
         # Restoration
         try:
-            helper.model.model.memory_required = self.orig_memory_required
+            if self.orig_memory_required is not None:
+                helper.model.model.memory_required = self.orig_memory_required
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_forward_comfy_cast_weights
-            helper.model.model.diffusion_model.forward = self.orig_diffusion_model_forward
+            if self.orig_diffusion_model_forward is not None:
+                helper.model.model.diffusion_model.forward = self.orig_diffusion_model_forward
             comfy.samplers.sampling_function = self.orig_sampling_function
-            helper.model.model.apply_model = self.orig_apply_model
+            if self.orig_apply_model is not None:
+                helper.model.model.apply_model = self.orig_apply_model
         except AttributeError:
             logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
                          "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
@@ -372,7 +380,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
         params = apply_params_to_motion_models(helper, params)
 
         # store and inject funtions
-        function_injections.inject_functions(helper, params)
+        function_injections.inject_functions(helper, params, guider.model_options)
 
         # prepare noise_extra_args for noise generation purposes
         noise_extra_args = {"disable_noise": disable_noise}
