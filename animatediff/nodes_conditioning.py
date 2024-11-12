@@ -7,10 +7,12 @@ from collections.abc import Iterable
 from comfy.model_patcher import ModelPatcher
 from comfy.sd import CLIP
 import comfy.sd
+from comfy.hooks import HookGroup, HookKeyframeGroup, HookKeyframe
+import comfy_extras.nodes_hooks
+import comfy.hooks
 import comfy.utils
 
-from .conditioning import (COND_CONST, TimestepsCond, set_mask_conds, set_mask_and_combine_conds, set_unmasked_and_combine_conds,
-                           LoraHook, LoraHookGroup, LoraHookKeyframe, LoraHookKeyframeGroup)
+from .conditioning import (COND_CONST)
 from .utils_model import BIGMAX, InterpolationMethod
 from .logger import logger
 
@@ -30,8 +32,8 @@ class PairedConditioningSetMaskHooked:
             },
             "optional": {
                 "opt_mask": ("MASK", ),
-                "opt_lora_hook": ("LORA_HOOK",),
-                "opt_timesteps": ("TIMESTEPS_COND",),
+                "opt_lora_hook": ("HOOKS",),
+                "opt_timesteps": ("TIMESTEPS_RANGE",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -43,10 +45,10 @@ class PairedConditioningSetMaskHooked:
 
     def append_and_hook(self, positive_ADD, negative_ADD,
                         strength: float, set_cond_area: str,
-                        opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
-        final_positive, final_negative = set_mask_conds(conds=[positive_ADD, negative_ADD],
+                        opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
+        final_positive, final_negative = comfy.hooks.set_mask_conds(conds=[positive_ADD, negative_ADD],
                                                         strength=strength, set_cond_area=set_cond_area,
-                                                        opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
+                                                        opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
         return (final_positive, final_negative)
 
 
@@ -61,8 +63,8 @@ class ConditioningSetMaskHooked:
             },
             "optional": {
                 "opt_mask": ("MASK", ),
-                "opt_lora_hook": ("LORA_HOOK",),
-                "opt_timesteps": ("TIMESTEPS_COND",),
+                "opt_lora_hook": ("HOOKS",),
+                "opt_timesteps": ("TIMESTEPS_RANGE",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -73,10 +75,10 @@ class ConditioningSetMaskHooked:
 
     def append_and_hook(self, cond_ADD,
                         strength: float, set_cond_area: str,
-                        opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
-        (final_conditioning,) = set_mask_conds(conds=[cond_ADD],
+                        opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
+        (final_conditioning,) = comfy.hooks.set_mask_conds(conds=[cond_ADD],
                                                strength=strength, set_cond_area=set_cond_area,
-                                               opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
+                                               opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
         return (final_conditioning,) 
 
 
@@ -94,8 +96,8 @@ class PairedConditioningSetMaskAndCombineHooked:
             },
             "optional": {
                 "opt_mask": ("MASK", ),
-                "opt_lora_hook": ("LORA_HOOK",),
-                "opt_timesteps": ("TIMESTEPS_COND",),
+                "opt_lora_hook": ("HOOKS",),
+                "opt_timesteps": ("TIMESTEPS_RANGE",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -107,10 +109,10 @@ class PairedConditioningSetMaskAndCombineHooked:
 
     def append_and_combine(self, positive, negative, positive_ADD, negative_ADD,
                            strength: float, set_cond_area: str,
-                           opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
-        final_positive, final_negative = set_mask_and_combine_conds(conds=[positive, negative], new_conds=[positive_ADD, negative_ADD],
+                           opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
+        final_positive, final_negative = comfy.hooks.set_mask_and_combine_conds(conds=[positive, negative], new_conds=[positive_ADD, negative_ADD],
                                                                     strength=strength, set_cond_area=set_cond_area,
-                                                                    opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
+                                                                    opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
         return (final_positive, final_negative,)
 
 
@@ -126,8 +128,8 @@ class ConditioningSetMaskAndCombineHooked:
             },
             "optional": {
                 "opt_mask": ("MASK", ),
-                "opt_lora_hook": ("LORA_HOOK",),
-                "opt_timesteps": ("TIMESTEPS_COND",),
+                "opt_lora_hook": ("HOOKS",),
+                "opt_timesteps": ("TIMESTEPS_RANGE",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -138,10 +140,10 @@ class ConditioningSetMaskAndCombineHooked:
 
     def append_and_combine(self, cond, cond_ADD,
                            strength: float, set_cond_area: str,
-                           opt_mask: Tensor=None, opt_lora_hook: LoraHookGroup=None, opt_timesteps: TimestepsCond=None):
-        (final_conditioning,) = set_mask_and_combine_conds(conds=[cond], new_conds=[cond_ADD],
+                           opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
+        (final_conditioning,) = comfy.hooks.set_mask_and_combine_conds(conds=[cond], new_conds=[cond_ADD],
                                                                     strength=strength, set_cond_area=set_cond_area,
-                                                                    opt_mask=opt_mask, opt_lora_hook=opt_lora_hook, opt_timesteps=opt_timesteps)
+                                                                    opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
         return (final_conditioning,)
 
 
@@ -156,7 +158,7 @@ class PairedConditioningSetUnmaskedAndCombineHooked:
                 "negative_DEFAULT": ("CONDITIONING",),
             },
             "optional": {
-                "opt_lora_hook": ("LORA_HOOK",),
+                "opt_lora_hook": ("HOOKS",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -167,9 +169,9 @@ class PairedConditioningSetUnmaskedAndCombineHooked:
     FUNCTION = "append_and_combine"
 
     def append_and_combine(self, positive, negative, positive_DEFAULT, negative_DEFAULT,
-                           opt_lora_hook: LoraHookGroup=None):
-        final_positive, final_negative = set_unmasked_and_combine_conds(conds=[positive, negative], new_conds=[positive_DEFAULT, negative_DEFAULT],
-                                                                        opt_lora_hook=opt_lora_hook)
+                           opt_lora_hook: HookGroup=None):
+        final_positive, final_negative = comfy.hooks.set_default_and_combine_conds(conds=[positive, negative], new_conds=[positive_DEFAULT, negative_DEFAULT],
+                                                                        opt_hooks=opt_lora_hook)
         return (final_positive, final_negative,)
     
 
@@ -182,7 +184,7 @@ class ConditioningSetUnmaskedAndCombineHooked:
                 "cond_DEFAULT": ("CONDITIONING",),
             },
             "optional": {
-                "opt_lora_hook": ("LORA_HOOK",),
+                "opt_lora_hook": ("HOOKS",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -192,9 +194,9 @@ class ConditioningSetUnmaskedAndCombineHooked:
     FUNCTION = "append_and_combine"
 
     def append_and_combine(self, cond, cond_DEFAULT,
-                           opt_lora_hook: LoraHookGroup=None):
-        (final_conditioning,) = set_unmasked_and_combine_conds(conds=[cond], new_conds=[cond_DEFAULT],
-                                                                        opt_lora_hook=opt_lora_hook)
+                           opt_lora_hook: HookGroup=None):
+        (final_conditioning,) = comfy.hooks.set_default_and_combine_conds(conds=[cond], new_conds=[cond_DEFAULT],
+                                                                        opt_hooks=opt_lora_hook)
         return (final_conditioning,)
     
 
@@ -216,7 +218,7 @@ class PairedConditioningCombine:
     FUNCTION = "combine"
 
     def combine(self, positive_A, negative_A, positive_B, negative_B):
-        final_positive, final_negative = set_mask_and_combine_conds(conds=[positive_A, negative_A], new_conds=[positive_B, negative_B],)
+        final_positive, final_negative = comfy.hooks.set_mask_and_combine_conds(conds=[positive_A, negative_A], new_conds=[positive_B, negative_B],)
         return (final_positive, final_negative,)
 
 
@@ -235,7 +237,7 @@ class ConditioningCombine:
     FUNCTION = "combine"
 
     def combine(self, cond_A, cond_B):
-        (final_conditioning,) = set_mask_and_combine_conds(conds=[cond_A], new_conds=[cond_B],)
+        (final_conditioning,) = comfy.hooks.set_mask_and_combine_conds(conds=[cond_A], new_conds=[cond_B],)
         return (final_conditioning,)
 ###############################################
 ###############################################
@@ -259,12 +261,12 @@ class ConditioningTimestepsNode:
             }
         }
     
-    RETURN_TYPES = ("TIMESTEPS_COND",)
+    RETURN_TYPES = ("TIMESTEPS_RANGE",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
     FUNCTION = "create_schedule"
 
     def create_schedule(self, start_percent: float, end_percent: float):
-        return (TimestepsCond(start_percent=start_percent, end_percent=end_percent),)
+        return ((start_percent, end_percent),)
 
 
 class SetLoraHookKeyframes:
@@ -272,19 +274,19 @@ class SetLoraHookKeyframes:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "lora_hook": ("LORA_HOOK",), 
-                "hook_kf": ("LORA_HOOK_KEYFRAMES",),
+                "lora_hook": ("HOOKS",), 
+                "hook_kf": ("HOOK_KEYFRAMES",),
             },
             "optional": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
-    RETURN_TYPES = ("LORA_HOOK",)
+    RETURN_TYPES = ("HOOKS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
     FUNCTION = "set_hook_keyframes"
 
-    def set_hook_keyframes(self, lora_hook: LoraHookGroup, hook_kf: LoraHookKeyframeGroup):
+    def set_hook_keyframes(self, lora_hook: HookGroup, hook_kf: HookKeyframeGroup):
         new_lora_hook = lora_hook.clone()
         new_lora_hook.set_keyframes_on_hooks(hook_kf=hook_kf)
         return (new_lora_hook,)
@@ -300,23 +302,23 @@ class CreateLoraHookKeyframe:
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
             },
             "optional": {
-                "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
+                "prev_hook_kf": ("HOOK_KEYFRAMES",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
-    RETURN_TYPES = ("LORA_HOOK_KEYFRAMES",)
+    RETURN_TYPES = ("HOOK_KEYFRAMES",)
     RETURN_NAMES = ("HOOK_KF",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
     FUNCTION = "create_hook_keyframe"
 
     def create_hook_keyframe(self, strength_model: float, start_percent: float, guarantee_steps: float,
-                             prev_hook_kf: LoraHookKeyframeGroup=None):
+                             prev_hook_kf: HookKeyframeGroup=None):
         if prev_hook_kf:
             prev_hook_kf = prev_hook_kf.clone()
         else:
-            prev_hook_kf = LoraHookKeyframeGroup()
-        keyframe = LoraHookKeyframe(strength=strength_model, start_percent=start_percent, guarantee_steps=guarantee_steps)
+            prev_hook_kf = HookKeyframeGroup()
+        keyframe = HookKeyframe(strength=strength_model, start_percent=start_percent, guarantee_steps=guarantee_steps)
         prev_hook_kf.add(keyframe)
         return (prev_hook_kf,)
 
@@ -335,12 +337,12 @@ class CreateLoraHookKeyframeInterpolation:
                 "print_keyframes": ("BOOLEAN", {"default": False}),
             },
             "optional": {
-                "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
+                "prev_hook_kf": ("HOOK_KEYFRAMES",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
-    RETURN_TYPES = ("LORA_HOOK_KEYFRAMES",)
+    RETURN_TYPES = ("HOOK_KEYFRAMES",)
     RETURN_NAMES = ("HOOK_KF",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
     FUNCTION = "create_hook_keyframes"
@@ -348,11 +350,11 @@ class CreateLoraHookKeyframeInterpolation:
     def create_hook_keyframes(self,
                               start_percent: float, end_percent: float,
                               strength_start: float, strength_end: float, interpolation: str, intervals: int,
-                              prev_hook_kf: LoraHookKeyframeGroup=None, print_keyframes=False):
+                              prev_hook_kf: HookKeyframeGroup=None, print_keyframes=False):
         if prev_hook_kf:
             prev_hook_kf = prev_hook_kf.clone()
         else:
-            prev_hook_kf = LoraHookKeyframeGroup()
+            prev_hook_kf = HookKeyframeGroup()
         percents = InterpolationMethod.get_weights(num_from=start_percent, num_to=end_percent, length=intervals, method=InterpolationMethod.LINEAR)
         strengths = InterpolationMethod.get_weights(num_from=strength_start, num_to=strength_end, length=intervals, method=interpolation)
         
@@ -362,9 +364,9 @@ class CreateLoraHookKeyframeInterpolation:
             if is_first:
                 guarantee_steps = 1
                 is_first = False
-            prev_hook_kf.add(LoraHookKeyframe(strength=strength, start_percent=percent, guarantee_steps=guarantee_steps))
+            prev_hook_kf.add(HookKeyframe(strength=strength, start_percent=percent, guarantee_steps=guarantee_steps))
             if print_keyframes:
-                logger.info(f"LoraHookKeyframe - start_percent:{percent} = {strength}")
+                logger.info(f"HookKeyframe - start_percent:{percent} = {strength}")
         return (prev_hook_kf,)
     
 
@@ -379,22 +381,22 @@ class CreateLoraHookKeyframeFromStrengthList:
                 "print_keyframes": ("BOOLEAN", {"default": False}),
             },
             "optional": {
-                "prev_hook_kf": ("LORA_HOOK_KEYFRAMES",),
+                "prev_hook_kf": ("HOOK_KEYFRAMES",),
             }
         }
     
-    RETURN_TYPES = ("LORA_HOOK_KEYFRAMES",)
+    RETURN_TYPES = ("HOOK_KEYFRAMES",)
     RETURN_NAMES = ("HOOK_KF",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
     FUNCTION = "create_hook_keyframes"
 
     def create_hook_keyframes(self, strengths_float: Union[float, list[float]],
                               start_percent: float, end_percent: float,
-                              prev_hook_kf: LoraHookKeyframeGroup=None, print_keyframes=False):
+                              prev_hook_kf: HookKeyframeGroup=None, print_keyframes=False):
         if prev_hook_kf:
             prev_hook_kf = prev_hook_kf.clone()
         else:
-            prev_hook_kf = LoraHookKeyframeGroup()
+            prev_hook_kf = HookKeyframeGroup()
         if type(strengths_float) in (float, int):
             strengths_float = [float(strengths_float)]
         elif isinstance(strengths_float, Iterable):
@@ -409,9 +411,9 @@ class CreateLoraHookKeyframeFromStrengthList:
             if is_first:
                 guarantee_steps = 1
                 is_first = False
-            prev_hook_kf.add(LoraHookKeyframe(strength=strength, start_percent=percent, guarantee_steps=guarantee_steps))
+            prev_hook_kf.add(HookKeyframe(strength=strength, start_percent=percent, guarantee_steps=guarantee_steps))
             if print_keyframes:
-                logger.info(f"LoraHookKeyframe - start_percent:{percent} = {strength}")
+                logger.info(f"HookKeyframe - start_percent:{percent} = {strength}")
         return (prev_hook_kf,)
 ###############################################
 ###############################################
@@ -438,13 +440,13 @@ class MaskableLoraLoader:
             }
         }
     
-    RETURN_TYPES = ("MODEL", "CLIP", "LORA_HOOK")
+    RETURN_TYPES = ("MODEL", "CLIP", "HOOKS")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_lora"
 
     def load_lora(self, model: Union[ModelPatcher], clip: CLIP, lora_name: str, strength_model: float, strength_clip: float):
         if strength_model == 0 and strength_clip == 0:
-            return (model, clip)
+            return (model, clip, None)
         
         lora_path = folder_paths.get_full_path("loras", lora_name)
         lora = None
@@ -459,13 +461,10 @@ class MaskableLoraLoader:
         if lora is None:
             lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
             self.loaded_lora = (lora_path, lora)
-
-        lora_hook = LoraHook(lora_name=lora_name)
-        lora_hook_group = LoraHookGroup()
-        lora_hook_group.add(lora_hook)
-        model_lora, clip_lora = load_hooked_lora_for_models(model=model, clip=clip, lora=lora, lora_hook=lora_hook,
-                                                            strength_model=strength_model, strength_clip=strength_clip)
-        return (model_lora, clip_lora, lora_hook_group)
+        
+        model_lora, clip_lora, hooks = comfy.hooks.load_hook_lora_for_models(model=model, clip=clip, lora=lora,
+                                                                             strength_model=strength_model, strength_clip=strength_clip)
+        return (model_lora, clip_lora, hooks)
 
 
 class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
@@ -479,17 +478,17 @@ class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
             }
         }
 
-    RETURN_TYPES = ("MODEL", "LORA_HOOK")
+    RETURN_TYPES = ("MODEL", "HOOKS")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_lora_model_only"
 
     def load_lora_model_only(self, model: ModelPatcher, lora_name: str, strength_model: float):
-        model_lora, clip_lora, lora_hook = self.load_lora(model=model, clip=None, lora_name=lora_name,
-                                                          strength_model=strength_model, strength_clip=0)
-        return (model_lora, lora_hook)
+        model_lora, _, hooks = self.load_lora(model=model, clip=None, lora_name=lora_name,
+                                              strength_model=strength_model, strength_clip=0)
+        return (model_lora, hooks)
 
 
-class MaskableSDModelLoader:
+class MaskableSDModelLoader(comfy_extras.nodes_hooks.CreateHookModelAsLora):
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -502,24 +501,13 @@ class MaskableSDModelLoader:
             }
         }
     
-    RETURN_TYPES = ("MODEL", "CLIP", "LORA_HOOK")
+    RETURN_TYPES = ("MODEL", "CLIP", "HOOKS")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_model_as_lora"
 
     def load_model_as_lora(self, model: ModelPatcher, clip: CLIP, ckpt_name: str, strength_model: float, strength_clip: float):
-        ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
-        out = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
-        model_loaded = out[0]
-        clip_loaded = out[1]
-
-        lora_hook = LoraHook(lora_name=ckpt_name)
-        lora_hook_group = LoraHookGroup()
-        lora_hook_group.add(lora_hook)
-        model_lora, clip_lora = load_model_as_hooked_lora_for_models(model=model, clip=clip,
-                                                                     model_loaded=model_loaded, clip_loaded=clip_loaded,
-                                                                     lora_hook=lora_hook,
-                                                                     strength_model=strength_model, strength_clip=strength_clip)
-        return (model_lora, clip_lora, lora_hook_group)
+        returned = self.create_hook(ckpt_name=ckpt_name, strength_model=strength_model, strength_clip=strength_clip)
+        return (model.clone(), clip.clone(), returned[0])
 
 
 class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
@@ -533,14 +521,14 @@ class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
             }
         }
     
-    RETURN_TYPES = ("MODEL", "LORA_HOOK")
+    RETURN_TYPES = ("MODEL", "HOOKS")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_model_as_lora_model_only"
 
     def load_model_as_lora_model_only(self, model: ModelPatcher, ckpt_name: str, strength_model: float):
-        model_lora, clip_lora, lora_hook = self.load_model_as_lora(model=model, clip=None, ckpt_name=ckpt_name,
-                                                                   strength_model=strength_model, strength_clip=0)
-        return (model_lora, lora_hook)
+        model_lora, _, hooks = self.load_model_as_lora(model=model, clip=None, ckpt_name=ckpt_name,
+                                                       strength_model=strength_model, strength_clip=0)
+        return (model_lora, hooks)
 ###############################################
 ###############################################
 ###############################################
@@ -556,7 +544,7 @@ class SetModelLoraHook:
         return {
             "required": {
                 "conditioning": ("CONDITIONING",),
-                "lora_hook": ("LORA_HOOK",),
+                "lora_hook": ("HOOKS",),
             },
             "optional": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
@@ -567,13 +555,8 @@ class SetModelLoraHook:
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
     FUNCTION = "attach_lora_hook"
 
-    def attach_lora_hook(self, conditioning, lora_hook: LoraHookGroup):
-        c = []
-        for t in conditioning:
-            n = [t[0], t[1].copy()]
-            n[1]["lora_hook"] = lora_hook
-            c.append(n)
-        return (c, )
+    def attach_lora_hook(self, conditioning, lora_hook: HookGroup):
+        return (comfy.hooks.set_hooks_for_conditioning(conditioning, lora_hook),)
     
 
 class SetClipLoraHook:
@@ -582,7 +565,7 @@ class SetClipLoraHook:
         return {
             "required": {
                 "clip": ("CLIP",),
-                "lora_hook": ("LORA_HOOK",),
+                "lora_hook": ("HOOKS",),
             },
             "optional": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
@@ -594,10 +577,8 @@ class SetClipLoraHook:
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
     FUNCTION = "apply_lora_hook"
 
-    def apply_lora_hook(self, clip: CLIP, lora_hook: LoraHookGroup):
-        new_clip = CLIPWithHooks(clip)
-        new_clip.set_desired_hooks(lora_hooks=lora_hook)
-        return (new_clip, )
+    def apply_lora_hook(self, clip: CLIP, lora_hook: HookGroup):
+        return comfy_extras.nodes_hooks.SetClipHooks.apply_hooks(self, clip, False, lora_hook)
 
 
 class CombineLoraHooks:
@@ -607,19 +588,19 @@ class CombineLoraHooks:
             "required": {
             },
             "optional": {
-                "lora_hook_A": ("LORA_HOOK",),
-                "lora_hook_B": ("LORA_HOOK",),
+                "lora_hook_A": ("HOOKS",),
+                "lora_hook_B": ("HOOKS",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
-    RETURN_TYPES = ("LORA_HOOK",)
+    RETURN_TYPES = ("HOOKS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
 
-    def combine_lora_hooks(self, lora_hook_A: LoraHookGroup=None, lora_hook_B: LoraHookGroup=None):
+    def combine_lora_hooks(self, lora_hook_A: HookGroup=None, lora_hook_B: HookGroup=None):
         candidates = [lora_hook_A, lora_hook_B]
-        return (LoraHookGroup.combine_all_lora_hooks(candidates),)
+        return (HookGroup.combine_all_hooks(candidates),)
 
 
 class CombineLoraHookFourOptional:
@@ -629,23 +610,23 @@ class CombineLoraHookFourOptional:
             "required": {
             },
             "optional": {
-                "lora_hook_A": ("LORA_HOOK",),
-                "lora_hook_B": ("LORA_HOOK",),
-                "lora_hook_C": ("LORA_HOOK",),
-                "lora_hook_D": ("LORA_HOOK",),
+                "lora_hook_A": ("HOOKS",),
+                "lora_hook_B": ("HOOKS",),
+                "lora_hook_C": ("HOOKS",),
+                "lora_hook_D": ("HOOKS",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
-    RETURN_TYPES = ("LORA_HOOK",)
+    RETURN_TYPES = ("HOOKS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
 
     def combine_lora_hooks(self,
-                           lora_hook_A: LoraHookGroup=None, lora_hook_B: LoraHookGroup=None,
-                           lora_hook_C: LoraHookGroup=None, lora_hook_D: LoraHookGroup=None,):
+                           lora_hook_A: HookGroup=None, lora_hook_B: HookGroup=None,
+                           lora_hook_C: HookGroup=None, lora_hook_D: HookGroup=None,):
         candidates = [lora_hook_A, lora_hook_B, lora_hook_C, lora_hook_D]
-        return (LoraHookGroup.combine_all_lora_hooks(candidates),)
+        return (HookGroup.combine_all_hooks(candidates),)
 
 
 class CombineLoraHookEightOptional:
@@ -655,30 +636,30 @@ class CombineLoraHookEightOptional:
             "required": {
             },
             "optional": {
-                "lora_hook_A": ("LORA_HOOK",),
-                "lora_hook_B": ("LORA_HOOK",),
-                "lora_hook_C": ("LORA_HOOK",),
-                "lora_hook_D": ("LORA_HOOK",),
-                "lora_hook_E": ("LORA_HOOK",),
-                "lora_hook_F": ("LORA_HOOK",),
-                "lora_hook_G": ("LORA_HOOK",),
-                "lora_hook_H": ("LORA_HOOK",),
+                "lora_hook_A": ("HOOKS",),
+                "lora_hook_B": ("HOOKS",),
+                "lora_hook_C": ("HOOKS",),
+                "lora_hook_D": ("HOOKS",),
+                "lora_hook_E": ("HOOKS",),
+                "lora_hook_F": ("HOOKS",),
+                "lora_hook_G": ("HOOKS",),
+                "lora_hook_H": ("HOOKS",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
-    RETURN_TYPES = ("LORA_HOOK",)
+    RETURN_TYPES = ("HOOKS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
 
     def combine_lora_hooks(self,
-                           lora_hook_A: LoraHookGroup=None, lora_hook_B: LoraHookGroup=None,
-                           lora_hook_C: LoraHookGroup=None, lora_hook_D: LoraHookGroup=None,
-                           lora_hook_E: LoraHookGroup=None, lora_hook_F: LoraHookGroup=None,
-                           lora_hook_G: LoraHookGroup=None, lora_hook_H: LoraHookGroup=None):
+                           lora_hook_A: HookGroup=None, lora_hook_B: HookGroup=None,
+                           lora_hook_C: HookGroup=None, lora_hook_D: HookGroup=None,
+                           lora_hook_E: HookGroup=None, lora_hook_F: HookGroup=None,
+                           lora_hook_G: HookGroup=None, lora_hook_H: HookGroup=None):
         candidates = [lora_hook_A, lora_hook_B, lora_hook_C, lora_hook_D,
                       lora_hook_E, lora_hook_F, lora_hook_G, lora_hook_H]
-        return (LoraHookGroup.combine_all_lora_hooks(candidates),)
+        return (HookGroup.combine_all_hooks(candidates),)
 
 # NOTE: if at some point I add more Javascript stuff to this repo, there should be a combine node
 #   that dynamically increases the hooks available to plug in on the node

@@ -511,6 +511,7 @@ class MotionModelPatcher(ModelPatcher):
         return self.model.mm_info.mm_format == AnimateDiffFormat.FANCYVIDEO
 
     def cleanup(self):
+        super().cleanup()
         if self.model is not None:
             self.model.cleanup()
         # AnimateLCM-I2V
