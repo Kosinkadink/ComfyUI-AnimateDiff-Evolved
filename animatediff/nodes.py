@@ -98,6 +98,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_IterationOptsDefault": IterationOptionsNode,
     "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
     # Conditioning
+    "ADE_LoraHookKeyframeInterpolation": CreateLoraHookKeyframeInterpolation,
+    # Conditioning (DEPRECATED)
     "ADE_RegisterLoraHook": MaskableLoraLoaderDEPR,
     "ADE_RegisterLoraHookModelOnly": MaskableLoraLoaderModelOnlyDEPR,
     "ADE_RegisterModelAsLoraHook": MaskableSDModelLoaderDEPR,
@@ -108,7 +110,6 @@ NODE_CLASS_MAPPINGS = {
     "ADE_SetLoraHookKeyframe": SetLoraHookKeyframesDEPR,
     "ADE_AttachLoraHookToCLIP": SetClipLoraHookDEPR,
     "ADE_LoraHookKeyframe": CreateLoraHookKeyframeDEPR,
-    "ADE_LoraHookKeyframeInterpolation": CreateLoraHookKeyframeInterpolation,
     "ADE_LoraHookKeyframeFromStrengthList": CreateLoraHookKeyframeFromStrengthListDEPR,
     "ADE_AttachLoraHookToConditioning": SetModelLoraHookDEPR,
     "ADE_PairedConditioningSetMask": PairedConditioningSetMaskHookedDEPR,
@@ -154,7 +155,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_SigmaScheduleToSigmas": SigmaScheduleToSigmasNode,
     "ADE_NoisedImageInjection": NoisedImageInjectionNode,
     "ADE_NoisedImageInjectOptions": NoisedImageInjectOptionsNode,
-    "ADE_NoiseCalibration": NoiseCalibrationNode,
+    #"ADE_NoiseCalibration": NoiseCalibrationNode,
     # Scheduling
     PromptSchedulingNode.NodeID: PromptSchedulingNode,
     PromptSchedulingLatentsNode.NodeID: PromptSchedulingLatentsNode,
@@ -210,7 +211,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_PIA_AnimateDiffKeyframe": PIA_ADKeyframeNode,
     "ADE_InjectPIAIntoAnimateDiffModel": LoadAnimateDiffAndInjectPIANode,
     # FancyVideo
-    ApplyAnimateDiffFancyVideo.NodeID: ApplyAnimateDiffFancyVideo,
+    #ApplyAnimateDiffFancyVideo.NodeID: ApplyAnimateDiffFancyVideo,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoaderDEPR,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvancedDEPR,
@@ -268,6 +269,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_IterationOptsDefault": "Default Iteration Options 🎭🅐🅓",
     "ADE_IterationOptsFreeInit": "FreeInit Iteration Options 🎭🅐🅓",
     # Conditioning
+    "ADE_LoraHookKeyframeInterpolation": "LoRA Hook Keyframes Interp. 🎭🅐🅓",
+    # Conditioning (DEPRECATED)
     "ADE_RegisterLoraHook": "Register LoRA Hook 🎭🅐🅓",
     "ADE_RegisterLoraHookModelOnly": "Register LoRA Hook (Model Only) 🎭🅐🅓",
     "ADE_RegisterModelAsLoraHook": "Register Model as LoRA Hook 🎭🅐🅓",
@@ -278,7 +281,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_SetLoraHookKeyframe": "Set LoRA Hook Keyframes 🎭🅐🅓",
     "ADE_AttachLoraHookToCLIP": "Set CLIP LoRA Hook 🎭🅐🅓",
     "ADE_LoraHookKeyframe": "LoRA Hook Keyframe 🎭🅐🅓",
-    "ADE_LoraHookKeyframeInterpolation": "LoRA Hook Keyframes Interp. 🎭🅐🅓",
     "ADE_LoraHookKeyframeFromStrengthList": "LoRA Hook Keyframes From List 🎭🅐🅓",
     "ADE_AttachLoraHookToConditioning": "Set Model LoRA Hook 🎭🅐🅓",
     "ADE_PairedConditioningSetMask": "Set Props on Conds 🎭🅐🅓",

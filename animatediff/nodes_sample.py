@@ -33,7 +33,7 @@ class SampleSettingsNode:
                 "custom_cfg": ("CUSTOM_CFG",),
                 "sigma_schedule": ("SIGMA_SCHEDULE",),
                 "image_inject": ("IMAGE_INJECT",),
-                "noise_calib": ("NOISE_CALIBRATION",),
+                #"noise_calib": ("NOISE_CALIBRATION",), # TODO: bring back once NoiseCalibration is working
             },
             "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
