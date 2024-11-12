@@ -17,312 +17,6 @@ from .utils_model import BIGMAX, InterpolationMethod
 from .logger import logger
 
 
-###############################################
-### Mask, Combine, and Hook Conditioning
-###############################################
-class PairedConditioningSetMaskHooked:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "positive_ADD": ("CONDITIONING", ),
-                "negative_ADD": ("CONDITIONING", ),
-                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
-            },
-            "optional": {
-                "opt_mask": ("MASK", ),
-                "opt_lora_hook": ("HOOKS",),
-                "opt_timesteps": ("TIMESTEPS_RANGE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-
-    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("positive", "negative")
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
-    FUNCTION = "append_and_hook"
-
-    def append_and_hook(self, positive_ADD, negative_ADD,
-                        strength: float, set_cond_area: str,
-                        opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
-        final_positive, final_negative = comfy.hooks.set_mask_conds(conds=[positive_ADD, negative_ADD],
-                                                        strength=strength, set_cond_area=set_cond_area,
-                                                        opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
-        return (final_positive, final_negative)
-
-
-class ConditioningSetMaskHooked:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "cond_ADD": ("CONDITIONING",),
-                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
-            },
-            "optional": {
-                "opt_mask": ("MASK", ),
-                "opt_lora_hook": ("HOOKS",),
-                "opt_timesteps": ("TIMESTEPS_RANGE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-
-    RETURN_TYPES = ("CONDITIONING",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
-    FUNCTION = "append_and_hook"
-
-    def append_and_hook(self, cond_ADD,
-                        strength: float, set_cond_area: str,
-                        opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
-        (final_conditioning,) = comfy.hooks.set_mask_conds(conds=[cond_ADD],
-                                               strength=strength, set_cond_area=set_cond_area,
-                                               opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
-        return (final_conditioning,) 
-
-
-class PairedConditioningSetMaskAndCombineHooked:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "positive": ("CONDITIONING",),
-                "negative": ("CONDITIONING",),
-                "positive_ADD": ("CONDITIONING",),
-                "negative_ADD": ("CONDITIONING",),
-                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
-            },
-            "optional": {
-                "opt_mask": ("MASK", ),
-                "opt_lora_hook": ("HOOKS",),
-                "opt_timesteps": ("TIMESTEPS_RANGE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-    
-    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("positive", "negative")
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
-    FUNCTION = "append_and_combine"
-
-    def append_and_combine(self, positive, negative, positive_ADD, negative_ADD,
-                           strength: float, set_cond_area: str,
-                           opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
-        final_positive, final_negative = comfy.hooks.set_mask_and_combine_conds(conds=[positive, negative], new_conds=[positive_ADD, negative_ADD],
-                                                                    strength=strength, set_cond_area=set_cond_area,
-                                                                    opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
-        return (final_positive, final_negative,)
-
-
-class ConditioningSetMaskAndCombineHooked:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "cond": ("CONDITIONING",),
-                "cond_ADD": ("CONDITIONING",),
-                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
-            },
-            "optional": {
-                "opt_mask": ("MASK", ),
-                "opt_lora_hook": ("HOOKS",),
-                "opt_timesteps": ("TIMESTEPS_RANGE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-    
-    RETURN_TYPES = ("CONDITIONING",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
-    FUNCTION = "append_and_combine"
-
-    def append_and_combine(self, cond, cond_ADD,
-                           strength: float, set_cond_area: str,
-                           opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
-        (final_conditioning,) = comfy.hooks.set_mask_and_combine_conds(conds=[cond], new_conds=[cond_ADD],
-                                                                    strength=strength, set_cond_area=set_cond_area,
-                                                                    opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
-        return (final_conditioning,)
-
-
-class PairedConditioningSetUnmaskedAndCombineHooked:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "positive": ("CONDITIONING",),
-                "negative": ("CONDITIONING",),
-                "positive_DEFAULT": ("CONDITIONING",),
-                "negative_DEFAULT": ("CONDITIONING",),
-            },
-            "optional": {
-                "opt_lora_hook": ("HOOKS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-    
-    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("positive", "negative")
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
-    FUNCTION = "append_and_combine"
-
-    def append_and_combine(self, positive, negative, positive_DEFAULT, negative_DEFAULT,
-                           opt_lora_hook: HookGroup=None):
-        final_positive, final_negative = comfy.hooks.set_default_and_combine_conds(conds=[positive, negative], new_conds=[positive_DEFAULT, negative_DEFAULT],
-                                                                        opt_hooks=opt_lora_hook)
-        return (final_positive, final_negative,)
-    
-
-class ConditioningSetUnmaskedAndCombineHooked:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "cond": ("CONDITIONING",),
-                "cond_DEFAULT": ("CONDITIONING",),
-            },
-            "optional": {
-                "opt_lora_hook": ("HOOKS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-    
-    RETURN_TYPES = ("CONDITIONING",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
-    FUNCTION = "append_and_combine"
-
-    def append_and_combine(self, cond, cond_DEFAULT,
-                           opt_lora_hook: HookGroup=None):
-        (final_conditioning,) = comfy.hooks.set_default_and_combine_conds(conds=[cond], new_conds=[cond_DEFAULT],
-                                                                        opt_hooks=opt_lora_hook)
-        return (final_conditioning,)
-    
-
-class PairedConditioningCombine:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "positive_A": ("CONDITIONING",),
-                "negative_A": ("CONDITIONING",),
-                "positive_B": ("CONDITIONING",),
-                "negative_B": ("CONDITIONING",),
-            },
-        }
-
-    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("positive", "negative")
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
-    FUNCTION = "combine"
-
-    def combine(self, positive_A, negative_A, positive_B, negative_B):
-        final_positive, final_negative = comfy.hooks.set_mask_and_combine_conds(conds=[positive_A, negative_A], new_conds=[positive_B, negative_B],)
-        return (final_positive, final_negative,)
-
-
-class ConditioningCombine:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "cond_A": ("CONDITIONING",),
-                "cond_B": ("CONDITIONING",),
-            },
-        }
-    
-    RETURN_TYPES = ("CONDITIONING",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
-    FUNCTION = "combine"
-
-    def combine(self, cond_A, cond_B):
-        (final_conditioning,) = comfy.hooks.set_mask_and_combine_conds(conds=[cond_A], new_conds=[cond_B],)
-        return (final_conditioning,)
-###############################################
-###############################################
-###############################################
-
-
-
-###############################################
-### Scheduling
-###############################################
-class ConditioningTimestepsNode:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
-                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001})
-            },
-            "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-    
-    RETURN_TYPES = ("TIMESTEPS_RANGE",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
-    FUNCTION = "create_schedule"
-
-    def create_schedule(self, start_percent: float, end_percent: float):
-        return ((start_percent, end_percent),)
-
-
-class SetLoraHookKeyframes:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "lora_hook": ("HOOKS",), 
-                "hook_kf": ("HOOK_KEYFRAMES",),
-            },
-            "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-    
-    RETURN_TYPES = ("HOOKS",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
-    FUNCTION = "set_hook_keyframes"
-
-    def set_hook_keyframes(self, lora_hook: HookGroup, hook_kf: HookKeyframeGroup):
-        new_lora_hook = lora_hook.clone()
-        new_lora_hook.set_keyframes_on_hooks(hook_kf=hook_kf)
-        return (new_lora_hook,)
-
-
-class CreateLoraHookKeyframe:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
-                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
-                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
-            },
-            "optional": {
-                "prev_hook_kf": ("HOOK_KEYFRAMES",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
-            }
-        }
-    
-    RETURN_TYPES = ("HOOK_KEYFRAMES",)
-    RETURN_NAMES = ("HOOK_KF",)
-    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
-    FUNCTION = "create_hook_keyframe"
-
-    def create_hook_keyframe(self, strength_model: float, start_percent: float, guarantee_steps: float,
-                             prev_hook_kf: HookKeyframeGroup=None):
-        if prev_hook_kf:
-            prev_hook_kf = prev_hook_kf.clone()
-        else:
-            prev_hook_kf = HookKeyframeGroup()
-        keyframe = HookKeyframe(strength=strength_model, start_percent=start_percent, guarantee_steps=guarantee_steps)
-        prev_hook_kf.add(keyframe)
-        return (prev_hook_kf,)
-
-
 class CreateLoraHookKeyframeInterpolation:
     @classmethod
     def INPUT_TYPES(s):
@@ -368,9 +62,353 @@ class CreateLoraHookKeyframeInterpolation:
             if print_keyframes:
                 logger.info(f"HookKeyframe - start_percent:{percent} = {strength}")
         return (prev_hook_kf,)
+
+
+
+###################################################################
+# EVERYTHING BELOW HERE IS DEPRECATED;
+# Can be replaced with vanilla ComfyUI nodes
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+
+
+
+###############################################
+### Mask, Combine, and Hook Conditioning
+###############################################
+class PairedConditioningSetMaskHookedDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive_ADD": ("CONDITIONING", ),
+                "negative_ADD": ("CONDITIONING", ),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
+            },
+            "optional": {
+                "opt_mask": ("MASK", ),
+                "opt_lora_hook": ("HOOKS",),
+                "opt_timesteps": ("TIMESTEPS_RANGE",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "append_and_hook"
+    DEPRECATED = True
+
+    def append_and_hook(self, positive_ADD, negative_ADD,
+                        strength: float, set_cond_area: str,
+                        opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
+        final_positive, final_negative = comfy.hooks.set_mask_conds(conds=[positive_ADD, negative_ADD],
+                                                        strength=strength, set_cond_area=set_cond_area,
+                                                        opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
+        return (final_positive, final_negative)
+
+
+class ConditioningSetMaskHookedDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cond_ADD": ("CONDITIONING",),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
+            },
+            "optional": {
+                "opt_mask": ("MASK", ),
+                "opt_lora_hook": ("HOOKS",),
+                "opt_timesteps": ("TIMESTEPS_RANGE",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
+    FUNCTION = "append_and_hook"
+    DEPRECATED = True
+
+    def append_and_hook(self, cond_ADD,
+                        strength: float, set_cond_area: str,
+                        opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
+        (final_conditioning,) = comfy.hooks.set_mask_conds(conds=[cond_ADD],
+                                               strength=strength, set_cond_area=set_cond_area,
+                                               opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
+        return (final_conditioning,) 
+
+
+class PairedConditioningSetMaskAndCombineHookedDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "positive_ADD": ("CONDITIONING",),
+                "negative_ADD": ("CONDITIONING",),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
+            },
+            "optional": {
+                "opt_mask": ("MASK", ),
+                "opt_lora_hook": ("HOOKS",),
+                "opt_timesteps": ("TIMESTEPS_RANGE",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "append_and_combine"
+    DEPRECATED = True
+
+    def append_and_combine(self, positive, negative, positive_ADD, negative_ADD,
+                           strength: float, set_cond_area: str,
+                           opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
+        final_positive, final_negative = comfy.hooks.set_mask_and_combine_conds(conds=[positive, negative], new_conds=[positive_ADD, negative_ADD],
+                                                                    strength=strength, set_cond_area=set_cond_area,
+                                                                    opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
+        return (final_positive, final_negative,)
+
+
+class ConditioningSetMaskAndCombineHookedDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cond": ("CONDITIONING",),
+                "cond_ADD": ("CONDITIONING",),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "set_cond_area": (COND_CONST._LIST_COND_AREA,),
+            },
+            "optional": {
+                "opt_mask": ("MASK", ),
+                "opt_lora_hook": ("HOOKS",),
+                "opt_timesteps": ("TIMESTEPS_RANGE",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
+    FUNCTION = "append_and_combine"
+    DEPRECATED = True
+
+    def append_and_combine(self, cond, cond_ADD,
+                           strength: float, set_cond_area: str,
+                           opt_mask: Tensor=None, opt_lora_hook: HookGroup=None, opt_timesteps: tuple=None):
+        (final_conditioning,) = comfy.hooks.set_mask_and_combine_conds(conds=[cond], new_conds=[cond_ADD],
+                                                                    strength=strength, set_cond_area=set_cond_area,
+                                                                    opt_mask=opt_mask, opt_hooks=opt_lora_hook, opt_timestep_range=opt_timesteps)
+        return (final_conditioning,)
+
+
+class PairedConditioningSetUnmaskedAndCombineHookedDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "positive_DEFAULT": ("CONDITIONING",),
+                "negative_DEFAULT": ("CONDITIONING",),
+            },
+            "optional": {
+                "opt_lora_hook": ("HOOKS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "append_and_combine"
+    DEPRECATED = True
+
+    def append_and_combine(self, positive, negative, positive_DEFAULT, negative_DEFAULT,
+                           opt_lora_hook: HookGroup=None):
+        final_positive, final_negative = comfy.hooks.set_default_and_combine_conds(conds=[positive, negative], new_conds=[positive_DEFAULT, negative_DEFAULT],
+                                                                        opt_hooks=opt_lora_hook)
+        return (final_positive, final_negative,)
     
 
-class CreateLoraHookKeyframeFromStrengthList:
+class ConditioningSetUnmaskedAndCombineHookedDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cond": ("CONDITIONING",),
+                "cond_DEFAULT": ("CONDITIONING",),
+            },
+            "optional": {
+                "opt_lora_hook": ("HOOKS",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
+    FUNCTION = "append_and_combine"
+    DEPRECATED = True
+
+    def append_and_combine(self, cond, cond_DEFAULT,
+                           opt_lora_hook: HookGroup=None):
+        (final_conditioning,) = comfy.hooks.set_default_and_combine_conds(conds=[cond], new_conds=[cond_DEFAULT],
+                                                                        opt_hooks=opt_lora_hook)
+        return (final_conditioning,)
+    
+
+class PairedConditioningCombineDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive_A": ("CONDITIONING",),
+                "negative_A": ("CONDITIONING",),
+                "positive_B": ("CONDITIONING",),
+                "negative_B": ("CONDITIONING",),
+            },
+            "optional": {
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "combine"
+    DEPRECATED = True
+
+    def combine(self, positive_A, negative_A, positive_B, negative_B):
+        final_positive, final_negative = comfy.hooks.set_mask_and_combine_conds(conds=[positive_A, negative_A], new_conds=[positive_B, negative_B],)
+        return (final_positive, final_negative,)
+
+
+class ConditioningCombineDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "cond_A": ("CONDITIONING",),
+                "cond_B": ("CONDITIONING",),
+            },
+            "optional": {
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+    
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
+    FUNCTION = "combine"
+    DEPRECATED = True
+
+    def combine(self, cond_A, cond_B):
+        (final_conditioning,) = comfy.hooks.set_mask_and_combine_conds(conds=[cond_A], new_conds=[cond_B],)
+        return (final_conditioning,)
+###############################################
+###############################################
+###############################################
+
+
+
+###############################################
+### Scheduling
+###############################################
+class ConditioningTimestepsNodeDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001})
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+    
+    RETURN_TYPES = ("TIMESTEPS_RANGE",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "create_schedule"
+    DEPRECATED = True
+
+    def create_schedule(self, start_percent: float, end_percent: float):
+        return ((start_percent, end_percent),)
+
+
+class SetLoraHookKeyframesDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "lora_hook": ("HOOKS",), 
+                "hook_kf": ("HOOK_KEYFRAMES",),
+            },
+            "optional": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+    
+    RETURN_TYPES = ("HOOKS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
+    FUNCTION = "set_hook_keyframes"
+    DEPRECATED = True
+
+    def set_hook_keyframes(self, lora_hook: HookGroup, hook_kf: HookKeyframeGroup):
+        new_lora_hook = lora_hook.clone()
+        new_lora_hook.set_keyframes_on_hooks(hook_kf=hook_kf)
+        return (new_lora_hook,)
+
+
+class CreateLoraHookKeyframeDEPR:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+                "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            },
+            "optional": {
+                "prev_hook_kf": ("HOOK_KEYFRAMES",),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            }
+        }
+    
+    RETURN_TYPES = ("HOOK_KEYFRAMES",)
+    RETURN_NAMES = ("HOOK_KF",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
+    FUNCTION = "create_hook_keyframe"
+    DEPRECATED = True
+
+    def create_hook_keyframe(self, strength_model: float, start_percent: float, guarantee_steps: float,
+                             prev_hook_kf: HookKeyframeGroup=None):
+        if prev_hook_kf:
+            prev_hook_kf = prev_hook_kf.clone()
+        else:
+            prev_hook_kf = HookKeyframeGroup()
+        keyframe = HookKeyframe(strength=strength_model, start_percent=start_percent, guarantee_steps=guarantee_steps)
+        prev_hook_kf.add(keyframe)
+        return (prev_hook_kf,)
+    
+
+class CreateLoraHookKeyframeFromStrengthListDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -382,6 +420,7 @@ class CreateLoraHookKeyframeFromStrengthList:
             },
             "optional": {
                 "prev_hook_kf": ("HOOK_KEYFRAMES",),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
     
@@ -389,6 +428,7 @@ class CreateLoraHookKeyframeFromStrengthList:
     RETURN_NAMES = ("HOOK_KF",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
     FUNCTION = "create_hook_keyframes"
+    DEPRECATED = True
 
     def create_hook_keyframes(self, strengths_float: Union[float, list[float]],
                               start_percent: float, end_percent: float,
@@ -424,7 +464,7 @@ class CreateLoraHookKeyframeFromStrengthList:
 ### Register LoRA Hooks
 ###############################################
 # based on ComfyUI's nodes.py LoraLoader
-class MaskableLoraLoader:
+class MaskableLoraLoaderDEPR:
     def __init__(self):
         self.loaded_lora = None
 
@@ -437,12 +477,16 @@ class MaskableLoraLoader:
                 "lora_name": (folder_paths.get_filename_list("loras"), ),
                 "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
                 "strength_clip": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+            },
+            "optional": {
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
     
     RETURN_TYPES = ("MODEL", "CLIP", "HOOKS")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_lora"
+    DEPRECATED = True
 
     def load_lora(self, model: Union[ModelPatcher], clip: CLIP, lora_name: str, strength_model: float, strength_clip: float):
         if strength_model == 0 and strength_clip == 0:
@@ -467,7 +511,7 @@ class MaskableLoraLoader:
         return (model_lora, clip_lora, hooks)
 
 
-class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
+class MaskableLoraLoaderModelOnlyDEPR(MaskableLoraLoaderDEPR):
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -475,12 +519,16 @@ class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
                 "model": ("MODEL",),
                 "lora_name": (folder_paths.get_filename_list("loras"), ),
                 "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+            },
+            "optional": {
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
 
     RETURN_TYPES = ("MODEL", "HOOKS")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_lora_model_only"
+    DEPRECATED = True
 
     def load_lora_model_only(self, model: ModelPatcher, lora_name: str, strength_model: float):
         model_lora, _, hooks = self.load_lora(model=model, clip=None, lora_name=lora_name,
@@ -488,7 +536,7 @@ class MaskableLoraLoaderModelOnly(MaskableLoraLoader):
         return (model_lora, hooks)
 
 
-class MaskableSDModelLoader(comfy_extras.nodes_hooks.CreateHookModelAsLora):
+class MaskableSDModelLoaderDEPR(comfy_extras.nodes_hooks.CreateHookModelAsLora):
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -498,19 +546,23 @@ class MaskableSDModelLoader(comfy_extras.nodes_hooks.CreateHookModelAsLora):
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
                 "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
                 "strength_clip": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+            },
+            "optional": {
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
     
     RETURN_TYPES = ("MODEL", "CLIP", "HOOKS")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_model_as_lora"
+    DEPRECATED = True
 
     def load_model_as_lora(self, model: ModelPatcher, clip: CLIP, ckpt_name: str, strength_model: float, strength_clip: float):
         returned = self.create_hook(ckpt_name=ckpt_name, strength_model=strength_model, strength_clip=strength_clip)
         return (model.clone(), clip.clone(), returned[0])
 
 
-class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
+class MaskableSDModelLoaderModelOnlyDEPR(MaskableSDModelLoaderDEPR):
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -518,12 +570,16 @@ class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
                 "model": ("MODEL",),
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"), ),
                 "strength_model": ("FLOAT", {"default": 1.0, "min": -20.0, "max": 20.0, "step": 0.01}),
+            },
+            "optional": {
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
     
     RETURN_TYPES = ("MODEL", "HOOKS")
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/register lora hooks"
     FUNCTION = "load_model_as_lora_model_only"
+    DEPRECATED = True
 
     def load_model_as_lora_model_only(self, model: ModelPatcher, ckpt_name: str, strength_model: float):
         model_lora, _, hooks = self.load_model_as_lora(model=model, clip=None, ckpt_name=ckpt_name,
@@ -538,7 +594,7 @@ class MaskableSDModelLoaderModelOnly(MaskableSDModelLoader):
 ###############################################
 ### Set LoRA Hooks
 ###############################################
-class SetModelLoraHook:
+class SetModelLoraHookDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -548,18 +604,20 @@ class SetModelLoraHook:
             },
             "optional": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
     
     RETURN_TYPES = ("CONDITIONING",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/single cond ops"
     FUNCTION = "attach_lora_hook"
+    DEPRECATED = True
 
     def attach_lora_hook(self, conditioning, lora_hook: HookGroup):
         return (comfy.hooks.set_hooks_for_conditioning(conditioning, lora_hook),)
     
 
-class SetClipLoraHook:
+class SetClipLoraHookDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -569,6 +627,7 @@ class SetClipLoraHook:
             },
             "optional": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
     
@@ -576,12 +635,13 @@ class SetClipLoraHook:
     RETURN_NAMES = ("hook_CLIP",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning"
     FUNCTION = "apply_lora_hook"
+    DEPRECATED = True
 
     def apply_lora_hook(self, clip: CLIP, lora_hook: HookGroup):
         return comfy_extras.nodes_hooks.SetClipHooks.apply_hooks(self, clip, False, lora_hook)
 
 
-class CombineLoraHooks:
+class CombineLoraHooksDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -591,19 +651,21 @@ class CombineLoraHooks:
                 "lora_hook_A": ("HOOKS",),
                 "lora_hook_B": ("HOOKS",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
     
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
+    DEPRECATED = True
 
     def combine_lora_hooks(self, lora_hook_A: HookGroup=None, lora_hook_B: HookGroup=None):
         candidates = [lora_hook_A, lora_hook_B]
         return (HookGroup.combine_all_hooks(candidates),)
 
 
-class CombineLoraHookFourOptional:
+class CombineLoraHookFourOptionalDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -615,12 +677,14 @@ class CombineLoraHookFourOptional:
                 "lora_hook_C": ("HOOKS",),
                 "lora_hook_D": ("HOOKS",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
 
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
+    DEPRECATED = True
 
     def combine_lora_hooks(self,
                            lora_hook_A: HookGroup=None, lora_hook_B: HookGroup=None,
@@ -629,7 +693,7 @@ class CombineLoraHookFourOptional:
         return (HookGroup.combine_all_hooks(candidates),)
 
 
-class CombineLoraHookEightOptional:
+class CombineLoraHookEightOptionalDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -645,12 +709,14 @@ class CombineLoraHookEightOptional:
                 "lora_hook_G": ("HOOKS",),
                 "lora_hook_H": ("HOOKS",),
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             }
         }
 
     RETURN_TYPES = ("HOOKS",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/combine lora hooks"
     FUNCTION = "combine_lora_hooks"
+    DEPRECATED = True
 
     def combine_lora_hooks(self,
                            lora_hook_A: HookGroup=None, lora_hook_B: HookGroup=None,

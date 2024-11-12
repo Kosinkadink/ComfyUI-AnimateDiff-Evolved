@@ -20,7 +20,7 @@ from .model_injection import ModelPatcherHelper, InjectionParams, MotionModelGro
 from .sampling import outer_sample_wrapper, sliding_calc_cond_batch
 
 
-class AnimateDiffLoader_Deprecated:
+class AnimateDiffLoaderDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -76,7 +76,7 @@ class AnimateDiffLoader_Deprecated:
         return (model, latents)
 
 
-class AnimateDiffLoaderAdvanced_Deprecated:
+class AnimateDiffLoaderAdvancedDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -150,7 +150,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         return (model, latents)
     
 
-class AnimateDiffCombine_Deprecated:
+class AnimateDiffCombineDEPR:
     ffmpeg_warning_already_shown = False
     @classmethod
     def INPUT_TYPES(s):
@@ -292,7 +292,7 @@ class AnimateDiffCombine_Deprecated:
 
 
 
-class AnimateDiffModelSettings:
+class AnimateDiffModelSettingsDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -321,7 +321,7 @@ class AnimateDiffModelSettings:
         return (motion_model_settings,)
 
 
-class AnimateDiffModelSettingsSimple:
+class AnimateDiffModelSettingsSimpleDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -354,7 +354,7 @@ class AnimateDiffModelSettingsSimple:
         return (motion_model_settings,)
 
 
-class AnimateDiffModelSettingsAdvanced:
+class AnimateDiffModelSettingsAdvancedDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -405,7 +405,7 @@ class AnimateDiffModelSettingsAdvanced:
         return (motion_model_settings,)
 
 
-class AnimateDiffModelSettingsAdvancedAttnStrengths:
+class AnimateDiffModelSettingsAdvancedAttnStrengthsDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {

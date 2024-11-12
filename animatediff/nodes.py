@@ -11,15 +11,16 @@ from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateD
 from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
 from .nodes_fancyvideo import (ApplyAnimateDiffFancyVideo,)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalDynamicFloatsNode, MultivalConvertToMaskNode
-from .nodes_conditioning import (MaskableLoraLoader, MaskableLoraLoaderModelOnly, MaskableSDModelLoader, MaskableSDModelLoaderModelOnly,
-                                 SetModelLoraHook, SetClipLoraHook,
-                                 CombineLoraHooks, CombineLoraHookFourOptional, CombineLoraHookEightOptional,
-                                 PairedConditioningSetMaskHooked, ConditioningSetMaskHooked,
-                                 PairedConditioningSetMaskAndCombineHooked, ConditioningSetMaskAndCombineHooked,
-                                 PairedConditioningSetUnmaskedAndCombineHooked, ConditioningSetUnmaskedAndCombineHooked,
-                                 PairedConditioningCombine, ConditioningCombine,
-                                 ConditioningTimestepsNode, SetLoraHookKeyframes,
-                                 CreateLoraHookKeyframe, CreateLoraHookKeyframeInterpolation, CreateLoraHookKeyframeFromStrengthList)
+from .nodes_conditioning import (CreateLoraHookKeyframeInterpolation,
+                                 MaskableLoraLoaderDEPR, MaskableLoraLoaderModelOnlyDEPR, MaskableSDModelLoaderDEPR, MaskableSDModelLoaderModelOnlyDEPR, 
+                                 SetModelLoraHookDEPR, SetClipLoraHookDEPR,
+                                 CombineLoraHooksDEPR, CombineLoraHookFourOptionalDEPR, CombineLoraHookEightOptionalDEPR,
+                                 PairedConditioningSetMaskHookedDEPR, ConditioningSetMaskHookedDEPR,
+                                 PairedConditioningSetMaskAndCombineHookedDEPR, ConditioningSetMaskAndCombineHookedDEPR,
+                                 PairedConditioningSetUnmaskedAndCombineHookedDEPR, ConditioningSetUnmaskedAndCombineHookedDEPR,
+                                 PairedConditioningCombineDEPR, ConditioningCombineDEPR,
+                                 ConditioningTimestepsNodeDEPR, SetLoraHookKeyframesDEPR,
+                                 CreateLoraHookKeyframeDEPR, CreateLoraHookKeyframeFromStrengthListDEPR)
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGSimpleNode, CustomCFGKeyframeNode, CustomCFGKeyframeSimpleNode, CustomCFGKeyframeInterpolationNode, CustomCFGKeyframeFromListNode,
                            CFGExtrasPAGNode, CFGExtrasPAGSimpleNode, CFGExtrasRescaleCFGNode, CFGExtrasRescaleCFGSimpleNode,
@@ -42,8 +43,8 @@ from .nodes_per_block import (ADBlockComboNode, ADBlockIndivNode, PerBlockHighLe
                               PerBlock_SD15_LowLevelNode, PerBlock_SD15_MidLevelNode, PerBlock_SD15_FromFloatsNode,
                               PerBlock_SDXL_LowLevelNode, PerBlock_SDXL_MidLevelNode, PerBlock_SDXL_FromFloatsNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect, PerturbedAttentionGuidanceMultival, RescaleCFGMultival
-from .nodes_deprecated import (AnimateDiffLoader_Deprecated, AnimateDiffLoaderAdvanced_Deprecated, AnimateDiffCombine_Deprecated,
-                               AnimateDiffModelSettings, AnimateDiffModelSettingsSimple, AnimateDiffModelSettingsAdvanced, AnimateDiffModelSettingsAdvancedAttnStrengths)
+from .nodes_deprecated import (AnimateDiffLoaderDEPR, AnimateDiffLoaderAdvancedDEPR, AnimateDiffCombineDEPR,
+                               AnimateDiffModelSettingsDEPR, AnimateDiffModelSettingsSimpleDEPR, AnimateDiffModelSettingsAdvancedDEPR, AnimateDiffModelSettingsAdvancedAttnStrengthsDEPR)
 from .nodes_lora import AnimateDiffLoraLoader
 
 from .logger import logger
@@ -97,28 +98,28 @@ NODE_CLASS_MAPPINGS = {
     "ADE_IterationOptsDefault": IterationOptionsNode,
     "ADE_IterationOptsFreeInit": FreeInitOptionsNode,
     # Conditioning
-    "ADE_RegisterLoraHook": MaskableLoraLoader,
-    "ADE_RegisterLoraHookModelOnly": MaskableLoraLoaderModelOnly,
-    "ADE_RegisterModelAsLoraHook": MaskableSDModelLoader,
-    "ADE_RegisterModelAsLoraHookModelOnly": MaskableSDModelLoaderModelOnly,
-    "ADE_CombineLoraHooks": CombineLoraHooks,
-    "ADE_CombineLoraHooksFour": CombineLoraHookFourOptional,
-    "ADE_CombineLoraHooksEight": CombineLoraHookEightOptional,
-    "ADE_SetLoraHookKeyframe": SetLoraHookKeyframes,
-    "ADE_AttachLoraHookToCLIP": SetClipLoraHook,
-    "ADE_LoraHookKeyframe": CreateLoraHookKeyframe,
+    "ADE_RegisterLoraHook": MaskableLoraLoaderDEPR,
+    "ADE_RegisterLoraHookModelOnly": MaskableLoraLoaderModelOnlyDEPR,
+    "ADE_RegisterModelAsLoraHook": MaskableSDModelLoaderDEPR,
+    "ADE_RegisterModelAsLoraHookModelOnly": MaskableSDModelLoaderModelOnlyDEPR,
+    "ADE_CombineLoraHooks": CombineLoraHooksDEPR,
+    "ADE_CombineLoraHooksFour": CombineLoraHookFourOptionalDEPR,
+    "ADE_CombineLoraHooksEight": CombineLoraHookEightOptionalDEPR,
+    "ADE_SetLoraHookKeyframe": SetLoraHookKeyframesDEPR,
+    "ADE_AttachLoraHookToCLIP": SetClipLoraHookDEPR,
+    "ADE_LoraHookKeyframe": CreateLoraHookKeyframeDEPR,
     "ADE_LoraHookKeyframeInterpolation": CreateLoraHookKeyframeInterpolation,
-    "ADE_LoraHookKeyframeFromStrengthList": CreateLoraHookKeyframeFromStrengthList,
-    "ADE_AttachLoraHookToConditioning": SetModelLoraHook,
-    "ADE_PairedConditioningSetMask": PairedConditioningSetMaskHooked,
-    "ADE_ConditioningSetMask": ConditioningSetMaskHooked,
-    "ADE_PairedConditioningSetMaskAndCombine": PairedConditioningSetMaskAndCombineHooked,
-    "ADE_ConditioningSetMaskAndCombine": ConditioningSetMaskAndCombineHooked,
-    "ADE_PairedConditioningSetUnmaskedAndCombine": PairedConditioningSetUnmaskedAndCombineHooked,
-    "ADE_ConditioningSetUnmaskedAndCombine": ConditioningSetUnmaskedAndCombineHooked,
-    "ADE_PairedConditioningCombine": PairedConditioningCombine,
-    "ADE_ConditioningCombine": ConditioningCombine,
-    "ADE_TimestepsConditioning": ConditioningTimestepsNode,
+    "ADE_LoraHookKeyframeFromStrengthList": CreateLoraHookKeyframeFromStrengthListDEPR,
+    "ADE_AttachLoraHookToConditioning": SetModelLoraHookDEPR,
+    "ADE_PairedConditioningSetMask": PairedConditioningSetMaskHookedDEPR,
+    "ADE_ConditioningSetMask": ConditioningSetMaskHookedDEPR,
+    "ADE_PairedConditioningSetMaskAndCombine": PairedConditioningSetMaskAndCombineHookedDEPR,
+    "ADE_ConditioningSetMaskAndCombine": ConditioningSetMaskAndCombineHookedDEPR,
+    "ADE_PairedConditioningSetUnmaskedAndCombine": PairedConditioningSetUnmaskedAndCombineHookedDEPR,
+    "ADE_ConditioningSetUnmaskedAndCombine": ConditioningSetUnmaskedAndCombineHookedDEPR,
+    "ADE_PairedConditioningCombine": PairedConditioningCombineDEPR,
+    "ADE_ConditioningCombine": ConditioningCombineDEPR,
+    "ADE_TimestepsConditioning": ConditioningTimestepsNodeDEPR,
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
@@ -211,13 +212,13 @@ NODE_CLASS_MAPPINGS = {
     # FancyVideo
     ApplyAnimateDiffFancyVideo.NodeID: ApplyAnimateDiffFancyVideo,
     # Deprecated Nodes
-    "AnimateDiffLoaderV1": AnimateDiffLoader_Deprecated,
-    "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvanced_Deprecated,
-    "ADE_AnimateDiffCombine": AnimateDiffCombine_Deprecated,
-    "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettings,
-    "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimple,
-    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvanced,
-    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": AnimateDiffModelSettingsAdvancedAttnStrengths,
+    "AnimateDiffLoaderV1": AnimateDiffLoaderDEPR,
+    "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvancedDEPR,
+    "ADE_AnimateDiffCombine": AnimateDiffCombineDEPR,
+    "ADE_AnimateDiffModelSettings_Release": AnimateDiffModelSettingsDEPR,
+    "ADE_AnimateDiffModelSettingsSimple": AnimateDiffModelSettingsSimpleDEPR,
+    "ADE_AnimateDiffModelSettings": AnimateDiffModelSettingsAdvancedDEPR,
+    "ADE_AnimateDiffModelSettingsAdvancedAttnStrengths": AnimateDiffModelSettingsAdvancedAttnStrengthsDEPR,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     # Unencapsulated
