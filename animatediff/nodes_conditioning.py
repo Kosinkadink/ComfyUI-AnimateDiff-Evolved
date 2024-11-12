@@ -32,6 +32,8 @@ class CreateLoraHookKeyframeInterpolation:
             },
             "optional": {
                 "prev_hook_kf": ("HOOK_KEYFRAMES",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -93,8 +95,10 @@ class PairedConditioningSetMaskHookedDEPR:
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("HOOKS",),
                 "opt_timesteps": ("TIMESTEPS_RANGE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -126,8 +130,10 @@ class ConditioningSetMaskHookedDEPR:
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("HOOKS",),
                 "opt_timesteps": ("TIMESTEPS_RANGE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -161,8 +167,10 @@ class PairedConditioningSetMaskAndCombineHookedDEPR:
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("HOOKS",),
                 "opt_timesteps": ("TIMESTEPS_RANGE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -195,8 +203,10 @@ class ConditioningSetMaskAndCombineHookedDEPR:
                 "opt_mask": ("MASK", ),
                 "opt_lora_hook": ("HOOKS",),
                 "opt_timesteps": ("TIMESTEPS_RANGE",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -226,8 +236,10 @@ class PairedConditioningSetUnmaskedAndCombineHookedDEPR:
             },
             "optional": {
                 "opt_lora_hook": ("HOOKS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -254,8 +266,10 @@ class ConditioningSetUnmaskedAndCombineHookedDEPR:
             },
             "optional": {
                 "opt_lora_hook": ("HOOKS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -336,8 +350,10 @@ class ConditioningTimestepsNodeDEPR:
                 "end_percent": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.001})
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -359,8 +375,10 @@ class SetLoraHookKeyframesDEPR:
                 "hook_kf": ("HOOK_KEYFRAMES",),
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -386,8 +404,10 @@ class CreateLoraHookKeyframeDEPR:
             },
             "optional": {
                 "prev_hook_kf": ("HOOK_KEYFRAMES",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -603,8 +623,10 @@ class SetModelLoraHookDEPR:
                 "lora_hook": ("HOOKS",),
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -626,8 +648,10 @@ class SetClipLoraHookDEPR:
                 "lora_hook": ("HOOKS",),
             },
             "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -650,8 +674,10 @@ class CombineLoraHooksDEPR:
             "optional": {
                 "lora_hook_A": ("HOOKS",),
                 "lora_hook_B": ("HOOKS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -676,8 +702,10 @@ class CombineLoraHookFourOptionalDEPR:
                 "lora_hook_B": ("HOOKS",),
                 "lora_hook_C": ("HOOKS",),
                 "lora_hook_D": ("HOOKS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -708,8 +736,10 @@ class CombineLoraHookEightOptionalDEPR:
                 "lora_hook_F": ("HOOKS",),
                 "lora_hook_G": ("HOOKS",),
                 "lora_hook_H": ("HOOKS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 

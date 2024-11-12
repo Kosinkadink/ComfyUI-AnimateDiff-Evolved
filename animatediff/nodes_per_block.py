@@ -38,6 +38,8 @@ class ADBlockComboNode:
             "optional": {
                 "effect": ("MULTIVAL",),
                 "scale": ("MULTIVAL",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }

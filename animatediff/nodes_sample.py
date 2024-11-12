@@ -34,6 +34,8 @@ class SampleSettingsNode:
                 "sigma_schedule": ("SIGMA_SCHEDULE",),
                 "image_inject": ("IMAGE_INJECT",),
                 "noise_calib": ("NOISE_CALIBRATION",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -67,6 +69,8 @@ class NoiseLayerReplaceNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -103,6 +107,8 @@ class NoiseLayerAddNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -142,6 +148,8 @@ class NoiseLayerAddWeightedNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -204,6 +212,8 @@ class FreeInitOptionsNode:
             "optional": {
                 "iter_batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
                 "iter_seed_offset": ("INT", {"default": 1, "min": BIGMIN, "max": BIGMAX}),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -230,7 +240,7 @@ class NoiseCalibrationNode:
                 "calib_iterations": ("INT", {"default": 1, "min": 1, "step": 1}),
                 "thresh_freq": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
             },
-            "optional": {
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -254,6 +264,8 @@ class CustomCFGNode:
             },
             "optional": {
                 "cfg_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -278,6 +290,8 @@ class CustomCFGSimpleNode:
             },
             "optional": {
                 "cfg_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -302,6 +316,8 @@ class CustomCFGKeyframeNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -332,6 +348,8 @@ class CustomCFGKeyframeSimpleNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
@@ -362,6 +380,8 @@ class CustomCFGKeyframeInterpolationNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -449,6 +469,8 @@ class CFGExtrasPAGNode:
             },
             "optional": {
                 "prev_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -481,6 +503,8 @@ class CFGExtrasPAGSimpleNode:
             },
             "optional": {
                 "prev_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -534,6 +558,8 @@ class CFGExtrasRescaleCFGSimpleNode:
             },
             "optional": {
                 "prev_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
@@ -564,6 +590,8 @@ class NoisedImageInjectionNode:
                 "img_inject_opts": ("IMAGE_INJECT_OPTIONS", ),
                 "strength_multival": ("MULTIVAL", ),
                 "prev_image_inject": ("IMAGE_INJECT", ),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -594,6 +622,8 @@ class NoisedImageInjectOptionsNode:
             "optional": {
                 "composite_x": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
                 "composite_y": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }

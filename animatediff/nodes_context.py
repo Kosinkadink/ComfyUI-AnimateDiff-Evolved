@@ -236,6 +236,8 @@ class ViewAsContextOptionsNode:
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
                 "prev_context": ("CONTEXT_OPTIONS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }

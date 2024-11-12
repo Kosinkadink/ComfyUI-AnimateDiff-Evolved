@@ -35,6 +35,8 @@ class ApplyAnimateDiffFancyVideo:
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
                 "per_block": ("PER_BLOCK",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }

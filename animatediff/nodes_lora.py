@@ -19,6 +19,8 @@ class AnimateDiffLoraLoader:
             },
             "optional": {
                 "prev_motion_lora": ("MOTION_LORA",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 30}),
             }
         }
