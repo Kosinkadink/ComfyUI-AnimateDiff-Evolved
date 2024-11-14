@@ -31,6 +31,7 @@ from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched
 from .sample_settings import SampleSettings, SeedNoiseGeneration
+from .dinklink import get_acn_outer_sample_wrapper
 
 
 class ModelPatcherHelper:
@@ -122,7 +123,19 @@ class ModelPatcherHelper:
     
     def set_params(self, params: 'InjectionParams'):
         self.model.set_attachments(self.PARAMS, params)
+        if params.context_options.context_length is not None:
+            self.set_ACN_outer_sample_wrapper(throw_exception=False)
+        elif params.context_options.extras.context_ref is not None:
+            self.set_ACN_outer_sample_wrapper(throw_exception=True)
 
+    def set_ACN_outer_sample_wrapper(self, throw_exception=True):
+        # get wrapper to register from Advanced-ControlNet via DinkLink shared dict
+        wrapper_info = get_acn_outer_sample_wrapper(throw_exception)
+        if wrapper_info is None:
+            return
+        wrapper_type, key, wrapper = wrapper_info
+        if len(self.model.get_wrappers(wrapper_type, key)) == 0:
+            self.model.add_wrapper_with_key(wrapper_type, key, wrapper)
 
     def set_outer_sample_wrapper(self, wrapper: Callable):
         self.model.remove_wrappers_with_key(WrappersMP.OUTER_SAMPLE, self.ADE)

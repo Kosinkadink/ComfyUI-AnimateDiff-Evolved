@@ -22,8 +22,26 @@ def init_dinklink():
 
 
 def get_dinklink() -> dict[str, dict[str]]:
-    getattr(comfy.hooks, DINKLINK)
+    return getattr(comfy.hooks, DINKLINK)
+
+
+class DinkLinkConst:
+    VERSION = "version"
+    ACN = "ACN"
+    ACN_CREATE_OUTER_SAMPLE_WRAPPER = "create_outer_sample_wrapper"
 
 
 def prepare_dinklink():
     pass
+
+
+def get_acn_outer_sample_wrapper(throw_exception=True):
+    d = get_dinklink()
+    try:
+        link_acn = d[DinkLinkConst.ACN]
+        return link_acn[DinkLinkConst.ACN_CREATE_OUTER_SAMPLE_WRAPPER]
+    except KeyError:
+        if throw_exception:
+            raise Exception("Advanced-ControlNet nodes need to be installed to make use of ContextRef; " + \
+                            "they are either not installed or are of an insufficient version.")
+    return None
