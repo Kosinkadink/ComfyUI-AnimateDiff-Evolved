@@ -17,6 +17,8 @@ class SetContextExtrasOnContextOptions:
         return {
             "required": {
                 "context_opts": ("CONTEXT_OPTIONS",),
+            },
+            "optional": {
                 "context_extras": ("CONTEXT_EXTRAS",),
             },
             "hidden": {
@@ -29,9 +31,10 @@ class SetContextExtrasOnContextOptions:
     CATEGORY = "Animate Diff 🎭🅐🅓/context opts/context extras"
     FUNCTION = "set_context_extras"
 
-    def set_context_extras(self, context_opts: ContextOptionsGroup, context_extras: ContextExtrasGroup):
+    def set_context_extras(self, context_opts: ContextOptionsGroup, context_extras: ContextExtrasGroup=None):
         context_opts = context_opts.clone()
-        context_opts.extras = context_extras.clone()
+        if context_extras is not None:
+            context_opts.extras = context_extras.clone()
         return (context_opts,)
 
 
