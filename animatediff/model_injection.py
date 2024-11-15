@@ -569,6 +569,7 @@ class MotionModelPatcher(ModelPatcher):
             self.backup = n.backup
         if hasattr(n, "object_patches_backup"):
             self.object_patches_backup = n.object_patches_backup
+        n.parent = self
         # extra cloned params
         n.timestep_percent_range = self.timestep_percent_range
         n.timestep_range = self.timestep_range
