@@ -429,6 +429,8 @@ def _handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP
     final_pooled_dict = {"pooled_output": final_pooled}
     if options.add_dict is not None:
         final_pooled_dict.update(options.add_dict)
+    # add hooks, if needed
+    clip.add_hooks_to_dict(final_pooled_dict)
     return [[final_cond, final_pooled_dict]]
 
 
