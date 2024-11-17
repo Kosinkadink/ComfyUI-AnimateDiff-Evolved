@@ -165,6 +165,7 @@ def groupnorm_mm_factory(params: InjectionParams, manual_cast=False):
         return input
     return groupnorm_mm_forward
 
+
 def create_special_model_apply_model_wrapper(model_options: dict):
     comfy.patcher_extension.add_wrapper_with_key(WrappersMP.APPLY_MODEL,
                                                  "ADE_special_model_apply_model",
@@ -197,7 +198,6 @@ def create_diffusion_model_groupnormed_wrapper(model_options: dict, inject_helpe
                                                  "ADE_groupnormed_diffusion_model",
                                                  _diffusion_model_groupnormed_wrapper_factory(inject_helper),
                                                  model_options, is_model_options=True)
-
 
 def _diffusion_model_groupnormed_wrapper_factory(inject_helper: 'GroupnormInjectHelper'):
     def _diffusion_model_groupnormed_wrapper(executor, *args, **kwargs):
