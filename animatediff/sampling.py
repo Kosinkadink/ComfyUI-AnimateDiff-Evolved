@@ -8,13 +8,14 @@ from einops import rearrange
 
 import comfy.model_management
 import comfy.model_patcher
+import comfy.patcher_extension
 import comfy.samplers
 import comfy.sampler_helpers
 import comfy.utils
 from comfy.controlnet import ControlBase
 from comfy.model_base import BaseModel
 from comfy.model_patcher import ModelPatcher
-from comfy.patcher_extension import WrapperExecutor
+from comfy.patcher_extension import WrapperExecutor, WrappersMP
 import comfy.conds
 import comfy.ops
 
@@ -178,11 +179,18 @@ def apply_model_factory(orig_apply_model: Callable):
         return orig_apply_model(*args, **kwargs)
     return apply_model_ade_wrapper
 
-def diffusion_model_forward_groupnormed_factory(orig_diffusion_model_forward: Callable, inject_helper: 'GroupnormInjectHelper'):
-    def diffusion_model_forward_groupnormed(*args, **kwargs):
+def create_diffusion_model_groupnormed_wrapper(model_options: dict, inject_helper: 'GroupnormInjectHelper'):
+    comfy.patcher_extension.add_wrapper_with_key(WrappersMP.DIFFUSION_MODEL,
+                                                 "ADE_groupnormed_diffusion_model",
+                                                 _diffusion_model_groupnormed_wrapper_factory(inject_helper),
+                                                 model_options, is_model_options=True)
+
+
+def _diffusion_model_groupnormed_wrapper_factory(inject_helper: 'GroupnormInjectHelper'):
+    def _diffusion_model_groupnormed_wrapper(executor, *args, **kwargs):
         with inject_helper:
-            return orig_diffusion_model_forward(*args, **kwargs)
-    return diffusion_model_forward_groupnormed
+            return executor(*args, **kwargs)
+    return _diffusion_model_groupnormed_wrapper
 ######################################################################
 ##################################################################################
 
@@ -237,7 +245,6 @@ class FunctionInjectionHolder:
         self.orig_memory_required = None
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_forward_comfy_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
-        self.orig_diffusion_model_forward = None
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
         self.orig_apply_model = None
         # Inject Functions
@@ -254,8 +261,7 @@ class FunctionInjectionHolder:
                 self.inject_groupnorm_forward = groupnorm_mm_factory(params)
                 self.inject_groupnorm_forward_comfy_cast_weights = groupnorm_mm_factory(params, manual_cast=True)
                 self.groupnorm_injector = GroupnormInjectHelper(self)
-                self.orig_diffusion_model_forward = helper.model.model.diffusion_model.forward
-                helper.model.model.diffusion_model.forward = diffusion_model_forward_groupnormed_factory(self.orig_diffusion_model_forward, self.groupnorm_injector)
+                create_diffusion_model_groupnormed_wrapper(model_options, self.groupnorm_injector)
                 # if mps device (Apple Silicon), disable batched conds to avoid black images with groupnorm hack
                 try:
                     if helper.model.load_device.type == "mps":
@@ -281,8 +287,6 @@ class FunctionInjectionHolder:
                 helper.model.model.memory_required = self.orig_memory_required
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_forward_comfy_cast_weights
-            if self.orig_diffusion_model_forward is not None:
-                helper.model.model.diffusion_model.forward = self.orig_diffusion_model_forward
             comfy.samplers.sampling_function = self.orig_sampling_function
             if self.orig_apply_model is not None:
                 helper.model.model.apply_model = self.orig_apply_model
