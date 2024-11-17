@@ -539,10 +539,7 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
 def perform_image_injection(ADGS: AnimateDiffGlobalState, model: BaseModel, latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:
     # NOTE: the latents here have already been process_latent_out'ed
     # get currently used models so they can be properly reloaded after perfoming VAE Encoding
-    if hasattr(comfy.model_management, "loaded_models"):
-        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
-    else:
-        cached_loaded_models: list[ModelPatcher] = [x.model for x in comfy.model_management.current_loaded_models]
+    cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
     try:
         orig_device = latents.device
         orig_dtype = latents.dtype
