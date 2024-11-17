@@ -165,19 +165,32 @@ def groupnorm_mm_factory(params: InjectionParams, manual_cast=False):
         return input
     return groupnorm_mm_forward
 
-def apply_model_factory(orig_apply_model: Callable):
-    def apply_model_ade_wrapper(self, *args, **kwargs):
-        x: Tensor = args[0]
-        cond_or_uncond = kwargs["transformer_options"]["cond_or_uncond"]
-        ad_params = kwargs["transformer_options"]["ad_params"]
-        ADGS: AnimateDiffGlobalState = kwargs["transformer_options"]["ADGS"]
-        if ADGS.motion_models is not None:
+def create_special_model_apply_model_wrapper(model_options: dict):
+    comfy.patcher_extension.add_wrapper_with_key(WrappersMP.APPLY_MODEL,
+                                                 "ADE_special_model_apply_model",
+                                                 _apply_model_wrapper,
+                                                 model_options, is_model_options=True)
+
+def _apply_model_wrapper(executor, *args, **kwargs):
+    # args (from BaseModel._apply_model):
+    # 0: x
+    # 1: t
+    # 2: c_concat
+    # 3: c_crossattn
+    # 4: control
+    # 5: transformer_options
+    x: Tensor = args[0]
+    transformer_options = args[5]
+    cond_or_uncond = transformer_options["cond_or_uncond"]
+    ad_params = transformer_options["ad_params"]
+    ADGS: AnimateDiffGlobalState = transformer_options["ADGS"]
+    if ADGS.motion_models is not None:
             for motion_model in ADGS.motion_models.models:
-                motion_model.prepare_alcmi2v_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=self.latent_format)
+                motion_model.prepare_alcmi2v_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=executor.class_obj.latent_format)
                 motion_model.prepare_camera_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
-        del x
-        return orig_apply_model(*args, **kwargs)
-    return apply_model_ade_wrapper
+    del x
+    return executor(*args, **kwargs)
+
 
 def create_diffusion_model_groupnormed_wrapper(model_options: dict, inject_helper: 'GroupnormInjectHelper'):
     comfy.patcher_extension.add_wrapper_with_key(WrappersMP.DIFFUSION_MODEL,
@@ -246,7 +259,6 @@ class FunctionInjectionHolder:
         self.orig_groupnorm_forward = torch.nn.GroupNorm.forward # used to normalize latents to remove "flickering" of colors/brightness between frames
         self.orig_groupnorm_forward_comfy_cast_weights = comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights
         self.orig_sampling_function = comfy.samplers.sampling_function # used to support sliding context windows in samplers
-        self.orig_apply_model = None
         # Inject Functions
         if params.unlimited_area_hack:
             # allows for "unlimited area hack" to prevent halving of conds/unconds
@@ -272,8 +284,7 @@ class FunctionInjectionHolder:
             # if img_encoder or camera_encoder present, inject apply_model to handle correctly
             for motion_model in helper.get_motion_models():
                 if (motion_model.model.img_encoder is not None) or (motion_model.model.camera_encoder is not None):
-                    self.orig_apply_model = helper.model.model.apply_model
-                    helper.model.model.apply_model = apply_model_factory(self.orig_apply_model).__get__(helper.model.model, type(helper.model.model))
+                    create_special_model_apply_model_wrapper(model_options)
                     break
             del info
         comfy.samplers.sampling_function = evolved_sampling_function
@@ -288,8 +299,6 @@ class FunctionInjectionHolder:
             torch.nn.GroupNorm.forward = self.orig_groupnorm_forward
             comfy.ops.disable_weight_init.GroupNorm.forward_comfy_cast_weights = self.orig_groupnorm_forward_comfy_cast_weights
             comfy.samplers.sampling_function = self.orig_sampling_function
-            if self.orig_apply_model is not None:
-                helper.model.model.apply_model = self.orig_apply_model
         except AttributeError:
             logger.error("Encountered AttributeError while attempting to restore functions - likely, an error occured while trying " + \
                          "to save original functions before injection, and a more specific error was thrown by ComfyUI.")
