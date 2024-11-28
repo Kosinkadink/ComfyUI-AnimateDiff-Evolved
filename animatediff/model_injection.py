@@ -177,7 +177,7 @@ def create_forward_timestep_embed_patch():
     return (VanillaTemporalModule, forward_timestep_embed_patch_ade)
 
 def forward_timestep_embed_patch_ade(layer, x, emb, context, transformer_options, output_shape, time_context, num_video_frames, image_only_indicator, *args, **kwargs):
-    return layer(x, context)
+    return layer(x, context, transformer_options=transformer_options)
 
 
 def create_MotionModelPatcher(model, load_device, offload_device) -> MotionModelPatcher:

@@ -921,7 +921,7 @@ class VanillaTemporalModule(nn.Module):
     def should_handle_camera_features(self):
         return self.camera_features is not None and self.block_type != BlockType.MID# and self.module_idx == 0
 
-    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None):
+    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None, transformer_options=None):
         #logger.info(f"block_type: {self.block_type}, block_idx: {self.block_idx}, module_idx: {self.module_idx}")
         mm_kwargs = None
         if self.should_handle_camera_features():
@@ -930,7 +930,7 @@ class VanillaTemporalModule(nn.Module):
             # do AnimateLCM-I2V stuff if needed
             if self.should_handle_img_features():
                 input_tensor += self.img_features[self.block_idx]
-            return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options, mm_kwargs)
+            return self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options, mm_kwargs, transformer_options)
         # return weighted average of input_tensor and AD output
         if type(self.effect) != Tensor:
             effect = self.effect
@@ -944,8 +944,8 @@ class VanillaTemporalModule(nn.Module):
             effect = self.get_effect_mask(input_tensor)
         # do AnimateLCM-I2V stuff if needed
         if self.should_handle_img_features():
-            return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor+self.img_features[self.block_idx], encoder_hidden_states, attention_mask, self.view_options, mm_kwargs)*effect
-        return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options, mm_kwargs)*effect
+            return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor+self.img_features[self.block_idx], encoder_hidden_states, attention_mask, self.view_options, mm_kwargs, transformer_options)*effect
+        return input_tensor*(1.0-effect) + self.temporal_transformer(input_tensor, encoder_hidden_states, attention_mask, self.view_options, mm_kwargs, transformer_options)*effect
 
 
 class TemporalTransformer3DModel(nn.Module):
@@ -1174,7 +1174,7 @@ class TemporalTransformer3DModel(nn.Module):
             return self.temp_cameractrl_effect[:, self.sub_idxs, :]
         return self.temp_cameractrl_effect
 
-    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, view_options: ContextOptions=None, mm_kwargs: dict[str]=None):
+    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, view_options: ContextOptions=None, mm_kwargs: dict[str]=None, transformer_options=None):
         batch, channel, height, width = hidden_states.shape
         residual = hidden_states
         scale_masks = self.get_scale_masks(hidden_states)
@@ -1197,7 +1197,8 @@ class TemporalTransformer3DModel(nn.Module):
                 scale_masks=scale_masks,
                 cameractrl_effect=cameractrl_effect,
                 view_options=view_options,
-                mm_kwargs=mm_kwargs
+                mm_kwargs=mm_kwargs,
+                transformer_options=transformer_options,
             )
 
         # output
@@ -1288,6 +1289,7 @@ class TemporalTransformerBlock(nn.Module):
         cameractrl_effect: Union[float, Tensor] = None,
         view_options: Union[ContextOptions, None]=None,
         mm_kwargs: dict[str]=None,
+        transformer_options: dict[str]=None,
     ):
         if scale_masks is None:
             scale_masks = [None] * len(self.attention_blocks)
@@ -1310,7 +1312,8 @@ class TemporalTransformerBlock(nn.Module):
                         video_length=video_length,
                         scale_mask=scale_mask,
                         cameractrl_effect=cameractrl_effect,
-                        mm_kwargs=mm_kwargs
+                        mm_kwargs=mm_kwargs,
+                        transformer_options=transformer_options,
                     ) + hidden_states
                 )
         else:
@@ -1345,7 +1348,8 @@ class TemporalTransformerBlock(nn.Module):
                             video_length=len(sub_idxs),
                             scale_mask=scale_mask[:, sub_idxs, :] if scale_mask is not None else scale_mask,
                             cameractrl_effect=cameractrl_effect[:, sub_idxs, :] if type(cameractrl_effect) == Tensor else cameractrl_effect,
-                            mm_kwargs=mm_kwargs
+                            mm_kwargs=mm_kwargs,
+                            transformer_options=transformer_options,
                         ) + sub_hidden_states
                     )
                 sub_hidden_states = rearrange(sub_hidden_states, "(b f) d c -> b f d c", f=len(sub_idxs))
@@ -1407,7 +1411,7 @@ class PositionalEncoding(nn.Module):
     def set_sub_idxs(self, sub_idxs: list[int]):
         self.sub_idxs = sub_idxs
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor, mm_kwargs: dict[str]={}, transformer_options: dict[str]=None):
         #if self.sub_idxs is not None:
         #    x = x + self.pe[:, self.sub_idxs]
         #else:
@@ -1474,6 +1478,7 @@ class VersatileAttention(CrossAttentionMM):
         scale_mask=None,
         cameractrl_effect: Union[float, Tensor] = 1.0,
         mm_kwargs: dict[str]={},
+        transformer_options: dict[str]=None,
     ):
         if self.attention_mode != "Temporal":
             raise NotImplementedError
@@ -1484,7 +1489,7 @@ class VersatileAttention(CrossAttentionMM):
         )
 
         if self.pos_encoder is not None:
-           hidden_states = self.pos_encoder(hidden_states).to(hidden_states.dtype)
+           hidden_states = self.pos_encoder(hidden_states, mm_kwargs, transformer_options).to(hidden_states.dtype)
 
         encoder_hidden_states = (
             repeat(encoder_hidden_states, "b n c -> (b d) n c", d=d)
@@ -1502,6 +1507,8 @@ class VersatileAttention(CrossAttentionMM):
             value=None,
             mask=attention_mask,
             scale_mask=scale_mask,
+            mm_kwargs=mm_kwargs,
+            transformer_options=transformer_options,
         )
 
         hidden_states = rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
@@ -1581,7 +1588,7 @@ class EncoderOnlyTemporalModule(VanillaTemporalModule):
     def create(cls, in_channels, block_type: str, block_idx: int, module_idx: int, ops=comfy.ops.disable_weight_init):
         return cls(in_channels=in_channels, block_type=block_type, block_idx=block_idx, module_idx=module_idx, ops=ops)
 
-    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None):
+    def forward(self, input_tensor: Tensor, encoder_hidden_states=None, attention_mask=None, transformer_options=None):
         if self.effect is None:
             # do AnimateLCM-I2V stuff if needed
             if self.should_handle_img_features():
