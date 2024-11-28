@@ -7,10 +7,10 @@ from comfy.sd import VAE
 
 from .ad_settings import AnimateDiffSettings
 from .logger import logger
-from .utils_model import ScaleMethods, CropMethods, get_available_motion_models
+from .utils_model import ScaleMethods, CropMethods, get_available_motion_models, vae_encode_raw_batched
 from .utils_motion import ADKeyframeGroup
 from .motion_lora import MotionLoraList
-from .model_injection import (MotionModelGroup, MotionModelPatcher, create_fresh_encoder_only_model,
+from .model_injection import (MotionModelGroup, MotionModelPatcher, get_mm_attachment, create_fresh_encoder_only_model,
                               load_motion_module_gen2, inject_img_encoder_into_model)
 from .motion_module_ad import AnimateDiffFormat
 from .nodes_gen2 import ApplyAnimateDiffModelNode
@@ -58,9 +58,10 @@ class ApplyAnimateLCMI2VModel:
         # confirm that model contains img_encoder
         if curr_model.model.img_encoder is None:
             raise Exception(f"Motion model '{curr_model.model.mm_info.mm_name}' does not contain an img_encoder; cannot be used with Apply AnimateLCM-I2V Model node.")
-        curr_model.orig_img_latents = ref_latent["samples"]
-        curr_model.orig_ref_drift = ref_drift
-        curr_model.orig_apply_ref_when_disabled = apply_ref_when_disabled
+        attachment = get_mm_attachment(curr_model)
+        attachment.orig_img_latents = ref_latent["samples"]
+        attachment.orig_ref_drift = ref_drift
+        attachment.orig_apply_ref_when_disabled = apply_ref_when_disabled
         return new_m_models
 
 
@@ -148,9 +149,4 @@ class UpscaleAndVaeEncode:
         image = comfy.utils.common_upscale(samples=image, width=w*8, height=h*8, upscale_method=scale_method, crop=crop)
         image = image.movedim(1,-1)
         # now that images are the expected size, VAEEncode them
-        try:  # account for old ComfyUI versions (TODO: remove this when other changes require ComfyUI update)
-            if not hasattr(vae, "vae_encode_crop_pixels"):
-                image = VAEEncode.vae_encode_crop_pixels(image)
-        except Exception:
-            pass
-        return ({"samples": vae.encode(image[:,:,:,:3])},)
+        return ({"samples": vae_encode_raw_batched(vae, image)},)

@@ -11,7 +11,7 @@ from .utils_motion import ADKeyframeGroup, ADKeyframe, InputPIA
 from .motion_lora import MotionLoraList
 from .motion_module_ad import AllPerBlocks
 from .model_injection import (ModelPatcherHelper,
-                              InjectionParams, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module,
+                              InjectionParams, MotionModelGroup, MotionModelPatcher, get_mm_attachment, create_fresh_motion_module,
                               load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2, validate_per_block_compatibility)
 from .sample_settings import SampleSettings
 from .sampling import outer_sample_wrapper, sliding_calc_cond_batch
@@ -128,13 +128,14 @@ class ApplyAnimateDiffModelNode:
         if motion_lora is not None:
             for lora in motion_lora.loras:
                 load_motion_lora_as_patches(motion_model, lora)
-        motion_model.scale_multival = scale_multival
-        motion_model.effect_multival = effect_multival
+        attachment = get_mm_attachment(motion_model)
+        attachment.scale_multival = scale_multival
+        attachment.effect_multival = effect_multival
         if per_block is not None:
             validate_per_block_compatibility(motion_model=motion_model, all_per_blocks=per_block)
-            motion_model.per_block_list = per_block.per_block_list
-        motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
-        motion_model.timestep_percent_range = (start_percent, end_percent)
+            attachment.per_block_list = per_block.per_block_list
+        attachment.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
+        attachment.timestep_percent_range = (start_percent, end_percent)
         # add to beginning, so that after injection, it will be the earliest of prev_m_models to be run
         prev_m_models.add_to_start(mm=motion_model)
         return (prev_m_models,)

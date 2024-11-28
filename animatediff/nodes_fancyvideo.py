@@ -10,7 +10,7 @@ from .logger import logger
 from .utils_model import BIGMIN, BIGMAX, get_available_motion_models
 from .utils_motion import ADKeyframeGroup, InputPIA, InputPIA_Multival, extend_list_to_batch_size, extend_to_batch_size, prepare_mask_batch
 from .motion_lora import MotionLoraList
-from .model_injection import MotionModelGroup, MotionModelPatcher, load_motion_module_gen2, inject_pia_conv_in_into_model
+from .model_injection import MotionModelGroup, MotionModelPatcher, get_mm_attachment, load_motion_module_gen2, inject_pia_conv_in_into_model
 from .motion_module_ad import AnimateDiffFormat
 from .nodes_gen2 import ApplyAnimateDiffModelNode, ADKeyframeNode
 
@@ -59,6 +59,7 @@ class ApplyAnimateDiffFancyVideo:
         # confirm that model is FancyVideo
         if curr_model.model.mm_info.mm_format != AnimateDiffFormat.FANCYVIDEO:
             raise Exception(f"Motion model '{curr_model.model.mm_info.mm_name}' is not a FancyVideo model; cannot be used with Apply AD-FancyModel Model node.")
-        curr_model.orig_fancy_images = image
-        curr_model.fancy_vae = vae
+        attachment = get_mm_attachment(curr_model)
+        attachment.orig_fancy_images = image
+        attachment.fancy_vae = vae
         return new_m_models

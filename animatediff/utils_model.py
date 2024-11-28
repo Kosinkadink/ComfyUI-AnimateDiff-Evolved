@@ -37,7 +37,6 @@ def vae_encode_raw_dynamic_batched(vae: VAE, pixels: Tensor, max_batch=16, min_b
     b, h, w, c = pixels.shape
     actual_size = h*w
     actual_batch_size = int(max(min_batch, min(max_batch, max_batch // max((actual_size / max_size), 1.0))))
-    logger.info(f"actual_batch_size: {actual_batch_size}")
     return vae_encode_raw_batched(vae=vae, pixels=pixels, per_batch=actual_batch_size, show_pbar=show_pbar)
 
 
