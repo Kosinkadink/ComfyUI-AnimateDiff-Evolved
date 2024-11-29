@@ -24,7 +24,7 @@ from .context_extras import ContextRefMode
 from .sample_settings import SampleSettings, NoisedImageToInject
 from .utils_model import MachineState, vae_encode_raw_batched, vae_decode_raw_batched
 from .utils_motion import composite_extend, prepare_mask_batch, extend_to_batch_size
-from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup
+from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup, get_mm_attachment
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion
 from .logger import logger
 
@@ -67,15 +67,16 @@ class AnimateDiffGlobalState:
             if len(special_models) > 0:
                 for special_model in special_models:
                     if special_model.model.is_in_effect():
-                        if special_model.is_pia():
+                        attachment = get_mm_attachment(special_model)
+                        if attachment.is_pia():
                             special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
                             conds = get_conds_with_c_concat(conds,
-                                                            special_model.get_pia_c_concat(model, x_in))
-                        elif special_model.is_fancyvideo():
+                                                            attachment.get_pia_c_concat(model, x_in))
+                        elif attachment.is_fancyvideo():
                             # TODO: handle other weights
                             special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
                             conds = get_conds_with_c_concat(conds,
-                                                            special_model.get_fancy_c_concat(model, x_in))
+                                                            attachment.get_fancy_c_concat(model, x_in))
                             # add fps_embedding/motion_embedding patches
                             emb_patches = special_model.model.get_fancyvideo_emb_patches(dtype=x_in.dtype, device=x_in.device)
                             transformer_patches = model_options["transformer_options"].get("patches", {})
@@ -88,9 +89,10 @@ class AnimateDiffGlobalState:
             special_models = self.motion_models.get_special_models()
             if len(special_models) > 0:
                 for special_model in reversed(special_models):
-                    if special_model.is_pia():
+                    attachment = get_mm_attachment(special_model)
+                    if attachment.is_pia():
                         special_model.model.restore_unet_conv_in_pia_fancyvideo(model)
-                    elif special_model.is_fancyvideo():
+                    elif attachment.is_fancyvideo():
                         # TODO: fill out
                         special_model.model.restore_unet_conv_in_pia_fancyvideo(model)
 
