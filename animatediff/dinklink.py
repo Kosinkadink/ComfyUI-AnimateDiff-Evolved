@@ -13,27 +13,41 @@
 from __future__ import annotations
 import comfy.hooks
 
+from .motion_module_ad import AnimateDiffModel, AnimateDiffInfo
+
 DINKLINK = "__DINKLINK"
 
+
 def init_dinklink():
-    if not hasattr(comfy.hooks, DINKLINK):
-        setattr(comfy.hooks, DINKLINK, {})
+    create_dinklink()
     prepare_dinklink()
 
+def create_dinklink():
+    if not hasattr(comfy.hooks, DINKLINK):
+        setattr(comfy.hooks, DINKLINK, {})
 
 def get_dinklink() -> dict[str, dict[str]]:
+    create_dinklink()
     return getattr(comfy.hooks, DINKLINK)
 
 
 class DinkLinkConst:
     VERSION = "version"
+    # ACN
     ACN = "ACN"
     ACN_CREATE_OUTER_SAMPLE_WRAPPER = "create_outer_sample_wrapper"
-
+    # ADE
+    ADE = "ADE"
+    ADE_ANIMATEDIFFMODEL = "AnimateDiffModel"
+    ADE_ANIMATEDIFFINFO = "AnimateDiffInfo"
 
 def prepare_dinklink():
-    pass
-
+    # expose classes
+    d = get_dinklink()
+    link_ade = d.setdefault(DinkLinkConst.ADE, {})
+    link_ade[DinkLinkConst.VERSION] = 10000
+    link_ade[DinkLinkConst.ADE_ANIMATEDIFFMODEL] = AnimateDiffModel
+    link_ade[DinkLinkConst.ADE_ANIMATEDIFFINFO] = AnimateDiffInfo
 
 def get_acn_outer_sample_wrapper(throw_exception=True):
     d = get_dinklink()
