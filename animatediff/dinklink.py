@@ -40,6 +40,7 @@ class DinkLinkConst:
     ADE = "ADE"
     ADE_ANIMATEDIFFMODEL = "AnimateDiffModel"
     ADE_ANIMATEDIFFINFO = "AnimateDiffInfo"
+    ADE_CREATE_MOTIONMODELPATCHER = "create_MotionModelPatcher"
 
 def prepare_dinklink():
     # expose classes

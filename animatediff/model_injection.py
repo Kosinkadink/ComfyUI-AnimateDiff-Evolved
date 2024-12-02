@@ -31,7 +31,14 @@ from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched
 from .sample_settings import SampleSettings, SeedNoiseGeneration
-from .dinklink import get_acn_outer_sample_wrapper
+from .dinklink import DinkLinkConst, get_dinklink, get_acn_outer_sample_wrapper
+
+
+def prepare_dinklink_register_definitions():
+    # expose create_MotionModelPatcher
+    d = get_dinklink()
+    link_ade = d.setdefault(DinkLinkConst.ADE, {})
+    link_ade[DinkLinkConst.ADE_CREATE_MOTIONMODELPATCHER] = create_MotionModelPatcher
 
 
 class MotionModelPatcher(ModelPatcher):

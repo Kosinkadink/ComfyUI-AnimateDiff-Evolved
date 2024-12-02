@@ -354,6 +354,7 @@ def convert_hellomeme_state_dict(mm_state_dict: dict[str, Tensor]):
 
 
 class InitKwargs:
+    OPS = "ops"
     GET_UNET_FUNC = "get_unet_func"
     ATTN_BLOCK_TYPE = "attn_block_type"
 
@@ -381,11 +382,12 @@ class AnimateDiffModel(nn.Module):
         self.attn_type = init_kwargs.get(InitKwargs.ATTN_BLOCK_TYPE, "Temporal_Self")
         self.attn_block_types = tuple([self.attn_type] * self.attn_len)
         # determine ops to use (to support fp8 properly)
-        if comfy.model_management.unet_manual_cast(comfy.model_management.unet_dtype(), comfy.model_management.get_torch_device()) is None:
-            ops = comfy.ops.disable_weight_init
-        else:
-            ops = comfy.ops.manual_cast
-        self.ops = ops
+        self.ops = init_kwargs.get(InitKwargs.OPS, None)
+        if self.ops is None:
+            if comfy.model_management.unet_manual_cast(comfy.model_management.unet_dtype(), comfy.model_management.get_torch_device()) is None:
+                self.ops = comfy.ops.disable_weight_init
+            else:
+                self.ops = comfy.ops.manual_cast
         # SDXL has 3 up/down blocks, SD1.5 has 4 up/down blocks
         if mm_info.sd_type == ModelTypeSD.SDXL:
             layer_channels = (320, 640, 1280)
@@ -399,17 +401,17 @@ class AnimateDiffModel(nn.Module):
             for idx, c in enumerate(layer_channels):
                 self.down_blocks.append(MotionModule(c, temporal_pe=self.has_position_encoding,
                                                     temporal_pe_max_len=self.encoding_max_len, block_type=BlockType.DOWN, block_idx=idx,
-                                                    attention_block_types=self.attn_block_types, ops=ops))
+                                                    attention_block_types=self.attn_block_types, ops=self.ops))
         if get_up_block_max(mm_state_dict) > -1:
             self.up_blocks = nn.ModuleList([])
             for idx, c in enumerate(list(reversed(layer_channels))):
                 self.up_blocks.append(MotionModule(c, temporal_pe=self.has_position_encoding,
                                                 temporal_pe_max_len=self.encoding_max_len, block_type=BlockType.UP, block_idx=idx,
-                                                attention_block_types=self.attn_block_types, ops=ops))
+                                                attention_block_types=self.attn_block_types, ops=self.ops))
         if has_mid_block(mm_state_dict):
             self.mid_block = MotionModule(self.middle_channel, temporal_pe=self.has_position_encoding,
                                           temporal_pe_max_len=self.encoding_max_len, block_type=BlockType.MID,
-                                          attention_block_types=self.attn_block_types, ops=ops)
+                                          attention_block_types=self.attn_block_types, ops=self.ops)
         self.AD_video_length: int = 24
         self.effect_model = 1.0
         self.effect_per_block_list = None
@@ -595,11 +597,14 @@ class AnimateDiffModel(nn.Module):
     def eject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = self.get_unet_func(self, model)
         # remove from input blocks (downblocks)
-        self._eject(unet.input_blocks)
+        if hasattr(unet, "input_blocks"):
+            self._eject(unet.input_blocks)
         # remove from output blocks (upblocks)
-        self._eject(unet.output_blocks)
+        if hasattr(unet, "output_blocks"):
+            self._eject(unet.output_blocks)
         # remove from middle block (encapsulate in list to make compatible)
-        self._eject([unet.middle_block])
+        if hasattr(unet, "middle_block"):
+            self._eject([unet.middle_block])
         del unet
 
     def _eject(self, unet_blocks: nn.ModuleList):
