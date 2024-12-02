@@ -22,7 +22,9 @@ class MultivalDynamicNode:
             },
             "optional": {
                 "mask_optional": ("MASK",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -45,7 +47,9 @@ class MultivalScaledMaskNode:
             },
             "optional": {
                 "scaling": (ScaleType.LIST,),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -91,7 +95,9 @@ class MultivalDynamicFloatInputNode:
             },
             "optional": {
                 "mask_optional": ("MASK",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -112,6 +118,8 @@ class MultivalDynamicFloatsNode:
             },
             "optional": {
                 "mask_optional": ("MASK",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -131,8 +139,8 @@ class MultivalFloatNode:
             "required": {
                 "float_val": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.001},),
             },
-            "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -151,8 +159,8 @@ class MultivalConvertToMaskNode:
             "required": {
                 "multival": ("MULTIVAL",),
             },
-            "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     

@@ -37,7 +37,6 @@ def vae_encode_raw_dynamic_batched(vae: VAE, pixels: Tensor, max_batch=16, min_b
     b, h, w, c = pixels.shape
     actual_size = h*w
     actual_batch_size = int(max(min_batch, min(max_batch, max_batch // max((actual_size / max_size), 1.0))))
-    logger.info(f"actual_batch_size: {actual_batch_size}")
     return vae_encode_raw_batched(vae=vae, pixels=pixels, per_batch=actual_batch_size, show_pbar=show_pbar)
 
 
@@ -75,13 +74,16 @@ def vae_decode_raw_batched(vae: VAE, latents: Tensor, per_batch=16, show_pbar=Fa
 
 
 class ModelSamplingConfig:
-    def __init__(self, beta_schedule: str, linear_start: float=None, linear_end: float=None):
+    def __init__(self, beta_schedule: str, linear_start: float=None, linear_end: float=None, given_betas: Tensor=None, timesteps: int=None):
         self.sampling_settings = {"beta_schedule": beta_schedule}
         if linear_start is not None:
             self.sampling_settings["linear_start"] = linear_start
         if linear_end is not None:
             self.sampling_settings["linear_end"] = linear_end
-        self.beta_schedule = beta_schedule  # keeping this for backwards compatibility
+        if given_betas is not None:
+            self.sampling_settings["given_betas"] = given_betas
+        if timesteps is not None:
+            self.sampling_settings["timesteps"] = timesteps
 
 
 class ModelSamplingType:
@@ -112,7 +114,7 @@ def factory_model_sampling_discrete_distilled(original_timesteps=50):
 
 
 # based on code in comfy_extras/nodes_model_advanced.py
-def evolved_model_sampling(model_config: ModelSamplingConfig, model_type: ModelType, alias: str, original_timesteps: int=None):
+def evolved_model_sampling(model_config: ModelSamplingConfig, model_type: ModelType, alias: str, original_timesteps: Union[int, None]=None):
     # if LCM, need to handle manually
     if BetaSchedules.is_lcm(alias) or original_timesteps is not None:
         sampling_type = comfy_extras.nodes_model_advanced.LCM
@@ -129,7 +131,16 @@ def evolved_model_sampling(model_config: ModelSamplingConfig, model_type: ModelT
         # NOTE: if I want to support zsnr, this is where I would add that code
         return ModelSamplingAdvancedEvolved(model_config)
     # otherwise, use vanilla model_sampling function
-    return model_sampling(model_config, model_type)
+    ms = model_sampling(model_config, model_type)
+    if "given_betas" in model_config.sampling_settings:
+        beta_schedule = model_config.sampling_settings.get("beta_schedule", "linear")
+        linear_start = model_config.sampling_settings.get("linear_start", 0.00085)
+        linear_end = model_config.sampling_settings.get("linear_end", 0.012)
+        timesteps = model_config.sampling_settings.get("timesteps", 1000)
+        given_betas = model_config.sampling_settings.get("given_betas", None)
+        ms._register_schedule(given_betas=given_betas, beta_schedule=beta_schedule,
+                              timesteps=timesteps, linear_start=linear_start, linear_end=linear_end)
+    return ms
 
 
 class BetaSchedules:
@@ -194,7 +205,7 @@ class BetaSchedules:
         return ModelSamplingConfig(cls.to_name(alias), linear_start=linear_start, linear_end=linear_end)
     
     @classmethod
-    def _to_model_sampling(cls, alias: str, model_type: ModelType, config_override: ModelSamplingConfig=None, original_timesteps: int=None):
+    def _to_model_sampling(cls, alias: str, model_type: ModelType, config_override: Union[ModelSamplingConfig,None]=None, original_timesteps: Union[int,None]=None):
         if alias == cls.USE_EXISTING:
             return None
         elif config_override != None:

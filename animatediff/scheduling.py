@@ -110,6 +110,7 @@ class PromptOptions:
     append_text: str = ''
     values_replace: dict[str, list[float]] = None
     print_schedule: bool = False
+    add_dict: dict[str] = None
 
 
 def evaluate_prompt_schedule(text: str, length: int, clip: CLIP, options: PromptOptions):
@@ -234,11 +235,16 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
             if len(value) < length:
                 values_replace[key] = extend_list_to_batch_size(value, length)
 
-    pairs_lengths = len(pairs)
+    scheduled_keyframes = []
+    if clip.use_clip_schedule:
+        clip = clip.clone()
+        scheduled_keyframes = clip.patcher.forced_hooks.get_hooks_for_clip_schedule()
+
+    pairs_lengths = len(pairs) * max(1, len(scheduled_keyframes))
     pbar_total = length + pairs_lengths
     pbar = ProgressBar(pbar_total)
     # for now, use FizzNodes approach of calculating max size of tokens beforehand;
-    # this doubles total encoding time, as this will be done again.
+    # this can up to double total encoding time, as this will be done again.
     # TODO: do this dynamically to save encoding time
     max_size = 0
     for pair in pairs:
@@ -247,6 +253,38 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
         max_size = max(max_size, cond.shape[1])
         pbar.update(1)
 
+    # if do not need to schedule clip with hooks, do nothing special
+    if not clip.use_clip_schedule:
+        return _handle_prompt_interpolation(pairs, length, clip, options, values_replace, max_size, pbar)
+    # otherwise, need to account for keyframes on forced_hooks
+    full_output = []
+    for i, scheduled_opts in enumerate(scheduled_keyframes):
+        clip.patcher.forced_hooks.reset()
+        clip.patcher.unpatch_hooks()
+
+        t_range = scheduled_opts[0]
+        hooks_keyframes = scheduled_opts[1]
+        for hook, keyframe in hooks_keyframes:
+            hook.hook_keyframe._current_keyframe = keyframe
+        try:
+            # don't print_schedule on non-first iteration
+            orig_print_schedule = options.print_schedule
+            if orig_print_schedule and i != 0:
+                options.print_schedule = False
+            schedule_output = _handle_prompt_interpolation(pairs, length, clip, options, values_replace, max_size, pbar)
+        finally:
+            options.print_schedule = orig_print_schedule
+        for cond, pooled_dict in schedule_output:
+            pooled_dict: dict[str]
+            # add clip_start_percent and clip_end_percent in pooled
+            pooled_dict["clip_start_percent"] = t_range[0]
+            pooled_dict["clip_end_percent"] = t_range[1]
+        full_output.extend(schedule_output)
+    return full_output
+
+
+def _handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP, options: PromptOptions,
+                                 values_replace: dict[str, list[float]], max_size: int, pbar: ProgressBar):
     real_holders: list[CondHolder] = [None] * length
     real_cond = [None] * length
     real_pooled = [None] * length
@@ -373,9 +411,9 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
             real_cond[i] = prev_holder.cond
             real_pooled[i] = prev_holder.pooled
             real_holders[i] = prev_holder
+            pbar.update(1)
         else:
             prev_holder = real_holders[i]
-        pbar.update(1)
     
     final_cond = torch.cat(real_cond, dim=0)
     final_pooled = torch.cat(real_pooled, dim=0)
@@ -388,7 +426,12 @@ def handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP,
             else:
                 logger.info(f'{i} = ({1.-holder.interp_weight:.2f})"{holder.prompt}" -> ({holder.interp_weight:.2f})"{holder.interp_prompt}"')
     # cond is a list[list[Tensor, dict[str: Any]]] format
-    return [[final_cond, {"pooled_output": final_pooled}]]
+    final_pooled_dict = {"pooled_output": final_pooled}
+    if options.add_dict is not None:
+        final_pooled_dict.update(options.add_dict)
+    # add hooks, if needed
+    clip.add_hooks_to_dict(final_pooled_dict)
+    return [[final_cond, final_pooled_dict]]
 
 
 def pad_cond(cond: Tensor, target_length: int):

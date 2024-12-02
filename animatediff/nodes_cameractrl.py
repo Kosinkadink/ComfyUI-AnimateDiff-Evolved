@@ -16,7 +16,7 @@ from .logger import logger
 from .utils_model import get_available_motion_models, calculate_file_hash, strip_path, BIGMAX
 from .utils_motion import ADKeyframeGroup
 from .motion_lora import MotionLoraList
-from .model_injection import (MotionModelGroup, MotionModelPatcher, load_motion_module_gen2, inject_camera_encoder_into_model)
+from .model_injection import (MotionModelGroup, MotionModelPatcher, get_mm_attachment, load_motion_module_gen2, inject_camera_encoder_into_model)
 from .nodes_gen2 import ApplyAnimateDiffModelNode, ADKeyframeNode
 
 
@@ -230,8 +230,9 @@ class ApplyAnimateDiffWithCameraCtrl:
         if curr_model.model.camera_encoder is None:
             raise Exception(f"Motion model '{curr_model.model.mm_info.mm_name}' does not contain a camera_encoder; cannot be used with Apply AnimateDiff-CameraCtrl Model node.")
         camera_entries = [CameraEntry(entry) for entry in cameractrl_poses]
-        curr_model.orig_camera_entries = camera_entries
-        curr_model.cameractrl_multival = cameractrl_multival
+        attachment = get_mm_attachment(curr_model)
+        attachment.orig_camera_entries = camera_entries
+        attachment.cameractrl_multival = cameractrl_multival
         return new_m_models
 
 
@@ -273,7 +274,9 @@ class CameraCtrlADKeyframeNode:
                 "cameractrl_multival": ("MULTIVAL",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -373,7 +376,9 @@ class CameraCtrlPoseBasic:
             },
             "optional": {
                 "prev_poses": ("CAMERACTRL_POSES",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 

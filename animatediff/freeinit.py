@@ -24,7 +24,7 @@ class FreeInitFilter:
     LIST = [GAUSSIAN, BUTTERWORTH, IDEAL, BOX]
 
 
-def freq_mix_3d(x, noise, LPF):
+def freq_mix_3d(x: torch.Tensor, noise: torch.Tensor, LPF: torch.Tensor):
     """
     Noise reinitialization.
 
@@ -33,6 +33,8 @@ def freq_mix_3d(x, noise, LPF):
         noise: randomly sampled noise
         LPF: low pass filter
     """
+    noise = noise.to(dtype=x.dtype, device=x.device)
+    LPF = LPF.to(dtype=x.dtype, device=x.device)
     # FFT
     x_freq = fft.fftn(x, dim=(-4, -2, -1))
     x_freq = fft.fftshift(x_freq, dim=(-4, -2, -1))

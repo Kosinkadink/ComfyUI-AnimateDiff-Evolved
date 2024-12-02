@@ -10,7 +10,7 @@ from .logger import logger
 from .utils_model import BIGMIN, BIGMAX, get_available_motion_models
 from .utils_motion import ADKeyframeGroup, InputPIA, InputPIA_Multival, extend_list_to_batch_size, extend_to_batch_size, prepare_mask_batch
 from .motion_lora import MotionLoraList
-from .model_injection import MotionModelGroup, MotionModelPatcher, load_motion_module_gen2, inject_pia_conv_in_into_model
+from .model_injection import MotionModelGroup, MotionModelPatcher, get_mm_attachment, load_motion_module_gen2, inject_pia_conv_in_into_model
 from .motion_module_ad import AnimateDiffFormat
 from .nodes_gen2 import ApplyAnimateDiffModelNode, ADKeyframeNode
 
@@ -148,11 +148,12 @@ class ApplyAnimateDiffPIAModel:
         # confirm that model is PIA
         if curr_model.model.mm_info.mm_format != AnimateDiffFormat.PIA:
             raise Exception(f"Motion model '{curr_model.model.mm_info.mm_name}' is not a PIA model; cannot be used with Apply AnimateDiff-PIA Model node.")
-        curr_model.orig_pia_images = image
-        curr_model.pia_vae = vae
+        attachment = get_mm_attachment(curr_model)
+        attachment.orig_pia_images = image
+        attachment.pia_vae = vae
         if pia_input is None:
             pia_input = InputPIA_Multival(1.0)
-        curr_model.pia_input = pia_input
+        attachment.pia_input = pia_input
         #curr_model.pia_multival = ref_multival
         return new_m_models
 
@@ -201,7 +202,7 @@ class PIA_ADKeyframeNode:
                 "pia_input": ("PIA_INPUT",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 5}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -253,7 +254,7 @@ class InputPIA_PaperPresetsNode:
             "optional": {
                 "mult_multival": ("MULTIVAL",),
                 "print_values": ("BOOLEAN", {"default": False},),
-                "autosize": ("ADEAUTOSIZE", {"padding": 60}),
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
                 #"effect_multival": ("MULTIVAL",),
             }
         }

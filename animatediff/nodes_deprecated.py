@@ -16,10 +16,11 @@ from .ad_settings import AnimateDiffSettings, AdjustGroup, AdjustPE, AdjustWeigh
 from .context import ContextOptionsGroup, ContextOptions, ContextSchedules
 from .logger import logger
 from .utils_model import Folders, BetaSchedules, get_available_motion_models
-from .model_injection import ModelPatcherAndInjector, InjectionParams, MotionModelGroup, load_motion_module_gen1
+from .model_injection import ModelPatcherHelper, InjectionParams, MotionModelGroup, load_motion_module_gen1
+from .sampling import outer_sample_wrapper, sliding_calc_cond_batch
 
 
-class AnimateDiffLoader_Deprecated:
+class AnimateDiffLoaderDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -36,6 +37,7 @@ class AnimateDiffLoader_Deprecated:
     RETURN_TYPES = ("MODEL", "LATENT")
     CATEGORY = ""
     FUNCTION = "load_mm_and_inject_params"
+    DEPRECATED = True
 
     def load_mm_and_inject_params(
         self,
@@ -50,14 +52,17 @@ class AnimateDiffLoader_Deprecated:
         # set injection params
         params = InjectionParams(
                 unlimited_area_hack=unlimited_area_hack,
-                apply_mm_groupnorm_hack=True,
-                model_name=model_name,
                 apply_v2_properly=False,
         )
         # inject for use in sampling code
-        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
-        model.motion_models = MotionModelGroup(motion_model)
-        model.motion_injection_params = params
+        model = model.clone()
+        helper = ModelPatcherHelper(model)
+        helper.set_all_properties(
+            outer_sampler_wrapper=outer_sample_wrapper,
+            calc_cond_batch_wrapper=sliding_calc_cond_batch,
+            params=params,
+            motion_models=MotionModelGroup(motion_model),
+        )
 
         # save model sampling from BetaSchedule as object patch
         # if autoselect, get suggested beta_schedule from motion model
@@ -71,7 +76,7 @@ class AnimateDiffLoader_Deprecated:
         return (model, latents)
 
 
-class AnimateDiffLoaderAdvanced_Deprecated:
+class AnimateDiffLoaderAdvancedDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -93,6 +98,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
     RETURN_TYPES = ("MODEL", "LATENT")
     CATEGORY = ""
     FUNCTION = "load_mm_and_inject_params"
+    DEPRECATED = True
 
     def load_mm_and_inject_params(self,
             model: ModelPatcher,
@@ -108,8 +114,6 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         # set injection params
         params = InjectionParams(
                 unlimited_area_hack=unlimited_area_hack,
-                apply_mm_groupnorm_hack=True,
-                model_name=model_name,
                 apply_v2_properly=False,
         )
         context_group = ContextOptionsGroup()
@@ -125,9 +129,14 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         # set context settings
         params.set_context(context_options=context_group)
         # inject for use in sampling code
-        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
-        model.motion_models = MotionModelGroup(motion_model)
-        model.motion_injection_params = params
+        model = model.clone()
+        helper = ModelPatcherHelper(model)
+        helper.set_all_properties(
+            outer_sampler_wrapper=outer_sample_wrapper,
+            calc_cond_batch_wrapper=sliding_calc_cond_batch,
+            params=params,
+            motion_models=MotionModelGroup(motion_model),
+        )
 
         # save model sampling from BetaSchedule as object patch
         # if autoselect, get suggested beta_schedule from motion model
@@ -141,7 +150,7 @@ class AnimateDiffLoaderAdvanced_Deprecated:
         return (model, latents)
     
 
-class AnimateDiffCombine_Deprecated:
+class AnimateDiffCombineDEPR:
     ffmpeg_warning_already_shown = False
     @classmethod
     def INPUT_TYPES(s):
@@ -179,6 +188,7 @@ class AnimateDiffCombine_Deprecated:
     OUTPUT_NODE = True
     CATEGORY = ""
     FUNCTION = "generate_gif"
+    DEPRECATED = True
 
     def generate_gif(
         self,
@@ -282,7 +292,7 @@ class AnimateDiffCombine_Deprecated:
 
 
 
-class AnimateDiffModelSettings:
+class AnimateDiffModelSettingsDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -299,6 +309,7 @@ class AnimateDiffModelSettings:
     RETURN_TYPES = ("AD_SETTINGS",)
     CATEGORY = ""  #"Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings"
     FUNCTION = "get_motion_model_settings"
+    DEPRECATED = True
 
     def get_motion_model_settings(self, mask_motion_scale: torch.Tensor=None, min_motion_scale: float=1.0, max_motion_scale: float=1.0):
         motion_model_settings = AnimateDiffSettings(
@@ -310,7 +321,7 @@ class AnimateDiffModelSettings:
         return (motion_model_settings,)
 
 
-class AnimateDiffModelSettingsSimple:
+class AnimateDiffModelSettingsSimpleDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -328,6 +339,7 @@ class AnimateDiffModelSettingsSimple:
     RETURN_TYPES = ("AD_SETTINGS",)
     CATEGORY = ""  #"Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
+    DEPRECATED = True
 
     def get_motion_model_settings(self, motion_pe_stretch: int,
                                   mask_motion_scale: torch.Tensor=None, min_motion_scale: float=1.0, max_motion_scale: float=1.0):
@@ -342,7 +354,7 @@ class AnimateDiffModelSettingsSimple:
         return (motion_model_settings,)
 
 
-class AnimateDiffModelSettingsAdvanced:
+class AnimateDiffModelSettingsAdvancedDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -367,6 +379,7 @@ class AnimateDiffModelSettingsAdvanced:
     RETURN_TYPES = ("AD_SETTINGS",)
     CATEGORY = ""  #"Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
+    DEPRECATED = True
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float, other_strength: float,
                                   motion_pe_stretch: int,
@@ -392,7 +405,7 @@ class AnimateDiffModelSettingsAdvanced:
         return (motion_model_settings,)
 
 
-class AnimateDiffModelSettingsAdvancedAttnStrengths:
+class AnimateDiffModelSettingsAdvancedAttnStrengthsDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -422,6 +435,7 @@ class AnimateDiffModelSettingsAdvancedAttnStrengths:
     RETURN_TYPES = ("AD_SETTINGS",)
     CATEGORY = ""  #"Animate Diff 🎭🅐🅓/① Gen1 nodes ①/motion settings/experimental"
     FUNCTION = "get_motion_model_settings"
+    DEPRECATED = True
 
     def get_motion_model_settings(self, pe_strength: float, attn_strength: float,
                                   attn_q_strength: float,

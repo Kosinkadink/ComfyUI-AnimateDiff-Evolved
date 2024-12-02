@@ -2,6 +2,8 @@ from collections.abc import Iterable
 from typing import Union, Callable
 import torch
 from torch import Tensor
+import torch.fft as fft
+from einops import rearrange
 
 import comfy.sample
 import comfy.samplers
@@ -56,7 +58,8 @@ class NoiseNormalize:
 class SampleSettings:
     def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None,
                  iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False,
-                 custom_cfg: 'CustomCFGKeyframeGroup'=None, sigma_schedule: SigmaSchedule=None, image_injection: 'NoisedImageToInjectGroup'=None):
+                 custom_cfg: 'CustomCFGKeyframeGroup'=None, sigma_schedule: SigmaSchedule=None, image_injection: 'NoisedImageToInjectGroup'=None,
+                 noise_calibration: 'NoiseCalibration'=None):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
@@ -69,6 +72,7 @@ class SampleSettings:
         self.custom_cfg = custom_cfg.clone() if custom_cfg else custom_cfg
         self.sigma_schedule = sigma_schedule
         self.image_injection = image_injection.clone() if image_injection else NoisedImageToInjectGroup()
+        self.noise_calibration = noise_calibration
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
@@ -109,7 +113,7 @@ class SampleSettings:
         return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
                            noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
                            negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg,
-                           sigma_schedule=self.sigma_schedule, image_injection=self.image_injection)
+                           sigma_schedule=self.sigma_schedule, image_injection=self.image_injection, noise_calibration=self.noise_calibration)
 
 
 class NoiseLayer:
@@ -472,7 +476,7 @@ class FreeInitOptions(IterationOptions):
             alpha_cumprod = 1 / ((sigma * sigma) + 1)
             sqrt_alpha_prod = alpha_cumprod ** 0.5
             sqrt_one_minus_alpha_prod = (1 - alpha_cumprod) ** 0.5
-            noised_latents = latents * sqrt_alpha_prod + noise * sqrt_one_minus_alpha_prod
+            noised_latents = latents * sqrt_alpha_prod + noise.to(dtype=latents.dtype, device=latents.device) * sqrt_one_minus_alpha_prod
             # 2. create random noise z_rand for high frequency
             temp_sample_settings = sample_settings.clone()
             temp_sample_settings.batch_offset += self.iter_batch_offset * curr_i
@@ -480,7 +484,7 @@ class FreeInitOptions(IterationOptions):
             z_rand = temp_sample_settings.prepare_noise(seed=seed, latents=latents, noise=None,
                                                     extra_args=noise_extra_args, force_create_noise=True)
             # 3. noise reinitialization - combines low freq. noise from noised_latents and high freq. noise from z_rand
-            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand.to(dtype=latents.dtype, device=latents.device), LPF=self.freq_filter)
+            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand, LPF=self.freq_filter)
             return cached_latents, noised_latents
         elif self.init_type == self.DINKINIT_V1:
             # NOTE: This was my first attempt at implementing FreeInit; it sorta works due to my alpha_cumprod shenanigans,
@@ -488,7 +492,7 @@ class FreeInitOptions(IterationOptions):
             # 1. apply initial noise with appropriate step sigma
             sigma = self.get_sigma(model, self.step-1000).to(latents.device)
             alpha_cumprod = 1 / ((sigma * sigma) + 1) #1 / ((sigma * sigma)) # 1 / ((sigma * sigma) + 1)
-            noised_latents = (latents + (cached_noise * sigma)) * alpha_cumprod
+            noised_latents = (latents + (cached_noise.to(dtype=latents.dtype, device=latents.device) * sigma)) * alpha_cumprod
             # 2. create random noise z_rand for high frequency
             temp_sample_settings = sample_settings.clone()
             temp_sample_settings.batch_offset += self.iter_batch_offset * curr_i
@@ -497,10 +501,84 @@ class FreeInitOptions(IterationOptions):
                                                     extra_args=noise_extra_args, force_create_noise=True)
             ####z_rand = torch.randn_like(latents, dtype=latents.dtype, device=latents.device)
             # 3. noise reinitialization - combines low freq. noise from noised_latents and high freq. noise from z_rand
-            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand.to(dtype=latents.dtype, device=latents.device), LPF=self.freq_filter)
+            noised_latents = freeinit.freq_mix_3d(x=noised_latents, noise=z_rand, LPF=self.freq_filter)
             return cached_latents, noised_latents
         else:
             raise ValueError(f"FreeInit init_type '{self.init_type}' is not recognized.")
+
+
+class NoiseCalibration:
+    def __init__(self, scale: float=0.5, calib_iterations: int=1):
+        self.scale = scale
+        self.calib_iterations = calib_iterations
+    
+    def perform_calibration(self, sample_func: Callable, model: ModelPatcher, latents: Tensor, noise: Tensor, is_custom: bool, args: list, kwargs: dict):
+        if is_custom:
+            return self._perform_calibration_custom(sample_func=sample_func, model=model, latents=latents, noise=noise, _args=args, _kwargs=kwargs)
+        return self._perform_calibration_not_custom(sample_func=sample_func, model=model, latents=latents, noise=noise, args=args, kwargs=kwargs)
+    
+    def _perform_calibration_custom(self, sample_func: Callable, model: ModelPatcher, latents: Tensor, noise: Tensor, _args: list, _kwargs: dict):
+        args = _args.copy()
+        kwargs = _kwargs.copy()
+        # need to get sigmas to be used in sampling and for noise calc
+        sigmas = args[2]
+        # use first 2 sigmas as real sigmas (2 sigmas = 1 step)
+        sigmas = sigmas[:2]
+        args[2] = sigmas
+        # divide by scale factor
+        sigma = sigmas[0] / (model.model.latent_format.scale_factor)
+        alpha_cumprod = 1 / ((sigma * sigma) + 1)
+        sqrt_alpha_prod = alpha_cumprod ** 0.5
+        sqrt_one_minus_alpha_prod = (1 - alpha_cumprod) ** 0.5
+        zero_noise = torch.zeros_like(noise)
+        new_latents = latents# / (model.model.latent_format.scale_factor)
+        #new_latents = latents * (model.model.latent_format.scale_factor)
+        for _ in range(self.calib_iterations):
+            # TODO: do i need to use DDIM noising, or will ComfyUI's work?
+            x = new_latents * sqrt_alpha_prod + noise * sqrt_one_minus_alpha_prod
+            #x = latents
+            #x = latents + noise * sigma #torch.sqrt(1.0 + sigma ** 2.0)
+            # replace latents in args with x
+            args[-1] = x
+            e_t_theta = sample_func(model, zero_noise, *args, **kwargs) * (model.model.latent_format.scale_factor)
+            x_0_t = (x - sqrt_one_minus_alpha_prod * e_t_theta) / sqrt_alpha_prod
+            freq_delta = (self.get_low_or_high_fft(x_0_t, self.scale, is_low=False) - self.get_low_or_high_fft(new_latents, self.scale, is_low=False))
+            noise = e_t_theta + sqrt_alpha_prod / sqrt_one_minus_alpha_prod * freq_delta
+        #return latents, noise
+        #x = latents * sqrt_alpha_prod + noise * sqrt_one_minus_alpha_prod
+        #return zero_noise, x #noise * (model.model.latent_format.scale_factor)
+        return latents, noise# * (model.model.latent_format.scale_factor)
+
+    def _perform_calibration_not_custom(self, sample_func: Callable, model: ModelPatcher, latents: Tensor, noise: Tensor, args: list, kwargs: dict):
+        return latents, noise
+    
+    @staticmethod
+    # From NoiseCalibration code at https://github.com/yangqy1110/NC-SDEdit/
+    def get_low_or_high_fft(x: Tensor, scale: float, is_low=True):
+        # reshape to match intended dims; starts in b c h w, turn into c b h w
+        x = rearrange(x, "b c h w -> c b h w")
+        # FFT
+        x_freq = fft.fftn(x, dim=(-2, -1))
+        x_freq = fft.fftshift(x_freq, dim=(-2, -1))
+        C, T, H, W = x_freq.shape
+        
+        # extract
+        if is_low:
+            mask = torch.zeros((C, T, H, W), device=x.device)
+            crow, ccol = H // 2, W // 2
+            mask[..., crow - int(crow * scale):crow + int(crow * scale), ccol - int(ccol * scale):ccol + int(ccol * scale)] = 1
+        else:
+            mask = torch.ones((C, T, H, W), device=x.device)
+            crow, ccol = H // 2, W //2
+            mask[..., crow - int(crow * scale):crow + int(crow * scale), ccol - int(ccol * scale):ccol + int(ccol * scale)] = 0
+        x_freq = x_freq * mask
+        
+        # IFFT
+        x_freq = fft.ifftshift(x_freq, dim=(-2, -1))
+        x_filtered = fft.ifftn(x_freq, dim=(-2, -1)).real
+        # rearrange back to ComfyUI expected dims
+        x_filtered = rearrange(x_filtered, "c b h w -> b c h w")
+        return x_filtered
 
 
 class CFGExtras:

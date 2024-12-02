@@ -44,7 +44,10 @@ class RawSigmaScheduleNode:
                 #"cosine_s": ("FLOAT", {"default": 8e-3, "min": 0.0, "max": 1.0, "step": 0.000001}),
                 "sampling": (ModelSamplingType._FULL_LIST,),
                 "lcm_original_timesteps": ("INT", {"default": 50, "min": 1, "max": 1000}),
-                "lcm_zsnr": ("BOOLEAN", {"default": False}),
+                "zsnr": ("BOOLEAN", {"default": False}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -53,14 +56,20 @@ class RawSigmaScheduleNode:
     FUNCTION = "get_sigma_schedule"
 
     def get_sigma_schedule(self, raw_beta_schedule: str, linear_start: float, linear_end: float,# cosine_s: float,
-                           sampling: str, lcm_original_timesteps: int, lcm_zsnr: bool):
-        new_config = ModelSamplingConfig(beta_schedule=raw_beta_schedule, linear_start=linear_start, linear_end=linear_end)
+                           sampling: str, lcm_original_timesteps: int, zsnr: bool, lcm_zsnr: bool=None):
+        if lcm_zsnr is not None:
+            zsnr = lcm_zsnr
+        # from pathlib import Path
+        # log_name = 'enforce_zero_terminal_snr_betas'
+        # betas_file = Path(__file__).parent.parent / rf"{log_name}.pt"
+        # given_betas = torch.load(betas_file, weights_only=True)
+        # given_betas[-1] = 0.0
+        new_config = ModelSamplingConfig(beta_schedule=raw_beta_schedule, linear_start=linear_start, linear_end=linear_end)#, given_betas=given_betas)
         if sampling != ModelSamplingType.LCM:
             lcm_original_timesteps=None
-            lcm_zsnr=False
         model_type = ModelSamplingType.from_alias(sampling)    
         new_model_sampling = BetaSchedules._to_model_sampling(alias=BetaSchedules.AUTOSELECT, model_type=model_type, config_override=new_config, original_timesteps=lcm_original_timesteps)
-        if lcm_zsnr:
+        if zsnr:
             SigmaSchedule.apply_zsnr(new_model_sampling=new_model_sampling)
         return (SigmaSchedule(model_sampling=new_model_sampling, model_type=model_type),)
 
@@ -74,8 +83,8 @@ class WeightedAverageSigmaScheduleNode:
                 "schedule_B": ("SIGMA_SCHEDULE",),
                 "weight_A": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
             },
-            "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 80}),
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -102,8 +111,8 @@ class InterpolatedWeightedAverageSigmaScheduleNode:
                 "weight_A_End": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "interpolation": (InterpolationMethod._LIST,),
             },
-            "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -133,8 +142,8 @@ class SplitAndCombineSigmaScheduleNode:
                 "schedule_End": ("SIGMA_SCHEDULE",),
                 "idx_split_percent": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001})
             },
-            "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 40}),
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -162,8 +171,8 @@ class SigmaScheduleToSigmasNode:
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                 "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
-            "optional": {
-                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     

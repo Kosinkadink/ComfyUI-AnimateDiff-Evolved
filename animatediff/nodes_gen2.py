@@ -10,9 +10,11 @@ from .utils_model import BIGMAX, BetaSchedules, get_available_motion_models
 from .utils_motion import ADKeyframeGroup, ADKeyframe, InputPIA
 from .motion_lora import MotionLoraList
 from .motion_module_ad import AllPerBlocks
-from .model_injection import (InjectionParams, ModelPatcherAndInjector, MotionModelGroup, MotionModelPatcher, create_fresh_motion_module,
+from .model_injection import (ModelPatcherHelper,
+                              InjectionParams, MotionModelGroup, MotionModelPatcher, get_mm_attachment, create_fresh_motion_module,
                               load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2, validate_per_block_compatibility)
 from .sample_settings import SampleSettings
+from .sampling import outer_sample_wrapper, sliding_calc_cond_batch
 
 
 class UseEvolvedSamplingNode:
@@ -27,7 +29,6 @@ class UseEvolvedSamplingNode:
                 "m_models": ("M_MODELS",),
                 "context_options": ("CONTEXT_OPTIONS",),
                 "sample_settings": ("SAMPLE_SETTINGS",),
-                #"beta_schedule_override": ("BETA_SCHEDULE",),
             }
         }
     
@@ -36,42 +37,45 @@ class UseEvolvedSamplingNode:
     FUNCTION = "use_evolved_sampling"
 
     def use_evolved_sampling(self, model: ModelPatcher, beta_schedule: str, m_models: MotionModelGroup=None, context_options: ContextOptionsGroup=None,
-                             sample_settings: SampleSettings=None, beta_schedule_override=None):
+                             sample_settings: SampleSettings=None):
+        model = model.clone()
+        helper = ModelPatcherHelper(model)
+        params = InjectionParams()
         if m_models is not None:
             m_models = m_models.clone()
             # for each motion model, confirm that it is compatible with SD model
             for motion_model in m_models.models:
                 validate_model_compatibility_gen2(model=model, motion_model=motion_model)
-            # create injection params
-            model_name_list = [motion_model.model.mm_info.mm_name for motion_model in m_models.models]
-            model_names = ",".join(model_name_list)
             # TODO: check if any apply_v2_properly is set to False
-            params = InjectionParams(unlimited_area_hack=False, model_name=model_names)
-        else:
-            params = InjectionParams()
         # apply context options
         if context_options:
             params.set_context(context_options)
-        # need to use a ModelPatcher that supports injection of motion modules into unet
-        model = ModelPatcherAndInjector.create_from(model, hooks_only=True)
-        model.motion_models = m_models
-        model.sample_settings = sample_settings if sample_settings is not None else SampleSettings()
-        model.motion_injection_params = params
+        
+        # attach all properties to model to enable AnimateDiff functionality
+        helper.set_all_properties(
+            outer_sampler_wrapper=outer_sample_wrapper,
+            calc_cond_batch_wrapper=sliding_calc_cond_batch,
+            params=params,
+            sample_settings=sample_settings,
+            motion_models=m_models,
+        )
 
-        if model.sample_settings.custom_cfg is not None:
+        sample_settings = helper.get_sample_settings()
+        if sample_settings.custom_cfg is not None:
             logger.info("[Sample Settings] custom_cfg is set; will override any KSampler cfg values or patches.")
 
-        if model.sample_settings.sigma_schedule is not None:
+        if sample_settings.sigma_schedule is not None:
             logger.info("[Sample Settings] sigma_schedule is set; will override beta_schedule.")
-            model.add_object_patch("model_sampling", model.sample_settings.sigma_schedule.clone().model_sampling)
+            model.add_object_patch("model_sampling", sample_settings.sigma_schedule.clone().model_sampling)
         else:
             # save model_sampling from BetaSchedule as object patch
             # if autoselect, get suggested beta_schedule from motion model
             if beta_schedule == BetaSchedules.AUTOSELECT:
-                if model.motion_models is None or model.motion_models.is_empty():
-                    beta_schedule = BetaSchedules.USE_EXISTING
+                if helper.get_motion_models():
+                    beta_schedule = helper.get_motion_models()[0].model.get_best_beta_schedule(log=True)
                 else:
-                    beta_schedule = model.motion_models[0].model.get_best_beta_schedule(log=True)
+                    beta_schedule = BetaSchedules.USE_EXISTING
+                    
             new_model_sampling = BetaSchedules.to_model_sampling(beta_schedule, model)
             if new_model_sampling is not None:
                 model.add_object_patch("model_sampling", new_model_sampling)
@@ -96,6 +100,8 @@ class ApplyAnimateDiffModelNode:
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "prev_m_models": ("M_MODELS",),
                 "per_block": ("PER_BLOCK",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -122,13 +128,14 @@ class ApplyAnimateDiffModelNode:
         if motion_lora is not None:
             for lora in motion_lora.loras:
                 load_motion_lora_as_patches(motion_model, lora)
-        motion_model.scale_multival = scale_multival
-        motion_model.effect_multival = effect_multival
+        attachment = get_mm_attachment(motion_model)
+        attachment.scale_multival = scale_multival
+        attachment.effect_multival = effect_multival
         if per_block is not None:
             validate_per_block_compatibility(motion_model=motion_model, all_per_blocks=per_block)
-            motion_model.per_block_list = per_block.per_block_list
-        motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
-        motion_model.timestep_percent_range = (start_percent, end_percent)
+            attachment.per_block_list = per_block.per_block_list
+        attachment.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
+        attachment.timestep_percent_range = (start_percent, end_percent)
         # add to beginning, so that after injection, it will be the earliest of prev_m_models to be run
         prev_m_models.add_to_start(mm=motion_model)
         return (prev_m_models,)
@@ -147,6 +154,8 @@ class ApplyAnimateDiffModelBasicNode:
                 "effect_multival": ("MULTIVAL",),
                 "ad_keyframes": ("AD_KEYFRAMES",),
                 "per_block": ("PER_BLOCK",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -174,6 +183,9 @@ class LoadAnimateDiffModelNode:
             },
             "optional": {
                 "ad_settings": ("AD_SETTINGS",),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 50}),
             }
         }
 
@@ -201,6 +213,8 @@ class ADKeyframeNode:
                 "effect_multival": ("MULTIVAL",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }

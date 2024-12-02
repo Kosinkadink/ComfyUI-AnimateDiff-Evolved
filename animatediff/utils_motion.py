@@ -57,7 +57,7 @@ class CrossAttentionMM(nn.Module):
     def reset_attention_type(self):
         self.actual_attention = optimized_attention_mm
 
-    def forward(self, x, context=None, value=None, mask=None, scale_mask=None):
+    def forward(self, x, context=None, value=None, mask=None, scale_mask=None, mm_kwargs=None, transformer_options=None):
         q = self.to_q(x)
         context = default(context, x)
         k: Tensor = self.to_k(context)

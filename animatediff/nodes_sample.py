@@ -7,7 +7,7 @@ from comfy.sd import VAE
 from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
                               NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
-                              SeedNoiseGeneration, SampleSettings,
+                              SeedNoiseGeneration, SampleSettings, NoiseCalibration,
                               CustomCFGKeyframeGroup, CustomCFGKeyframe, CFGExtrasGroup, CFGExtras,
                               NoisedImageToInjectGroup, NoisedImageToInject, NoisedImageInjectOptions)
 from .utils_model import BIGMIN, BIGMAX, MAX_RESOLUTION, SigmaSchedule, InterpolationMethod
@@ -33,7 +33,10 @@ class SampleSettingsNode:
                 "custom_cfg": ("CUSTOM_CFG",),
                 "sigma_schedule": ("SIGMA_SCHEDULE",),
                 "image_inject": ("IMAGE_INJECT",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+                #"noise_calib": ("NOISE_CALIBRATION",), # TODO: bring back once NoiseCalibration is working
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -44,10 +47,11 @@ class SampleSettingsNode:
 
     def create_settings(self, batch_offset: int, noise_type: str, seed_gen: str, seed_offset: int, noise_layers: NoiseLayerGroup=None,
                         iteration_opts: IterationOptions=None, seed_override: int=None, adapt_denoise_steps=False,
-                        custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None, image_inject: NoisedImageToInjectGroup=None):
+                        custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None, image_inject: NoisedImageToInjectGroup=None,
+                        noise_calib: NoiseCalibration=None):
         sampling_settings = SampleSettings(batch_offset=batch_offset, noise_type=noise_type, seed_gen=seed_gen, seed_offset=seed_offset, noise_layers=noise_layers,
                                            iteration_opts=iteration_opts, seed_override=seed_override, adapt_denoise_steps=adapt_denoise_steps,
-                                           custom_cfg=custom_cfg, sigma_schedule=sigma_schedule, image_injection=image_inject)
+                                           custom_cfg=custom_cfg, sigma_schedule=sigma_schedule, image_injection=image_inject, noise_calibration=noise_calib)
         return (sampling_settings,)
 
 
@@ -65,7 +69,9 @@ class NoiseLayerReplaceNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -101,7 +107,9 @@ class NoiseLayerAddNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -140,7 +148,9 @@ class NoiseLayerAddWeightedNode:
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
                 "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -202,7 +212,9 @@ class FreeInitOptionsNode:
             "optional": {
                 "iter_batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
                 "iter_seed_offset": ("INT", {"default": 1, "min": BIGMIN, "max": BIGMAX}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 55}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -220,6 +232,29 @@ class FreeInitOptionsNode:
         return (iter_opts,)
 
 
+class NoiseCalibrationNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "calib_iterations": ("INT", {"default": 1, "min": 1, "step": 1}),
+                "thresh_freq": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
+        }
+    
+    RETURN_TYPES = ("NOISE_CALIBRATION",)
+    RETURN_NAMES = ("NOISE_CALIB",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/sample settings"
+    FUNCTION = "create_noisecalibration"
+
+    def create_noisecalibration(self, calib_iterations: int, thresh_freq: float):
+        noise_calib = NoiseCalibration(scale=thresh_freq, calib_iterations=calib_iterations)
+        return (noise_calib,)
+
+
 class CustomCFGNode:
     @classmethod
     def INPUT_TYPES(s):
@@ -229,7 +264,9 @@ class CustomCFGNode:
             },
             "optional": {
                 "cfg_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 20}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -253,7 +290,9 @@ class CustomCFGSimpleNode:
             },
             "optional": {
                 "cfg_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -277,7 +316,9 @@ class CustomCFGKeyframeNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 80}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -307,6 +348,8 @@ class CustomCFGKeyframeSimpleNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
@@ -337,7 +380,9 @@ class CustomCFGKeyframeInterpolationNode:
             "optional": {
                 "prev_custom_cfg": ("CUSTOM_CFG",),
                 "cfg_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 70}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
@@ -424,7 +469,9 @@ class CFGExtrasPAGNode:
             },
             "optional": {
                 "prev_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 45}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
 
@@ -456,6 +503,8 @@ class CFGExtrasPAGSimpleNode:
             },
             "optional": {
                 "prev_extras": ("CFG_EXTRAS",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -509,7 +558,9 @@ class CFGExtrasRescaleCFGSimpleNode:
             },
             "optional": {
                 "prev_extras": ("CFG_EXTRAS",),
-                "autosize": ("ADEAUTOSIZE", {"padding": 45}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 10}),
             }
         }
 
@@ -539,6 +590,8 @@ class NoisedImageInjectionNode:
                 "img_inject_opts": ("IMAGE_INJECT_OPTIONS", ),
                 "strength_multival": ("MULTIVAL", ),
                 "prev_image_inject": ("IMAGE_INJECT", ),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -569,7 +622,9 @@ class NoisedImageInjectOptionsNode:
             "optional": {
                 "composite_x": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
                 "composite_y": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 1}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 30}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     

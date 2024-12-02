@@ -604,9 +604,14 @@ def draw_view(window: list[int], gd: GridDisplay):
     draw_subidxs(window=window, gd=gd, y_grid_offset=2, color=gd.vs.view_color)
 
 
-def generate_context_visualization(context_opts: ContextOptionsGroup, model: ModelPatcher, sampler_name: str=None, scheduler: str=None,
+def generate_context_visualization(model: ModelPatcher, context_opts: ContextOptionsGroup=None, sampler_name: str=None, scheduler: str=None,
                                    width=1440, height=200, video_length=32,
                                    steps=None, start_step=None, end_step=None, sigmas=None, force_full_denoise=False, denoise=None):
+    if context_opts is None:
+        context_opts = ContextOptionsGroup.default()
+        params = model.get_attachment("ADE_params")
+        if params is not None:
+            context_opts = params.context_options
     context_opts = context_opts.clone()
     vs = VisualizeSettings(width, video_length)
     all_imgs = []
@@ -642,7 +647,9 @@ def generate_context_visualization(context_opts: ContextOptionsGroup, model: Mod
 
         # check if context should even be active in this case
         context_active = True
-        if video_length < context_opts.context_length:
+        if context_opts.context_length is None:
+            context_active = False
+        elif video_length < context_opts.context_length:
             context_active = False
         elif video_length == context_opts.context_length and not context_opts.use_on_equal_length:
             context_active = False

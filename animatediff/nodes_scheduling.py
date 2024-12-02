@@ -149,8 +149,10 @@ class ValueSchedulingLatentsNode:
             },
             "optional": {
                 "print_schedule": ("BOOLEAN", {"default": False}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
         }
     
     RETURN_TYPES = ("FLOAT", "FLOATS", "INT", "INTS")
@@ -158,7 +160,7 @@ class ValueSchedulingLatentsNode:
     FUNCTION = "create_schedule"
 
     Desc = [
-        short_desc('Create a list of values, its length matching passed-in latent count.'),
+        short_desc('Create a list of values with automatic interpolation, its length matching passed-in latent count.'),
         {'Format': desc_format_values},
         {coll('Inputs'): DocHelper.combine(desc_values, desc_latent, desc_print_schedule)},
     ]
@@ -186,8 +188,10 @@ class ValueSchedulingNode:
             "optional": {
                 "print_schedule": ("BOOLEAN", {"default": False}),
                 "max_length": ("INT", {"default": 0, "min": 0, "max": BIGMAX, "step": 1}),
-                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
         }
 
     RETURN_TYPES = ("FLOAT", "FLOATS", "INT", "INTS")
@@ -195,7 +199,7 @@ class ValueSchedulingNode:
     FUNCTION = "create_schedule"
 
     Desc = [
-        short_desc('Create a list of values, its length matching passed-in latent count.'),
+        short_desc('Create a list of values with automatic interpolation.'),
         {'Format': desc_format_values},
         {coll('Inputs'): DocHelper.combine(desc_values, desc_max_length, desc_print_schedule)},
     ]
@@ -223,6 +227,8 @@ class AddValuesReplaceNode:
             },
             "optional": {
                 "prev_replace": ("VALUES_REPLACE",),
+            },
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
@@ -259,7 +265,7 @@ class FloatToFloatsNode:
             "required": {
                 "FLOAT": ("FLOAT", {"default": 39, "forceInput": True}),
             },
-            "optional": {
+            "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }

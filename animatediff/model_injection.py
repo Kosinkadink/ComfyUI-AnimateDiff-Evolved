@@ -1,5 +1,6 @@
 import copy
 from typing import Union, Callable
+from collections import namedtuple
 
 from einops import rearrange
 from torch import Tensor
@@ -13,14 +14,15 @@ import comfy.lora
 import comfy.model_management
 import comfy.utils
 from comfy.model_patcher import ModelPatcher
+from comfy.patcher_extension import CallbacksMP, WrappersMP, PatcherInjection
 from comfy.model_base import BaseModel
 from comfy.sd import CLIP, VAE
 
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, EncoderOnlyAnimateDiffModel, VersatileAttention, PerBlock, AllPerBlocks,
-                               has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
+from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, AnimateDiffInfo, EncoderOnlyAnimateDiffModel, VersatileAttention, PerBlock, AllPerBlocks,
+                               VanillaTemporalModule, has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, InputPIA,
                            get_combined_multival, get_combined_input, get_combined_input_effect_multival,
@@ -29,738 +31,217 @@ from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched
 from .sample_settings import SampleSettings, SeedNoiseGeneration
+from .dinklink import DinkLinkConst, get_dinklink, get_acn_outer_sample_wrapper
 
 
-# some motion_model casts here might fail if model becomes metatensor or is not castable;
-# should not really matter if it fails, so ignore raised Exceptions
-class ModelPatcherAndInjector(ModelPatcher):
-    def __init__(self, m: ModelPatcher):
-        # replicate ModelPatcher.clone() to initialize ModelPatcherAndInjector
-        super().__init__(m.model, m.load_device, m.offload_device, m.size, weight_inplace_update=m.weight_inplace_update)
-        self.patches = {}
-        for k in m.patches:
-            self.patches[k] = m.patches[k][:]
-        if hasattr(m, "patches_uuid"):
-            self.patches_uuid = m.patches_uuid
-
-        self.object_patches = m.object_patches.copy()
-        self.model_options = copy.deepcopy(m.model_options)
-        if hasattr(m, "model_keys"):
-            self.model_keys = m.model_keys
-        if hasattr(m, "backup"):
-            self.backup = m.backup
-        if hasattr(m, "object_patches_backup"):
-            self.object_patches_backup = m.object_patches_backup
-
-        # lora hook stuff
-        self.hooked_patches: dict[HookRef] = {} # binds LoraHook to specific keys
-        self.hooked_backup: dict[str, tuple[Tensor, torch.device]] = {}
-        self.cached_hooked_patches: dict[LoraHookGroup, dict[str, Tensor]] = {} # binds LoraHookGroup to pre-calculated weights (speed optimization)
-        self.current_lora_hooks = None
-        self.lora_hook_mode = LoraHookMode.MAX_SPEED
-        self.model_params_lowvram = False 
-        self.model_params_lowvram_keys = {} # keeps track of keys with applied 'weight_function' or 'bias_function'
-        # injection stuff
-        self.currently_injected = False
-        self.skip_injection = False
-        self.motion_injection_params: InjectionParams = InjectionParams()
-        self.sample_settings: SampleSettings = SampleSettings()
-        self.motion_models: MotionModelGroup = None
-        # backwards-compatible calculate_weight
-        if hasattr(comfy.lora, "calculate_weight"):
-            self.do_calculate_weight = comfy.lora.calculate_weight
-        else:
-            self.do_calculate_weight = self.calculate_weight
-
-    
-    def clone(self, hooks_only=False):
-        cloned = ModelPatcherAndInjector(self)
-        # copy lora hooks
-        for hook_ref in self.hooked_patches:
-            cloned.hooked_patches[hook_ref] = {}
-            for k in self.hooked_patches[hook_ref]:
-                cloned.hooked_patches[hook_ref][k] = self.hooked_patches[hook_ref][k][:]
-        # copy pre-calc weights bound to LoraHookGroups
-        for group in self.cached_hooked_patches:
-            cloned.cached_hooked_patches[group] = {}
-            for k in self.cached_hooked_patches[group]:
-                cloned.cached_hooked_patches[group][k] = self.cached_hooked_patches[group][k]
-        cloned.hooked_backup = self.hooked_backup
-        cloned.current_lora_hooks = self.current_lora_hooks
-        cloned.currently_injected = self.currently_injected
-        cloned.lora_hook_mode = self.lora_hook_mode
-        if not hooks_only:
-            cloned.motion_models = self.motion_models.clone() if self.motion_models else self.motion_models
-            cloned.sample_settings = self.sample_settings
-            cloned.motion_injection_params = self.motion_injection_params.clone() if self.motion_injection_params else self.motion_injection_params
-        return cloned
-    
-    @classmethod
-    def create_from(cls, model: Union[ModelPatcher, 'ModelPatcherAndInjector'], hooks_only=False) -> 'ModelPatcherAndInjector':
-        if isinstance(model, ModelPatcherAndInjector):
-            return model.clone(hooks_only=hooks_only)
-        else:
-            return ModelPatcherAndInjector(model)
-
-    def clone_has_same_weights(self, clone: 'ModelPatcherCLIPHooks'):
-        returned = super().clone_has_same_weights(clone)
-        if not returned:
-            return returned
-        # currently, hook patches require that model gets loaded when sampled, so always say is not a clone if hooks present
-        if len(self.hooked_patches) > 0:
-            return False
-        if type(self) != type(clone):
-            return False
-        if self.current_lora_hooks != clone.current_lora_hooks:
-            return False
-        if self.hooked_patches.keys() != clone.hooked_patches.keys():
-            return False
-        return returned
-
-    def set_lora_hook_mode(self, lora_hook_mode: str):
-        self.lora_hook_mode = lora_hook_mode
-    
-    def prepare_hooked_patches_current_keyframe(self, t: Tensor, hook_groups: list[LoraHookGroup]):
-        curr_t = t[0]
-        for hook_group in hook_groups:
-            for hook in hook_group.hooks:
-                changed = hook.lora_keyframe.prepare_current_keyframe(curr_t=curr_t)
-                # if keyframe changed, remove any cached LoraHookGroups that contain hook with the same hook_ref;
-                # this will cause the weights to be recalculated when sampling
-                if changed:
-                    # reset current_lora_hooks if contains lora hook that changed
-                    if self.current_lora_hooks is not None:
-                        for current_hook in self.current_lora_hooks.hooks:
-                            if current_hook == hook:
-                                self.current_lora_hooks = None
-                                break
-                    for cached_group in list(self.cached_hooked_patches.keys()):
-                        if cached_group.contains(hook):
-                            self.cached_hooked_patches.pop(cached_group)
-
-    def clean_hooks(self):
-        self.unpatch_hooked()
-        self.clear_cached_hooked_weights()
-        # for lora_hook in self.hooked_patches:
-        #     lora_hook.reset()
-
-    def add_hooked_patches(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
-        '''
-        Based on add_patches, but for hooked weights.
-        '''
-        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook.hook_ref, {})
-        p = set()
-        model_sd = self.model.state_dict()
-        for k in patches:
-            offset = None
-            function = None
-            if isinstance(k, str):
-                key = k
-            else:
-                offset = k[1]
-                key = k[0]
-                if len(k) > 2:
-                    function = k[2]
-            
-            if key in model_sd:
-                p.add(k)
-                current_patches: list[tuple] = current_hooked_patches.get(key, [])
-                current_patches.append((strength_patch, patches[k], strength_model, offset, function))
-                current_hooked_patches[key] = current_patches
-        self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
-        # since should care about these patches too to determine if same model, reroll patches_uuid
-        self.patches_uuid = uuid.uuid4()
-        return list(p)
-    
-    def add_hooked_patches_as_diffs(self, lora_hook: LoraHook, patches: dict, strength_patch=1.0, strength_model=1.0):
-        '''
-        Based on add_hooked_patches, but intended for using a model's weights as lora hook.
-        '''
-        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook.hook_ref, {})
-        p = set()
-        model_sd = self.model.state_dict()
-        for k in patches:
-            offset = None
-            function = None
-            if isinstance(k, str):
-                key = k
-            else:
-                offset = k[1]
-                key = k[0]
-                if len(k) > 2:
-                    function = k[2]
-            
-            if key in model_sd:
-                p.add(k)
-                current_patches: list[tuple] = current_hooked_patches.get(key, [])
-                # take difference between desired weight and existing weight to get diff
-                # TODO: create fix for fp8
-                current_patches.append((strength_patch, (patches[k]-comfy.utils.get_attr(self.model, key),), strength_model, offset, function))
-                current_hooked_patches[key] = current_patches
-        self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
-        # since should care about these patches too to determine if same model, reroll patches_uuid
-        self.patches_uuid = uuid.uuid4()
-        return list(p)
-
-    def get_combined_hooked_patches(self, lora_hooks: LoraHookGroup):
-        '''
-        Returns patches for selected lora_hooks.
-        '''
-        # combined_patches will contain weights of all relevant lora_hooks, per key
-        combined_patches = {}
-        if lora_hooks is not None:
-            for hook in lora_hooks.hooks:
-                hook_patches: dict = self.hooked_patches.get(hook.hook_ref, {})
-                for key in hook_patches.keys():
-                    current_patches: list[tuple] = combined_patches.get(key, [])
-                    if math.isclose(hook.strength, 1.0):
-                        # if hook strength is 1.0, can just add it directly
-                        current_patches.extend(hook_patches[key])
-                    else:
-                        # otherwise, need to multiply original patch strength by hook strength
-                        # patches are stored as tuples: (strength_patch, (tuple_with_weights,), strength_model)
-                        for patch in hook_patches[key]:
-                            new_patch = list(patch)
-                            new_patch[0] *= hook.strength
-                            current_patches.append(tuple(new_patch))
-                    combined_patches[key] = current_patches
-        return combined_patches
-
-    def patch_model(self, *args, **kwargs):
-        was_injected = False
-        if self.currently_injected:
-            self.eject_model()
-            was_injected = True
-        # first, perform model patching
-        patched_model = super().patch_model(*args, **kwargs)
-        # bring injection back to original state
-        if was_injected and not self.currently_injected:
-            self.inject_model()
-        return patched_model
-
-    def load(self, device_to=None, lowvram_model_memory=0, *args, **kwargs):
-        self.eject_model()
-        try:
-            return super().load(device_to=device_to, lowvram_model_memory=lowvram_model_memory, *args, **kwargs)
-        finally:
-            self.inject_model()
-            if lowvram_model_memory > 0:
-                self._patch_lowvram_extras()
-
-    def _patch_lowvram_extras(self):
-        # check if any modules have weight_function or bias_function that is not None
-        # NOTE: this serves no purpose currently, but I have it here for future reasons
-        self.model_params_lowvram = False
-        self.model_params_lowvram_keys.clear()
-        for n, m in self.model.named_modules():
-            if not hasattr(m, "comfy_cast_weights"):
-                continue
-            if getattr(m, "weight_function", None) is not None:
-                self.model_params_lowvram = True
-                self.model_params_lowvram_keys[f"{n}.weight"] = n
-            if getattr(m, "bias_function", None) is not None:
-                self.model_params_lowvram = True
-                self.model_params_lowvram_keys[f"{n}.bias"] = n  
-
-    def unpatch_model(self, device_to=None, unpatch_weights=True):
-        # first, eject motion model from unet
-        self.eject_model()
-        # finally, do normal model unpatching
-        if unpatch_weights:
-            # handle hooked_patches first
-            self.clean_hooks()
-        try:
-            return super().unpatch_model(device_to, unpatch_weights)
-        finally:
-            self.model_params_lowvram = False
-            self.model_params_lowvram_keys.clear()
-
-    def partially_load(self, *args, **kwargs):
-        # partially_load calls patch_model, but we don't want to inject model in the intermediate call;
-        # make sure to eject before performing partial load, then inject
-        was_injected = self.currently_injected
-        try:
-            self.eject_model()
-            try:
-                self.skip_injection = True
-                to_return = super().partially_load(*args, **kwargs)
-                self.skip_injection = False
-                self.inject_model()
-                return to_return
-            finally:
-                self.skip_injection = False
-        finally:
-            if was_injected and not self.currently_injected:
-                self.inject_model()
-
-    def partially_unload(self, *args, **kwargs):
-        if not self.currently_injected:
-            return super().partially_unload(*args, **kwargs)
-        # make sure to eject before performing partial unload, then inject again
-        self.eject_model()
-        try:
-           return super().partially_unload(*args, **kwargs)
-        finally:
-            self.inject_model()
-
-    def inject_model(self):
-        if self.skip_injection: # make it possible to skip injection for intermediate calls (partial load)
-            return
-        if self.motion_models is not None:
-            for motion_model in self.motion_models.models:
-                self.currently_injected = True
-                motion_model.model.inject(self)
-
-    def eject_model(self):
-        if self.motion_models is not None:
-            for motion_model in self.motion_models.models:
-                motion_model.model.eject(self)
-            self.currently_injected = False
-
-    def apply_lora_hooks(self, lora_hooks: LoraHookGroup):
-        # first, determine if need to reapply patches
-        if self.current_lora_hooks == lora_hooks:
-            return
-        # patch hooks
-        self.patch_hooked(lora_hooks=lora_hooks)
-
-    def patch_hooked(self, lora_hooks: LoraHookGroup) -> None:
-        # first, unpatch any previous patches
-        self.unpatch_hooked()
-        # eject model, if needed
-        was_injected = self.currently_injected
-        if was_injected:
-            self.eject_model()
-
-        model_sd = self.model_state_dict()
-        # if have cached weights for lora_hooks, use it
-        cached_weights = self.cached_hooked_patches.get(lora_hooks, None)
-        if cached_weights is not None:
-            for key in cached_weights:
-                if key not in model_sd:
-                    logger.warning(f"Cached LoraHook could not patch. key doesn't exist in model: {key}")
-                self.patch_cached_hooked_weight(cached_weights=cached_weights, key=key)
-        else:
-            # get combined patches of relevant lora_hooks
-            relevant_patches = self.get_combined_hooked_patches(lora_hooks=lora_hooks)
-            for key in relevant_patches:
-                if key not in model_sd:
-                    logger.warning(f"LoraHook could not patch. key doesn't exist in model: {key}")
-                    continue
-                self.patch_hooked_weight_to_device(lora_hooks=lora_hooks, combined_patches=relevant_patches, key=key)
-        self.current_lora_hooks = lora_hooks
-        # reinject model, if needed
-        if was_injected:
-            self.inject_model()
-
-    def patch_cached_hooked_weight(self, cached_weights: dict, key: str):
-        # TODO: handle model_params_lowvram stuff if necessary
-        inplace_update = self.weight_inplace_update
-        if key not in self.hooked_backup:
-            weight: Tensor = comfy.utils.get_attr(self.model, key)
-            target_device = self.offload_device
-            if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-                target_device = weight.device
-            self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
-        if inplace_update:
-            comfy.utils.copy_to_param(self.model, key, cached_weights[key])
-        else:
-            comfy.utils.set_attr_param(self.model, key, cached_weights[key])
-
-    def clear_cached_hooked_weights(self):
-        self.cached_hooked_patches.clear()
-        self.current_lora_hooks = None
-
-    def patch_hooked_weight_to_device(self, lora_hooks: LoraHookGroup, combined_patches: dict, key: str):
-        if key not in combined_patches:
-            return
-
-        inplace_update = self.weight_inplace_update
-        weight: Tensor = comfy.utils.get_attr(self.model, key)
-        if key not in self.hooked_backup:
-            target_device = self.offload_device
-            if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-                target_device = weight.device
-            self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
-
-        # TODO: handle model_params_lowvram stuff if necessary
-        temp_weight = comfy.model_management.cast_to_device(weight, weight.device, torch.float32, copy=True)
-        out_weight = self.do_calculate_weight(combined_patches[key], temp_weight, key).to(weight.dtype)
-        if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-            self.cached_hooked_patches.setdefault(lora_hooks, {})
-            self.cached_hooked_patches[lora_hooks][key] = out_weight
-        if inplace_update:
-            comfy.utils.copy_to_param(self.model, key, out_weight)
-        else:
-            comfy.utils.set_attr_param(self.model, key, out_weight)
-
-    def patch_hooked_replace_weight_to_device(self, lora_hooks: LoraHookGroup, model_sd: dict, replace_patches: dict):
-        # first handle replace_patches
-        for key in replace_patches:
-            if key not in model_sd:
-                logger.warning(f"LoraHook could not replace patch. key doesn't exist in model: {key}")
-                continue
-
-            inplace_update = self.weight_inplace_update
-            weight: Tensor = comfy.utils.get_attr(self.model, key)
-            if key not in self.hooked_backup:
-                # TODO: handle model_params_lowvram stuff if necessary
-                target_device = self.offload_device
-                if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-                    target_device = weight.device
-                self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
-
-            out_weight = replace_patches[key].to(weight.device)
-            if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-                self.cached_hooked_patches.setdefault(lora_hooks, {})
-                self.cached_hooked_patches[lora_hooks][key] = out_weight
-            if inplace_update:
-                comfy.utils.copy_to_param(self.model, key, out_weight)
-            else:
-                comfy.utils.set_attr_param(self.model, key, out_weight)
-
-    def unpatch_hooked(self) -> None:
-        # if no backups from before hook, then nothing to unpatch
-        if len(self.hooked_backup) == 0:
-            return
-        was_injected = self.currently_injected
-        if was_injected:
-            self.eject_model()
-        # TODO: handle model_params_lowvram stuff if necessary
-        keys = list(self.hooked_backup.keys())
-        if self.weight_inplace_update:
-            for k in keys:
-                if self.lora_hook_mode == LoraHookMode.MAX_SPEED: # does not need to be casted - cache device matches needed device
-                    comfy.utils.copy_to_param(self.model, k, self.hooked_backup[k][0])
-                else: # should be casted as may not match needed device
-                    comfy.utils.copy_to_param(self.model, k, self.hooked_backup[k][0].to(device=self.hooked_backup[k][1]))
-        else:
-            for k in keys:
-                if self.lora_hook_mode == LoraHookMode.MAX_SPEED:
-                    comfy.utils.set_attr_param(self.model, k, self.hooked_backup[k][0])
-                else: # should be casted as may not match needed device
-                    comfy.utils.set_attr_param(self.model, k, self.hooked_backup[k][0].to(device=self.hooked_backup[k][1]))
-        # clear hooked_backup
-        self.hooked_backup.clear()
-        self.current_lora_hooks = None
-        # reinject model, if necessary
-        if was_injected:
-            self.inject_model()
-
-
-class CLIPWithHooks(CLIP):
-    def __init__(self, clip: Union[CLIP, 'CLIPWithHooks']):
-        super().__init__(no_init=True)
-        self.patcher = ModelPatcherCLIPHooks.create_from(clip.patcher)
-        self.cond_stage_model = clip.cond_stage_model
-        self.tokenizer = clip.tokenizer
-        self.layer_idx = clip.layer_idx
-        self.desired_hooks: LoraHookGroup = None
-        if hasattr(clip, "desired_hooks"):
-            self.set_desired_hooks(clip.desired_hooks)
-    
-    def clone(self):
-        cloned = CLIPWithHooks(clip=self)
-        return cloned
-
-    def set_desired_hooks(self, lora_hooks: LoraHookGroup):
-        self.desired_hooks = lora_hooks
-        self.patcher.set_desired_hooks(lora_hooks=lora_hooks)
-
-    def add_hooked_patches(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
-        return self.patcher.add_hooked_patches(lora_hook=lora_hook, patches=patches, strength_patch=strength_patch, strength_model=strength_model)
-    
-    def add_hooked_patches_as_diffs(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
-        return self.patcher.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=patches, strength_patch=strength_patch, strength_model=strength_model)
-
-
-class ModelPatcherCLIPHooks(ModelPatcher):
-    def __init__(self, m: ModelPatcher):
-        # replicate ModelPatcher.clone() to initialize
-        super().__init__(m.model, m.load_device, m.offload_device, m.size, weight_inplace_update=m.weight_inplace_update)
-        self.patches = {}
-        for k in m.patches:
-            self.patches[k] = m.patches[k][:]
-        if hasattr(m, "patches_uuid"):
-            self.patches_uuid = m.patches_uuid
-
-        self.object_patches = m.object_patches.copy()
-        self.model_options = copy.deepcopy(m.model_options)
-        if hasattr(m, "model_keys"):
-            self.model_keys = m.model_keys
-        if hasattr(m, "backup"):
-            self.backup = m.backup
-        if hasattr(m, "object_patches_backup"):
-            self.object_patches_backup = m.object_patches_backup
-        # lora hook stuff
-        self.hooked_patches: dict[HookRef] = {} # binds LoraHook to specific keys
-        self.patches_backup = {}
-        self.hooked_backup: dict[str, tuple[Tensor, torch.device]] = {}
-
-        self.current_lora_hooks = None
-        self.desired_lora_hooks = None
-        self.lora_hook_mode = LoraHookMode.MAX_SPEED
-
-        self.model_params_lowvram = False
-        self.model_params_lowvram_keys = {} # keeps track of keys with applied 'weight_function' or 'bias_function'
-
-    def clone(self):
-        cloned = ModelPatcherCLIPHooks(self)
-        # copy lora hooks
-        for hook in self.hooked_patches:
-            cloned.hooked_patches[hook] = {}
-            for k in self.hooked_patches[hook]:
-                cloned.hooked_patches[hook][k] = self.hooked_patches[hook][k][:]
-        cloned.patches_backup = self.patches_backup
-        cloned.hooked_backup = self.hooked_backup
-        cloned.current_lora_hooks = self.current_lora_hooks
-        cloned.desired_lora_hooks = self.desired_lora_hooks
-        cloned.lora_hook_mode = self.lora_hook_mode
-        return cloned
-
-    @classmethod
-    def create_from(cls, model: Union[ModelPatcher, 'ModelPatcherCLIPHooks']):
-        if isinstance(model, ModelPatcherCLIPHooks):
-            return model.clone()
-        return ModelPatcherCLIPHooks(model)
-    
-    def clone_has_same_weights(self, clone: 'ModelPatcherCLIPHooks'):
-        returned = super().clone_has_same_weights(clone)
-        if not returned:
-            return returned
-        if type(self) != type(clone):
-            return False
-        if self.desired_lora_hooks != clone.desired_lora_hooks:
-            return False
-        if self.current_lora_hooks != clone.current_lora_hooks:
-            return False
-        if self.hooked_patches.keys() != clone.hooked_patches.keys():
-            return False
-        return returned
-
-    def set_desired_hooks(self, lora_hooks: LoraHookGroup):
-        self.desired_lora_hooks = lora_hooks
-
-    def add_hooked_patches(self, lora_hook: LoraHook, patches, strength_patch=1.0, strength_model=1.0):
-        '''
-        Based on add_patches, but for hooked weights.
-        '''
-        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook.hook_ref, {})
-        p = set()
-        model_sd = self.model.state_dict()
-        for k in patches:
-            offset = None
-            function = None
-            if isinstance(k, str):
-                key = k
-            else:
-                offset = k[1]
-                key = k[0]
-                if len(k) > 2:
-                    function = k[2]
-            
-            if key in model_sd:
-                p.add(k)
-                current_patches: list[tuple] = current_hooked_patches.get(key, [])
-                current_patches.append((strength_patch, patches[k], strength_model, offset, function))
-                current_hooked_patches[key] = current_patches
-        self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
-        # since should care about these patches too to determine if same model, reroll patches_uuid
-        self.patches_uuid = uuid.uuid4()
-        return list(p)
-    
-    def add_hooked_patches_as_diffs(self, lora_hook: LoraHook, patches: dict, strength_patch=1.0, strength_model=1.0):
-        '''
-        Based on add_hooked_patches, but intended for using a model's weights as lora hook.
-        '''
-        current_hooked_patches: dict[str,list] = self.hooked_patches.get(lora_hook.hook_ref, {})
-        p = set()
-        model_sd = self.model.state_dict()
-        for k in patches:
-            offset = None
-            function = None
-            if isinstance(k, str):
-                key = k
-            else:
-                offset = k[1]
-                key = k[0]
-                if len(k) > 2:
-                    function = k[2]
-            
-            if key in model_sd:
-                p.add(k)
-                current_patches: list[tuple] = current_hooked_patches.get(key, [])
-                # take difference between desired weight and existing weight to get diff
-                # TODO: create fix for fp8
-                current_patches.append((strength_patch, (patches[k]-comfy.utils.get_attr(self.model, key),), strength_model, offset, function))
-                current_hooked_patches[key] = current_patches
-        self.hooked_patches[lora_hook.hook_ref] = current_hooked_patches
-        # since should care about these patches too to determine if same model, reroll patches_uuid
-        self.patches_uuid = uuid.uuid4()
-        return list(p)
-    
-    def get_combined_hooked_patches(self, lora_hooks: LoraHookGroup):
-        '''
-        Returns patches for selected lora_hooks.
-        '''
-        # combined_patches will contain weights of all relevant lora_hooks, per key
-        combined_patches = {}
-        if lora_hooks is not None:
-            for hook in lora_hooks.hooks:
-                hook_patches: dict = self.hooked_patches.get(hook.hook_ref, {})
-                for key in hook_patches.keys():
-                    current_patches: list[tuple] = combined_patches.get(key, [])
-                    current_patches.extend(hook_patches[key])
-                    combined_patches[key] = current_patches
-        return combined_patches
-    
-    def patch_hooked_replace_weight_to_device(self, model_sd: dict, replace_patches: dict):
-        # first handle replace_patches
-        for key in replace_patches:
-            if key not in model_sd:
-                logger.warning(f"CLIP LoraHook could not replace patch. key doesn't exist in model: {key}")
-                continue
-            weight: Tensor = comfy.utils.get_attr(self.model, key)
-            inplace_update = self.weight_inplace_update
-            target_device = weight.device
-            
-            if key not in self.hooked_backup:
-                self.hooked_backup[key] = (weight.to(device=target_device, copy=inplace_update), weight.device)
-            out_weight = replace_patches[key].to(target_device)
-            if inplace_update:
-                comfy.utils.copy_to_param(self.model, key, out_weight)
-            else:
-                comfy.utils.set_attr_param(self.model, key, out_weight)
-
-    def patch_model(self, device_to=None, *args, **kwargs):
-        if self.desired_lora_hooks is not None:
-            self.patches_backup = self.patches.copy()
-            relevant_patches = self.get_combined_hooked_patches(lora_hooks=self.desired_lora_hooks)
-            for key in relevant_patches:
-                self.patches.setdefault(key, [])
-                self.patches[key].extend(relevant_patches[key])
-            self.current_lora_hooks = self.desired_lora_hooks
-        return super().patch_model(device_to, *args, **kwargs)
-
-    def load(self, device_to=None, lowvram_model_memory=0, *args, **kwargs):
-        try:
-            return super().load(device_to=device_to, lowvram_model_memory=lowvram_model_memory, *args, **kwargs)
-        finally:
-            if lowvram_model_memory > 0:
-                self._patch_lowvram_extras()
-
-    def _patch_lowvram_extras(self):
-        # check if any modules have weight_function or bias_function that is not None
-        # NOTE: this serves no purpose currently, but I have it here for future reasons
-        self.model_params_lowvram = False
-        self.model_params_lowvram_keys.clear()
-        for n, m in self.model.named_modules():
-            if not hasattr(m, "comfy_cast_weights"):
-                continue
-            if getattr(m, "weight_function", None) is not None:
-                self.model_params_lowvram = True
-                self.model_params_lowvram_keys[f"{n}.weight"] = n
-            if getattr(m, "bias_function", None) is not None:
-                self.model_params_lowvram = True
-                self.model_params_lowvram_keys[f"{n}.weight"] = n
-
-    def unpatch_model(self, device_to=None, unpatch_weights=True, *args, **kwargs):
-        try:
-            return super().unpatch_model(device_to, unpatch_weights, *args, **kwargs)
-        finally:
-            self.patches = self.patches_backup.copy()
-            self.patches_backup.clear()
-            # handle replace patches
-            keys = list(self.hooked_backup.keys())
-            if self.weight_inplace_update:
-                for k in keys:
-                    comfy.utils.copy_to_param(self.model, k, self.hooked_backup[k][0].to(device=self.hooked_backup[k][1]))
-            else:
-                for k in keys:
-                    comfy.utils.set_attr_param(self.model, k, self.hooked_backup[k][0].to(device=self.hooked_backup[k][1]))
-            self.model_params_lowvram = False
-            self.model_params_lowvram_keys.clear()
-            # clear hooked_backup
-            self.hooked_backup.clear()
-            self.current_lora_hooks = None
-
-
-def load_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, lora: dict[str, Tensor], lora_hook: LoraHook,
-                                strength_model: float, strength_clip: float):
-    key_map = {}
-    if model is not None:
-        key_map = comfy.lora.model_lora_keys_unet(model.model, key_map)
-    if clip is not None:
-        key_map = comfy.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
-
-    loaded: dict[str] = comfy.lora.load_lora(lora, key_map)
-    if model is not None:
-        new_modelpatcher = ModelPatcherAndInjector.create_from(model)
-        k = new_modelpatcher.add_hooked_patches(lora_hook=lora_hook, patches=loaded, strength_patch=strength_model)
-    else:
-        k = ()
-        new_modelpatcher = None
-    
-    if clip is not None:
-        new_clip = CLIPWithHooks(clip)
-        k1 = new_clip.add_hooked_patches(lora_hook=lora_hook, patches=loaded, strength_patch=strength_clip)
-    else:
-        k1 = ()
-        new_clip = None
-    k = set(k)
-    k1 = set(k1)
-    for x in loaded:
-        if (x not in k) and (x not in k1):
-            logger.warning(f"NOT LOADED {x}")
-    return (new_modelpatcher, new_clip)
-
-
-def load_model_as_hooked_lora_for_models(model: Union[ModelPatcher, ModelPatcherAndInjector], clip: CLIP, model_loaded: ModelPatcher, clip_loaded: CLIP, lora_hook: LoraHook,
-                                         strength_model: float, strength_clip: float):
-    if model is not None and model_loaded is not None:
-        new_modelpatcher = ModelPatcherAndInjector.create_from(model)
-        comfy.model_management.unload_model_clones(new_modelpatcher)
-        expected_model_keys = set(model_loaded.model.state_dict().keys())
-        patches_model: dict[str, Tensor] = model_loaded.model.state_dict()
-        # do not include ANY model_sampling components of the model that should act as a patch
-        for key in list(patches_model.keys()):
-            if key.startswith("model_sampling"):
-                expected_model_keys.discard(key)
-                patches_model.pop(key, None)
-        k = new_modelpatcher.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=patches_model, strength_patch=strength_model)
-    else:
-        k = ()
-        new_modelpatcher = None
-        
-    if clip is not None and clip_loaded is not None:
-        new_clip = CLIPWithHooks(clip)
-        comfy.model_management.unload_model_clones(new_clip.patcher)
-        expected_clip_keys = clip_loaded.patcher.model.state_dict().copy()
-        patches_clip: dict[str, Tensor] = clip_loaded.cond_stage_model.state_dict()
-        k1 = new_clip.add_hooked_patches_as_diffs(lora_hook=lora_hook, patches=patches_clip, strength_patch=strength_clip)
-    else:
-        k1 = ()
-        new_clip = None
-    
-    k = set(k)
-    k1 = set(k1)
-    if model is not None and model_loaded is not None:
-        for key in expected_model_keys:
-            if key not in k:
-                logger.warning(f"MODEL-AS-LORA NOT LOADED {key}")
-    if clip is not None and clip_loaded is not None:
-        for key in expected_clip_keys:
-            if key not in k1:
-                logger.warning(f"CLIP-AS-LORA NOT LOADED {key}")
-    
-    return (new_modelpatcher, new_clip)
+def prepare_dinklink_register_definitions():
+    # expose create_MotionModelPatcher
+    d = get_dinklink()
+    link_ade = d.setdefault(DinkLinkConst.ADE, {})
+    link_ade[DinkLinkConst.ADE_CREATE_MOTIONMODELPATCHER] = create_MotionModelPatcher
 
 
 class MotionModelPatcher(ModelPatcher):
-    # Mostly here so that type hints work in IDEs
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.model: AnimateDiffModel = self.model
+    '''Class used only for type hints.'''
+    def __init__(self):
+        self.model: AnimateDiffModel
+
+
+class ModelPatcherHelper:
+    SAMPLE_SETTINGS = "ADE_sample_settings"
+    PARAMS = "ADE_params"
+    ADE = "ADE"
+
+    def __init__(self, model: ModelPatcher):
+        self.model = model
+
+    def set_all_properties(self, outer_sampler_wrapper: Callable, calc_cond_batch_wrapper: Callable,
+                           params: 'InjectionParams', sample_settings: SampleSettings=None, motion_models: 'MotionModelGroup'=None):
+        self.set_outer_sample_wrapper(outer_sampler_wrapper)
+        self.set_calc_cond_batch_wrapper(calc_cond_batch_wrapper)
+        self.set_sample_settings(sample_settings = sample_settings if sample_settings is not None else SampleSettings())
+        self.set_params(params)
+        if motion_models is not None:
+            self.set_motion_models(motion_models.models.copy())
+            self.set_forward_timestep_embed_patch()
+        else:
+            self.remove_motion_models()
+            self.remove_forward_timestep_embed_patch()
+
+    def get_motion_models(self) -> list[MotionModelPatcher]:
+        return self.model.additional_models.get(self.ADE, [])
+
+    def set_motion_models(self, motion_models: list[MotionModelPatcher]):
+        self.model.set_additional_models(self.ADE, motion_models)
+        self.model.set_injections(self.ADE,
+                                  [PatcherInjection(inject=inject_motion_models, eject=eject_motion_models)])
+
+    def remove_motion_models(self):
+        self.model.remove_additional_models(self.ADE)
+        self.model.remove_injections(self.ADE)
+
+    def cleanup_motion_models(self):
+        for motion_model in self.get_motion_models():
+            motion_model.cleanup()
+
+
+    def set_forward_timestep_embed_patch(self):
+        self.remove_forward_timestep_embed_patch()
+        self.model.set_model_forward_timestep_embed_patch(create_forward_timestep_embed_patch())
+
+    def remove_forward_timestep_embed_patch(self):
+        if "transformer_options" in self.model.model_options:
+            transformer_options = self.model.model_options["transformer_options"]
+            if "patches" in transformer_options:
+                patches = transformer_options["patches"]
+                if "forward_timestep_embed_patch" in patches:
+                    forward_timestep_patches: list = patches["forward_timestep_embed_patch"]
+                    to_remove = []
+                    for idx, patch in enumerate(forward_timestep_patches):
+                        if patch[1] == forward_timestep_embed_patch_ade:
+                            to_remove.append(idx)
+                    for idx in to_remove:
+                        forward_timestep_patches.pop(idx)
+
+
+    ##########################
+    # motion models helpers
+    def set_video_length(self, video_length: int, full_length: int):
+        for motion_model in self.get_motion_models():
+            motion_model.model.set_video_length(video_length=video_length, full_length=full_length)
+    
+    def get_name_string(self, show_version=False):
+        identifiers = []
+        for motion_model in self.get_motion_models():
+            id = motion_model.model.mm_info.mm_name
+            if show_version:
+                id += f":{motion_model.model.mm_info.mm_version}"
+            identifiers.append(id)
+        return ", ".join(identifiers)
+    ##########################
+
+
+    def get_sample_settings(self) -> SampleSettings:
+        return self.model.get_attachment(self.SAMPLE_SETTINGS)
+    
+    def set_sample_settings(self, sample_settings: SampleSettings):
+        self.model.set_attachments(self.SAMPLE_SETTINGS, sample_settings)
+    
+
+    def get_params(self) -> 'InjectionParams':
+        return self.model.get_attachment(self.PARAMS)
+    
+    def set_params(self, params: 'InjectionParams'):
+        self.model.set_attachments(self.PARAMS, params)
+        if params.context_options.context_length is not None:
+            self.set_ACN_outer_sample_wrapper(throw_exception=False)
+        elif params.context_options.extras.context_ref is not None:
+            self.set_ACN_outer_sample_wrapper(throw_exception=True)
+
+    def set_ACN_outer_sample_wrapper(self, throw_exception=True):
+        # get wrapper to register from Advanced-ControlNet via DinkLink shared dict
+        wrapper_info = get_acn_outer_sample_wrapper(throw_exception)
+        if wrapper_info is None:
+            return
+        wrapper_type, key, wrapper = wrapper_info
+        if len(self.model.get_wrappers(wrapper_type, key)) == 0:
+            self.model.add_wrapper_with_key(wrapper_type, key, wrapper)
+
+    def set_outer_sample_wrapper(self, wrapper: Callable):
+        self.model.remove_wrappers_with_key(WrappersMP.OUTER_SAMPLE, self.ADE)
+        self.model.add_wrapper_with_key(WrappersMP.OUTER_SAMPLE, self.ADE, wrapper)
+    
+    def set_calc_cond_batch_wrapper(self, wrapper: Callable):
+        self.model.remove_wrappers_with_key(WrappersMP.CALC_COND_BATCH, self.ADE)
+        self.model.add_wrapper_with_key(WrappersMP.CALC_COND_BATCH, self.ADE, wrapper)
+
+    def remove_wrappers(self):
+        self.model.remove_wrappers_with_key(WrappersMP.OUTER_SAMPLE, self.ADE)
+        self.model.remove_wrappers_with_key(WrappersMP.CALC_COND_BATCH, self.ADE)
+
+    def pre_run(self):
+        # TODO: could implement this as a ModelPatcher ON_PRE_RUN callback
+        for motion_model in self.get_motion_models():
+            motion_model.pre_run()
+        self.get_sample_settings().pre_run(self.model)
+
+
+def inject_motion_models(patcher: ModelPatcher):
+    helper = ModelPatcherHelper(patcher)
+    motion_models = helper.get_motion_models()
+    for mm in motion_models:
+        mm.model.inject(patcher)
+
+
+def eject_motion_models(patcher: ModelPatcher):
+    helper = ModelPatcherHelper(patcher)
+    motion_models = helper.get_motion_models()
+    for mm in motion_models:
+        mm.model.eject(patcher)
+
+
+def create_forward_timestep_embed_patch():
+    return (VanillaTemporalModule, forward_timestep_embed_patch_ade)
+
+def forward_timestep_embed_patch_ade(layer, x, emb, context, transformer_options, output_shape, time_context, num_video_frames, image_only_indicator, *args, **kwargs):
+    return layer(x, context, transformer_options=transformer_options)
+
+
+def create_MotionModelPatcher(model, load_device, offload_device) -> MotionModelPatcher:
+    patcher = ModelPatcher(model, load_device=load_device, offload_device=offload_device)
+    ade = ModelPatcherHelper.ADE
+    patcher.add_callback_with_key(CallbacksMP.ON_LOAD, ade, _mm_patch_lowvram_extras_callback)
+    patcher.add_callback_with_key(CallbacksMP.ON_LOAD, ade, _mm_handle_float8_pe_tensors_callback)
+    patcher.add_callback_with_key(CallbacksMP.ON_PRE_RUN, ade, _mm_pre_run_callback)
+    patcher.add_callback_with_key(CallbacksMP.ON_CLEANUP, ade, _mm_clean_callback)
+    patcher.set_attachments(ade, MotionModelAttachment())
+    return patcher
+
+
+def _mm_patch_lowvram_extras_callback(self: MotionModelPatcher, device_to, lowvram_model_memory, *args, **kwargs):
+    if lowvram_model_memory > 0:
+        # figure out the tensors (likely pe's) that should be cast to device besides just the named_modules
+        remaining_tensors = list(self.model.state_dict().keys())
+        named_modules = []
+        for n, _ in self.model.named_modules():
+            named_modules.append(n)
+            named_modules.append(f"{n}.weight")
+            named_modules.append(f"{n}.bias")
+        for name in named_modules:
+            if name in remaining_tensors:
+                remaining_tensors.remove(name)
+
+        for key in remaining_tensors:
+            self.patch_weight_to_device(key, device_to)
+            if device_to is not None:
+                comfy.utils.set_attr(self.model, key, comfy.utils.get_attr(self.model, key).to(device_to))
+
+def _mm_handle_float8_pe_tensors_callback(self: MotionModelPatcher, *args, **kwargs):
+    remaining_tensors = list(self.model.state_dict().keys())
+    pe_tensors = [x for x in remaining_tensors if '.pe' in x]
+    is_first = True
+    for key in pe_tensors:
+        if is_first:
+            is_first = False
+            if comfy.utils.get_attr(self.model, key).dtype not in [torch.float8_e5m2, torch.float8_e4m3fn]:
+                break
+        comfy.utils.set_attr(self.model, key, comfy.utils.get_attr(self.model, key).half())
+
+def _mm_pre_run_callback(self: MotionModelPatcher, *args, **kwargs):
+    attachment = get_mm_attachment(self)
+    attachment.pre_run(self)
+
+def _mm_clean_callback(self: MotionModelPatcher, *args, **kwargs):
+    attachment = get_mm_attachment(self)
+    attachment.cleanup(self)
+
+
+def get_mm_attachment(patcher: MotionModelPatcher) -> 'MotionModelAttachment':
+    return patcher.get_attachment(ModelPatcherHelper.ADE)
+
+
+class MotionModelAttachment:
+    def __init__(self):
         self.timestep_percent_range = (0.0, 1.0)
         self.timestep_range: tuple[float, float] = None
         self.keyframes: ADKeyframeGroup = ADKeyframeGroup()
@@ -792,6 +273,13 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_current_pia_input: InputPIA = None
         self.pia_multival: Union[float, Tensor] = None
 
+        # FancyVideo
+        self.orig_fancy_images: Tensor = None
+        self.fancy_vae: VAE = None
+        self.cached_fancy_c_concat: comfy.conds.CONDNoiseShape = None  # cached
+        self.prev_fancy_latents_shape: tuple = None
+        self.fancy_multival: Union[float, Tensor] = None
+
         # temporary variables
         self.current_used_steps = 0
         self.current_keyframe: ADKeyframe = None
@@ -811,49 +299,14 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_sub_idxs = None
         self.prev_batched_number = None
 
-    def load(self, device_to=None, lowvram_model_memory=0, *args, **kwargs):
-        to_return = super().load(device_to=device_to, lowvram_model_memory=lowvram_model_memory, *args, **kwargs)
-        if lowvram_model_memory > 0:
-            self._patch_lowvram_extras(device_to=device_to)
-        self._handle_float8_pe_tensors()
-        return to_return
-
-    def _patch_lowvram_extras(self, device_to=None):
-        # figure out the tensors (likely pe's) that should be cast to device besides just the named_modules
-        remaining_tensors = list(self.model.state_dict().keys())
-        named_modules = []
-        for n, _ in self.model.named_modules():
-            named_modules.append(n)
-            named_modules.append(f"{n}.weight")
-            named_modules.append(f"{n}.bias")
-        for name in named_modules:
-            if name in remaining_tensors:
-                remaining_tensors.remove(name)
-
-        for key in remaining_tensors:
-            self.patch_weight_to_device(key, device_to)
-            if device_to is not None:
-                comfy.utils.set_attr(self.model, key, comfy.utils.get_attr(self.model, key).to(device_to))
-
-    def _handle_float8_pe_tensors(self):
-        remaining_tensors = list(self.model.state_dict().keys())
-        pe_tensors = [x for x in remaining_tensors if '.pe' in x]
-        is_first = True
-        for key in pe_tensors:
-            if is_first:
-                is_first = False
-                if comfy.utils.get_attr(self.model, key).dtype not in [torch.float8_e5m2, torch.float8_e4m3fn]:
-                    break
-            comfy.utils.set_attr(self.model, key, comfy.utils.get_attr(self.model, key).half())
-
-    def pre_run(self, model: ModelPatcherAndInjector):
-        self.cleanup()
-        self.model.set_scale(self.scale_multival, self.per_block_list)
-        self.model.set_effect(self.effect_multival, self.per_block_list)
-        self.model.set_cameractrl_effect(self.cameractrl_multival)
-        if self.model.img_encoder is not None:
-            self.model.img_encoder.set_ref_drift(self.orig_ref_drift)
-            self.model.img_encoder.set_insertion_weights(self.orig_insertion_weights)
+    def pre_run(self, patcher: MotionModelPatcher):
+        self.cleanup(patcher)
+        patcher.model.set_scale(self.scale_multival, self.per_block_list)
+        patcher.model.set_effect(self.effect_multival, self.per_block_list)
+        patcher.model.set_cameractrl_effect(self.cameractrl_multival)
+        if patcher.model.img_encoder is not None:
+            patcher.model.img_encoder.set_ref_drift(self.orig_ref_drift)
+            patcher.model.img_encoder.set_insertion_weights(self.orig_insertion_weights)
 
     def initialize_timesteps(self, model: BaseModel):
         self.timestep_range = (model.model_sampling.percent_to_sigma(self.timestep_percent_range[0]),
@@ -862,7 +315,7 @@ class MotionModelPatcher(ModelPatcher):
             for keyframe in self.keyframes.keyframes:
                 keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
 
-    def prepare_current_keyframe(self, x: Tensor, t: Tensor):
+    def prepare_current_keyframe(self, patcher: MotionModelPatcher, x: Tensor, t: Tensor):
         curr_t: float = t[0]
         # if curr_t was previous_t, then do nothing (already accounted for this step)
         if curr_t == self.previous_t:
@@ -912,26 +365,26 @@ class MotionModelPatcher(ModelPatcher):
             self.combined_pia_mask = get_combined_input(self.pia_input, self.current_pia_input, x)
             self.combined_pia_effect = get_combined_input_effect_multival(self.pia_input, self.current_pia_input)
             # apply scale and effect
-            self.model.set_scale(self.combined_scale, self.per_block_list)
-            self.model.set_effect(self.combined_effect, self.per_block_list) # TODO: set combined_per_block_list
-            self.model.set_cameractrl_effect(self.combined_cameractrl_effect)
+            patcher.model.set_scale(self.combined_scale, self.per_block_list)
+            patcher.model.set_effect(self.combined_effect, self.per_block_list) # TODO: set combined_per_block_list
+            patcher.model.set_cameractrl_effect(self.combined_cameractrl_effect)
         # apply effect - if not within range, set effect to 0, effectively turning model off
         if curr_t > self.timestep_range[0] or curr_t < self.timestep_range[1]:
-            self.model.set_effect(0.0)
+            patcher.model.set_effect(0.0)
             self.was_within_range = False
         else:
             # if was not in range last step, apply effect to toggle AD status
             if not self.was_within_range:
-                self.model.set_effect(self.combined_effect, self.per_block_list)
+                patcher.model.set_effect(self.combined_effect, self.per_block_list)
                 self.was_within_range = True
         # update steps current keyframe is used
         self.current_used_steps += 1
         # update previous_t
         self.previous_t = curr_t
 
-    def prepare_img_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str], latent_format):
+    def prepare_alcmi2v_features(self, patcher: MotionModelPatcher, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str], latent_format):
         # if no img_encoder, done
-        if self.model.img_encoder is None:
+        if patcher.model.img_encoder is None:
             return
         batched_number = len(cond_or_uncond)
         full_length = ad_params["full_length"]
@@ -944,20 +397,20 @@ class MotionModelPatcher(ModelPatcher):
                 img_latents = comfy.utils.common_upscale(self.orig_img_latents[sub_idxs], x.shape[3], x.shape[2], 'nearest-exact', 'center').to(x.dtype).to(x.device)
             else:
                 img_latents = comfy.utils.common_upscale(self.orig_img_latents, x.shape[3], x.shape[2], 'nearest-exact', 'center').to(x.dtype).to(x.device)
-            img_latents = latent_format.process_in(img_latents)
+            img_latents: Tensor = latent_format.process_in(img_latents)
             # make sure img_latents matches goal_length
             if goal_length != img_latents.shape[0]:
                 img_latents = ade_broadcast_image_to(img_latents, goal_length, batched_number)
-            img_features = self.model.img_encoder(img_latents, goal_length, batched_number)
-            self.model.set_img_features(img_features=img_features, apply_ref_when_disabled=self.orig_apply_ref_when_disabled)
+            img_features = patcher.model.img_encoder(img_latents, goal_length, batched_number)
+            patcher.model.set_img_features(img_features=img_features, apply_ref_when_disabled=self.orig_apply_ref_when_disabled)
             # cache values for next step
             self.img_latents_shape = img_latents.shape
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
 
-    def prepare_camera_features(self, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str]):
+    def prepare_camera_features(self, patcher: MotionModelPatcher, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str]):
         # if no camera_encoder, done
-        if self.model.camera_encoder is None:
+        if patcher.model.camera_encoder is None:
             return
         batched_number = len(cond_or_uncond)
         full_length = ad_params["full_length"]
@@ -982,8 +435,8 @@ class MotionModelPatcher(ModelPatcher):
             # create encoded embeddings
             b, c, h, w = x.shape
             plucker_embedding = prepare_pose_embedding(camera_poses, image_width=w*8, image_height=h*8).to(dtype=x.dtype, device=x.device)
-            camera_embedding = self.model.camera_encoder(plucker_embedding, video_length=goal_length, batched_number=batched_number)
-            self.model.set_camera_features(camera_features=camera_embedding)
+            camera_embedding = patcher.model.camera_encoder(plucker_embedding, video_length=goal_length, batched_number=batched_number)
+            patcher.model.set_camera_features(camera_features=camera_embedding)
             self.camera_features_shape = len(camera_embedding)
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
@@ -1008,10 +461,7 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_pia_latents_shape = None
         # otherwise, x shape should be the cached pia_latents_shape
         # get currently used models so they can be properly reloaded after perfoming VAE Encoding
-        if hasattr(comfy.model_management, "loaded_models"):
-            cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
-        else:
-            cached_loaded_models: list[ModelPatcherAndInjector] = [x.model for x in comfy.model_management.current_loaded_models]
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
         try:
             b, c, h ,w = x.shape
             usable_ref = self.orig_pia_images[:b]
@@ -1051,12 +501,56 @@ class MotionModelPatcher(ModelPatcher):
         finally:
             comfy.model_management.load_models_gpu(cached_loaded_models)
 
-    def is_pia(self):
-        return self.model.mm_info.mm_format == AnimateDiffFormat.PIA and self.orig_pia_images is not None
+    def get_fancy_c_concat(self, model: BaseModel, x: Tensor) -> Tensor:
+        # if have cached shape, check if matches - if so, return cached fancy_latents
+        if self.prev_fancy_latents_shape is not None:
+            if self.prev_fancy_latents_shape[0] == x.shape[0] and self.prev_fancy_latents_shape[-2] == x.shape[-2] and self.prev_fancy_latents_shape[-1] == x.shape[-1]:
+                # TODO: if mask is also the same for this timestep, then retucn cached
+                return self.cached_fancy_c_concat
+        self.prev_fancy_latents_shape = None
+        # otherwise, x shape should be the cached fancy_latents_shape
+        # get currently used models so they can be properly reloaded after performing VAE Encoding
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
+        try:
+            b, c, h, w = x.shape
+            usable_ref = self.orig_fancy_images[:b]
+            # resize images to latent's dims
+            usable_ref = usable_ref.movedim(-1,1)
+            usable_ref = comfy.utils.common_upscale(samples=usable_ref, width=w*self.fancy_vae.downscale_ratio, height=h*self.fancy_vae.downscale_ratio,
+                                                    upscale_method="bilinear", crop="center")
+            usable_ref = usable_ref.movedim(1,-1)
+            # VAE encode images
+            logger.info("VAE Encoding FancyVideo input images...")
+            usable_ref: Tensor = model.process_latent_in(vae_encode_raw_batched(vae=self.fancy_vae, pixels=usable_ref, show_pbar=False))
+            logger.info("VAE Encoding FancyVideo input images complete.")
+            self.prev_fancy_latents_shape = x.shape
+            # TODO: experiment with indexes that aren't the first
+            # pad usable_ref with zeros
+            ref_length = usable_ref.shape[0]
+            pad_length = b - ref_length
+            zero_ref = torch.zeros([pad_length, c, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            usable_ref = torch.cat([usable_ref, zero_ref], dim=0)
+            del zero_ref
+            # create mask
+            mask_ones = torch.ones([ref_length, 1, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            mask_zeros = torch.zeros([pad_length, 1, h, w], dtype=usable_ref.dtype, device=usable_ref.device)
+            mask = torch.cat([mask_ones, mask_zeros], dim=0)
+            # TODO: experiment with mask strength
+            # cache fancy c_concat - ref first, then mask
+            self.cached_fancy_c_concat = comfy.conds.CONDNoiseShape(torch.cat([usable_ref, mask], dim=1))
+            return self.cached_fancy_c_concat
+        finally:
+            comfy.model_management.load_models_gpu(cached_loaded_models)
 
-    def cleanup(self):
-        if self.model is not None:
-            self.model.cleanup()
+    def is_pia(self, patcher: MotionModelPatcher):
+        return patcher.model.mm_info.mm_format == AnimateDiffFormat.PIA and self.orig_pia_images is not None
+
+    def is_fancyvideo(self, patcher: MotionModelPatcher):
+        return patcher.model.mm_info.mm_format == AnimateDiffFormat.FANCYVIDEO
+
+    def cleanup(self, patcher: MotionModelPatcher):
+        if patcher.model is not None:
+            patcher.model.cleanup()
         # AnimateLCM-I2V
         del self.img_features
         self.img_features = None
@@ -1082,23 +576,8 @@ class MotionModelPatcher(ModelPatcher):
         self.prev_sub_idxs = None
         self.prev_batched_number = None
 
-    def clone(self):
-        # normal ModelPatcher clone actions
-        n = MotionModelPatcher(self.model, self.load_device, self.offload_device, self.size, weight_inplace_update=self.weight_inplace_update)
-        n.patches = {}
-        for k in self.patches:
-            n.patches[k] = self.patches[k][:]
-        if hasattr(n, "patches_uuid"):
-            self.patches_uuid = n.patches_uuid
-
-        n.object_patches = self.object_patches.copy()
-        n.model_options = copy.deepcopy(self.model_options)
-        if hasattr(n, "model_keys"):
-            n.model_keys = self.model_keys
-        if hasattr(n, "backup"):
-            self.backup = n.backup
-        if hasattr(n, "object_patches_backup"):
-            self.object_patches_backup = n.object_patches_backup
+    def on_model_patcher_clone(self):
+        n = MotionModelAttachment()
         # extra cloned params
         n.timestep_percent_range = self.timestep_percent_range
         n.timestep_range = self.timestep_range
@@ -1125,7 +604,11 @@ class MotionModelGroup:
     def __init__(self, init_motion_model: MotionModelPatcher=None):
         self.models: list[MotionModelPatcher] = []
         if init_motion_model is not None:
-            self.add(init_motion_model)
+            if isinstance(init_motion_model, list):
+                for m in init_motion_model:
+                    self.add(m)
+            else:
+                self.add(init_motion_model)
 
     def add(self, mm: MotionModelPatcher):
         # add to end of list
@@ -1160,11 +643,12 @@ class MotionModelGroup:
     
     def initialize_timesteps(self, model: BaseModel):
         for motion_model in self.models:
-            motion_model.initialize_timesteps(model)
+            attachment = get_mm_attachment(motion_model)
+            attachment.initialize_timesteps(model)
 
-    def pre_run(self, model: ModelPatcherAndInjector):
+    def pre_run(self, model: ModelPatcher):
         for motion_model in self.models:
-            motion_model.pre_run(model)
+            motion_model.pre_run()
     
     def cleanup(self):
         for motion_model in self.models:
@@ -1172,12 +656,14 @@ class MotionModelGroup:
     
     def prepare_current_keyframe(self, x: Tensor, t: Tensor):
         for motion_model in self.models:
-            motion_model.prepare_current_keyframe(x=x, t=t)
+            attachment = get_mm_attachment(motion_model)
+            attachment.prepare_current_keyframe(motion_model, x=x, t=t)
 
-    def get_pia_models(self):
+    def get_special_models(self):
         pia_motion_models: list[MotionModelPatcher] = []
         for motion_model in self.models:
-            if motion_model.is_pia():
+            attachment = get_mm_attachment(motion_model)
+            if attachment.is_pia(motion_model) or attachment.is_fancyvideo(motion_model):
                 pia_motion_models.append(motion_model)
         return pia_motion_models
 
@@ -1281,11 +767,10 @@ def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: M
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(model.model_dtype())
     ad_wrapper.to(model.offload_device)
-    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
-    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=not is_animatelcm)
-    # TODO: report load_result of motion_module loading?
+    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=False)
+    verify_load_result(load_result=load_result, mm_info=mm_info)
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
-    motion_model = MotionModelPatcher(model=ad_wrapper, load_device=model.load_device, offload_device=model.offload_device)
+    motion_model = create_MotionModelPatcher(model=ad_wrapper, load_device=model.load_device, offload_device=model.offload_device)
     # load motion_lora, if present
     if motion_lora is not None:
         for lora in motion_lora.loras:
@@ -1306,24 +791,50 @@ def load_motion_module_gen2(model_name: str, motion_model_settings: AnimateDiffS
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
     ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
-    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
-    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=not is_animatelcm)
-    # TODO: manually check load_results for AnimateLCM models
-    if is_animatelcm:
-        pass
-    # TODO: report load_result of motion_module loading?
+    load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=False)
+    verify_load_result(load_result=load_result, mm_info=mm_info)
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
-    motion_model = MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
-                                      offload_device=comfy.model_management.unet_offload_device())
+    motion_model = create_MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
+                                              offload_device=comfy.model_management.unet_offload_device())
     return motion_model
 
+
+IncompatibleKeys = namedtuple('IncompatibleKeys', ['missing_keys', 'unexpected_keys'])
+def verify_load_result(load_result: IncompatibleKeys, mm_info: AnimateDiffInfo):
+    error_msgs: list[str] = []
+    is_animatelcm = mm_info.mm_format==AnimateDiffFormat.ANIMATELCM
+
+    remove_missing_idxs = []
+    remove_unexpected_idxs = []
+    for idx, key in enumerate(load_result.missing_keys):
+        # NOTE: AnimateLCM has no pe keys in the model file, so any errors associated with missing pe keys can be ignored
+        if is_animatelcm and "pos_encoder.pe" in key:
+            remove_missing_idxs.append(idx)
+    # remove any keys to ignore in reverse order (to preserve idx correlation)
+    for idx in reversed(remove_unexpected_idxs):
+        load_result.unexpected_keys.pop(idx)
+    for idx in reversed(remove_missing_idxs):
+        load_result.missing_keys.pop(idx)
+    # copied over from torch.nn.Module.module class Module's load_state_dict func
+    if len(load_result.unexpected_keys) > 0:
+        error_msgs.insert(
+            0, 'Unexpected key(s) in state_dict: {}. '.format(
+                ', '.join(f'"{k}"' for k in load_result.unexpected_keys)))
+    if len(load_result.missing_keys) > 0:
+        error_msgs.insert(
+            0, 'Missing key(s) in state_dict: {}. '.format(
+                ', '.join(f'"{k}"' for k in load_result.missing_keys)))
+    if len(error_msgs) > 0:
+        raise RuntimeError('Error(s) in loading state_dict for {}:\n\t{}'.format(
+                            mm_info.mm_name, "\n\t".join(error_msgs)))
+    
 
 def create_fresh_motion_module(motion_model: MotionModelPatcher) -> MotionModelPatcher:
     ad_wrapper = AnimateDiffModel(mm_state_dict=motion_model.model.state_dict(), mm_info=motion_model.model.mm_info)
     ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
     ad_wrapper.load_state_dict(motion_model.model.state_dict())
-    return MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
+    return create_MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
                                       offload_device=comfy.model_management.unet_offload_device())
 
 
@@ -1332,8 +843,8 @@ def create_fresh_encoder_only_model(motion_model: MotionModelPatcher) -> MotionM
     ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
     ad_wrapper.load_state_dict(motion_model.model.state_dict(), strict=False)
-    return MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
-                                      offload_device=comfy.model_management.unet_offload_device()) 
+    return create_MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
+                                      offload_device=comfy.model_management.unet_offload_device())
 
 
 def inject_img_encoder_into_model(motion_model: MotionModelPatcher, w_encoder: MotionModelPatcher):
@@ -1541,12 +1052,11 @@ def apply_mm_settings(model_dict: dict[str, Tensor], mm_settings: AnimateDiffSet
 
 
 class InjectionParams:
-    def __init__(self, unlimited_area_hack: bool=False, apply_mm_groupnorm_hack: bool=True, model_name: str="",
+    def __init__(self, unlimited_area_hack: bool=False, apply_mm_groupnorm_hack: bool=True,
                  apply_v2_properly: bool=True) -> None:
         self.full_length = None
         self.unlimited_area_hack = unlimited_area_hack
         self.apply_mm_groupnorm_hack = apply_mm_groupnorm_hack
-        self.model_name = model_name
         self.apply_v2_properly = apply_v2_properly
         self.context_options: ContextOptionsGroup = ContextOptionsGroup.default()
         self.motion_model_settings = AnimateDiffSettings() # Gen1
@@ -1572,10 +1082,12 @@ class InjectionParams:
     
     def clone(self) -> 'InjectionParams':
         new_params = InjectionParams(
-            self.unlimited_area_hack, self.apply_mm_groupnorm_hack,
-            self.model_name, apply_v2_properly=self.apply_v2_properly,
+            self.unlimited_area_hack, self.apply_mm_groupnorm_hack, apply_v2_properly=self.apply_v2_properly,
             )
         new_params.full_length = self.full_length
         new_params.set_context(self.context_options)
         new_params.set_motion_model_settings(self.motion_model_settings) # Gen1
         return new_params
+    
+    def on_model_patcher_clone(self):
+        return self.clone()
