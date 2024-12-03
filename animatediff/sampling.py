@@ -68,11 +68,11 @@ class AnimateDiffGlobalState:
                 for special_model in special_models:
                     if special_model.model.is_in_effect():
                         attachment = get_mm_attachment(special_model)
-                        if attachment.is_pia():
+                        if attachment.is_pia(special_model):
                             special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
                             conds = get_conds_with_c_concat(conds,
                                                             attachment.get_pia_c_concat(model, x_in))
-                        elif attachment.is_fancyvideo():
+                        elif attachment.is_fancyvideo(special_model):
                             # TODO: handle other weights
                             special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
                             conds = get_conds_with_c_concat(conds,
@@ -90,9 +90,9 @@ class AnimateDiffGlobalState:
             if len(special_models) > 0:
                 for special_model in reversed(special_models):
                     attachment = get_mm_attachment(special_model)
-                    if attachment.is_pia():
+                    if attachment.is_pia(special_model):
                         special_model.model.restore_unet_conv_in_pia_fancyvideo(model)
-                    elif attachment.is_fancyvideo():
+                    elif attachment.is_fancyvideo(special_model):
                         # TODO: fill out
                         special_model.model.restore_unet_conv_in_pia_fancyvideo(model)
 
@@ -189,8 +189,9 @@ def _apply_model_wrapper(executor, *args, **kwargs):
     ADGS: AnimateDiffGlobalState = transformer_options["ADGS"]
     if ADGS.motion_models is not None:
             for motion_model in ADGS.motion_models.models:
-                motion_model.prepare_alcmi2v_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=executor.class_obj.latent_format)
-                motion_model.prepare_camera_features(x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
+                attachment = get_mm_attachment(motion_model)
+                attachment.prepare_alcmi2v_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=executor.class_obj.latent_format)
+                attachment.prepare_camera_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
     del x
     return executor(*args, **kwargs)
 
