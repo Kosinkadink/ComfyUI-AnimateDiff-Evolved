@@ -4,7 +4,7 @@ from typing import Union
 import torch
 from torch import Tensor
 import torch.nn.functional as F
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from comfy.sd import CLIP
 from comfy.utils import ProgressBar
@@ -291,16 +291,21 @@ def _handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP
     prev_holder: Union[CondHolder, None] = None
     for idx, pair in enumerate(pairs):
         holder = None
+        is_over_length = False
         # if no last pair is set, then use first provided val up to the idx
         if prev_holder is None:
             for i in range(idx, pair.idx+1):
                 if i >= length:
+                    is_over_length = True
                     continue
                 real_prompt = apply_values_replace_to_prompt(pair.val, i, values_replace=values_replace)
                 if holder is None or holder.prompt != real_prompt:
                     cond, pooled = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
                     cond = pad_cond(cond, target_length=max_size)
                     holder = CondHolder(idx=i, prompt=real_prompt, raw_prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
+                else:
+                    holder = replace(holder)
+                    holder.idx = i
                 real_cond[i] = cond
                 real_pooled[i] = pooled
                 real_holders[i] = holder
@@ -326,6 +331,7 @@ def _handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP
                 # however, need to check if real_prompt remains the same
                 for i in range(prev_holder.idx+1, pair.idx):
                     if i >= length:
+                        is_over_length = True
                         continue
                     if holder is None:
                         holder = prev_holder
@@ -334,6 +340,9 @@ def _handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP
                         cond, pooled = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
                         cond = pad_cond(cond, target_length=max_size)
                         holder = CondHolder(idx=i, prompt=real_prompt, raw_prompt=pair.val, cond=cond, pooled=pooled, hold=pair.hold)
+                    else:
+                        holder = replace(holder)
+                        holder.idx = i
                     real_cond[i] = holder.cond
                     real_pooled[i] = holder.pooled
                     real_holders[i] = holder
@@ -361,16 +370,17 @@ def _handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP
                 cond_from = None
                 holder = None
                 interm_holder = prev_holder
-                for idx, weight in zip(interp_idxs, interp_weights):
-                    if idx >= length:
+                for raw_idx, weight in zip(interp_idxs, interp_weights):
+                    if raw_idx >= length:
+                        is_over_length = True
                         continue
-                    idx_int = round(float(idx))
+                    idx_int = round(float(raw_idx))
                     # calculate cond_to stuff if not done yet
                     real_prompt = apply_values_replace_to_prompt(pair.val, idx_int, values_replace=values_replace)
                     if holder is None or holder.prompt != real_prompt:
                         cond_to, pooled_to = clip.encode_from_tokens(clip.tokenize(real_prompt), return_pooled=True)
                         cond_to = pad_cond(cond_to, target_length=max_size)
-                        holder = CondHolder(idx=pair.idx, prompt=real_prompt, raw_prompt=pair.val, cond=cond_to, pooled=pooled_to, hold=pair.hold)
+                        holder = CondHolder(idx=idx_int, prompt=real_prompt, raw_prompt=pair.val, cond=cond_to, pooled=pooled_to, hold=pair.hold)
                     # calculate interm_holder stuff if needed
                     real_prompt = apply_values_replace_to_prompt(interm_holder.raw_prompt, idx_int, values_replace=values_replace)
                     if interm_holder.prompt != real_prompt:
@@ -394,6 +404,8 @@ def _handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP
                     real_holders[idx_int] = interm_holder
                     pbar.update(1)
                     comfy.model_management.throw_exception_if_processing_interrupted()
+        if is_over_length:
+            break
         assert holder is not None
         prev_holder = holder
 
