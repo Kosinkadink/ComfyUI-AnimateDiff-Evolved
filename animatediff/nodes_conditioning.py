@@ -17,7 +17,15 @@ from .utils_model import BIGMAX, InterpolationMethod
 from .logger import logger
 
 
-class CreateLoraHookKeyframeInterpolation:
+###################################################################
+# EVERYTHING BELOW HERE IS DEPRECATED;
+# Can be replaced with vanilla ComfyUI nodes
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+#------------------------------------------------------------------
+class CreateLoraHookKeyframeInterpolationDEPR:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -32,12 +40,14 @@ class CreateLoraHookKeyframeInterpolation:
             },
             "optional": {
                 "prev_hook_kf": ("HOOK_KEYFRAMES",),
+                "deprecation_warning": ("ADEWARN", {"text": "Deprecated - use native ComfyUI nodes instead."}),
             },
             "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
             }
         }
     
+    DEPRECATED = True
     RETURN_TYPES = ("HOOK_KEYFRAMES",)
     RETURN_NAMES = ("HOOK_KF",)
     CATEGORY = "Animate Diff 🎭🅐🅓/conditioning/schedule lora hooks"
@@ -64,18 +74,6 @@ class CreateLoraHookKeyframeInterpolation:
             if print_keyframes:
                 logger.info(f"HookKeyframe - start_percent:{percent} = {strength}")
         return (prev_hook_kf,)
-
-
-
-###################################################################
-# EVERYTHING BELOW HERE IS DEPRECATED;
-# Can be replaced with vanilla ComfyUI nodes
-#------------------------------------------------------------------
-#------------------------------------------------------------------
-#------------------------------------------------------------------
-#------------------------------------------------------------------
-#------------------------------------------------------------------
-
 
 
 ###############################################
