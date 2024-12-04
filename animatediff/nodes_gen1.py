@@ -11,7 +11,7 @@ from .utils_model import BetaSchedules, get_available_motion_loras, get_availabl
 from .utils_motion import ADKeyframeGroup, get_combined_multival
 from .motion_lora import MotionLoraInfo, MotionLoraList
 from .motion_module_ad import AllPerBlocks
-from .model_injection import (ModelPatcherHelper, InjectionParams, MotionModelGroup,
+from .model_injection import (ModelPatcherHelper, InjectionParams, MotionModelGroup, get_mm_attachment,
                               load_motion_lora_as_patches, load_motion_module_gen1, load_motion_module_gen2, validate_model_compatibility_gen2,
                               validate_per_block_compatibility)
 from .sample_settings import SampleSettings, SeedNoiseGeneration
@@ -59,12 +59,13 @@ class AnimateDiffLoaderGen1:
         if motion_lora is not None:
             for lora in motion_lora.loras:
                 load_motion_lora_as_patches(motion_model, lora)
-        motion_model.scale_multival = scale_multival
-        motion_model.effect_multival = effect_multival
+        attachment = get_mm_attachment(motion_model)
+        attachment.scale_multival = scale_multival
+        attachment.effect_multival = effect_multival
         if per_block is not None:
             validate_per_block_compatibility(motion_model=motion_model, all_per_blocks=per_block)
-            motion_model.per_block_list = per_block.per_block_list
-        motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
+            attachment.per_block_list = per_block.per_block_list
+        attachment.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
         
         # create injection params
         params = InjectionParams(unlimited_area_hack=False)
@@ -80,7 +81,7 @@ class AnimateDiffLoaderGen1:
 
         # backwards compatibility to support old way of masking scale
         if params.motion_model_settings.mask_attn_scale is not None:
-            motion_model.scale_multival = get_combined_multival(scale_multival, (params.motion_model_settings.mask_attn_scale * params.motion_model_settings.attn_scale))
+            attachment.scale_multival = get_combined_multival(scale_multival, (params.motion_model_settings.mask_attn_scale * params.motion_model_settings.attn_scale))
         
         # need to use a ModelPatcher that supports injection of motion modules into unet
         model = model.clone()
@@ -134,6 +135,7 @@ class LegacyAnimateDiffLoaderWithContext:
             }
         }
     
+    DEPRECATED = True
     RETURN_TYPES = ("MODEL",)
     CATEGORY = "Animate Diff 🎭🅐🅓/① Gen1 nodes ①"
     FUNCTION = "load_mm_and_inject_params"
@@ -161,12 +163,13 @@ class LegacyAnimateDiffLoaderWithContext:
         motion_model_settings.attn_scale = motion_scale
         params.set_motion_model_settings(motion_model_settings)
 
+        attachment = get_mm_attachment(motion_model)
         if params.motion_model_settings.mask_attn_scale is not None:
-            motion_model.scale_multival = params.motion_model_settings.mask_attn_scale * params.motion_model_settings.attn_scale
+            attachment.scale_multival = params.motion_model_settings.mask_attn_scale * params.motion_model_settings.attn_scale
         else:
-            motion_model.scale_multival = params.motion_model_settings.attn_scale
+            attachment.scale_multival = params.motion_model_settings.attn_scale
 
-        motion_model.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
+        attachment.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
 
         # need to use a ModelPatcher that supports injection of motion modules into unet
         model = model.clone()
