@@ -11,7 +11,7 @@ from einops import rearrange
 import comfy.ops
 from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.attention import CrossAttention, FeedForward
-from comfy.model_patcher import ModelPatcher
+from comfy.model_patcher import ModelPatcher, PatcherInjection
 
 
 def zero_module(module: nn.Module):
@@ -21,11 +21,11 @@ def zero_module(module: nn.Module):
 
 
 def create_HM_forward_timestep_embed_patch():
-    return (SKReferenceAttention, hm_forward_timestep_embed_patch_ade)
+    return (SKReferenceAttention, _hm_forward_timestep_embed_patch_ade)
 
-
-def hm_forward_timestep_embed_patch_ade(layer, x, emb, context, transformer_options, *args, **kwargs):
+def _hm_forward_timestep_embed_patch_ade(layer, x, emb, context, transformer_options, *args, **kwargs):
     return layer(x, transformer_options=transformer_options)
+
 
 
 class HMReferenceAdapter(nn.Module):
@@ -51,13 +51,15 @@ class HMReferenceAdapter(nn.Module):
             self.reference_modules_down.append(
                 SKReferenceAttention(
                     in_channels=output_channel,
-                    num_attention_heads=num_attention_heads[i]
+                    num_attention_heads=num_attention_heads[i],
+                    ops=ops
                 )
             )
 
         self.reference_modules_mid = SKReferenceAttention(
             in_channels=block_out_channels[-1],
-            num_attention_heads=num_attention_heads[-1]
+            num_attention_heads=num_attention_heads[-1],
+            ops=ops
         )
 
         reversed_block_out_channels = list(reversed(block_out_channels))
@@ -72,17 +74,62 @@ class HMReferenceAdapter(nn.Module):
                 self.reference_modules_up.append(
                     SKReferenceAttention(
                         in_channels=prev_output_channel,
-                        num_attention_heads=reversed_num_attention_heads[i]
+                        num_attention_heads=reversed_num_attention_heads[i],
+                        ops=ops
                     )
                 )
     
     def inject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = model.model.diffusion_model
+        # inject input (down) blocks
+        if self.reference_modules_down is not None:
+            self._inject_down(unet.input_blocks)
+        # inject mid block
+        if self.reference_modules_mid is not None:
+            self._inject_mid([unet.middle_block])
+        # inject output (up) blocks
+        if self.reference_modules_up is not None:
+            self._inject_up(unet.output_blocks)
         del unet
+
+    def _inject_down(self, unet_blocks: nn.ModuleList):
+        b = 20
+
+    def _inject_up(self, unet_blocks: nn.ModuleList):
+        b = 20
+
+    def _inject_mid(self, unet_blocks: nn.ModuleList):
+        # add middle block at the end
+        injection_count = 0
+        unet_idx = 0
+        injection_goal = 1
 
     def eject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = model.model.diffusion_model
+        # eject input (down) blocks
+        if hasattr(unet, "input_blocks"):
+            self._eject(unet.input_blocks)
+        # eject mid block (encapsulate in list to make compatible)
+        if hasattr(unet, "middle_block"):
+            self._eject([unet.middle_block])
+        # eject output (up) blocks
+        if hasattr(unet, "output_blocks"):
+            self._eject(unet.output_blocks)
         del unet
+    
+    def _eject(self, unet_blocks: nn.ModuleList):
+        # eject all SKReferenceAttention objects from all blocks
+        for block in unet_blocks:
+            idx_to_pop = []
+            for idx, component in enumerate(block):
+                if type(component) == SKReferenceAttention:
+                    idx_to_pop.append(idx)
+            # pop in reverse order, as to not disturb what the indeces refer to
+            for idx in sorted(idx_to_pop, reverse=True):
+                block.pop(idx)
+
+    def create_injector(self):
+        return PatcherInjection(inject=self.inject, eject=self.eject)
 
 
 class SKReferenceAttention(nn.Module):

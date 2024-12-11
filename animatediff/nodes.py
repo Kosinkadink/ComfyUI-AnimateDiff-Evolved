@@ -10,6 +10,7 @@ from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateD
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
 from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
 from .nodes_fancyvideo import (ApplyAnimateDiffFancyVideo,)
+from .nodes_hellomeme import (TestHMRefNetInjection,)
 from .nodes_multival import MultivalDynamicNode, MultivalScaledMaskNode, MultivalDynamicFloatInputNode, MultivalDynamicFloatsNode, MultivalConvertToMaskNode
 from .nodes_conditioning import (CreateLoraHookKeyframeInterpolationDEPR,
                                  MaskableLoraLoaderDEPR, MaskableLoraLoaderModelOnlyDEPR, MaskableSDModelLoaderDEPR, MaskableSDModelLoaderModelOnlyDEPR, 
@@ -212,6 +213,8 @@ NODE_CLASS_MAPPINGS = {
     "ADE_InjectPIAIntoAnimateDiffModel": LoadAnimateDiffAndInjectPIANode,
     # FancyVideo
     #ApplyAnimateDiffFancyVideo.NodeID: ApplyAnimateDiffFancyVideo,
+    # HelloMeme
+    TestHMRefNetInjection.NodeID: TestHMRefNetInjection,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoaderDEPR,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvancedDEPR,
@@ -383,6 +386,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_InjectPIAIntoAnimateDiffModel": "🧪Inject PIA into AnimateDiff Model 🎭🅐🅓②",
     # FancyVideo
     ApplyAnimateDiffFancyVideo.NodeID: ApplyAnimateDiffFancyVideo.NodeName,
+    # HelloMeme
+    TestHMRefNetInjection.NodeID: TestHMRefNetInjection.NodeName,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "🚫AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
