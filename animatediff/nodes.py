@@ -214,7 +214,7 @@ NODE_CLASS_MAPPINGS = {
     # FancyVideo
     #ApplyAnimateDiffFancyVideo.NodeID: ApplyAnimateDiffFancyVideo,
     # HelloMeme
-    TestHMRefNetInjection.NodeID: TestHMRefNetInjection,
+    #TestHMRefNetInjection.NodeID: TestHMRefNetInjection,
     # Deprecated Nodes
     "AnimateDiffLoaderV1": AnimateDiffLoaderDEPR,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvancedDEPR,

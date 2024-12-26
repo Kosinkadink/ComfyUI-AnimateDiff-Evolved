@@ -1,5 +1,6 @@
 # main code adapted from HelloMeme: https://github.com/HelloVision/HelloMeme
-from typing import Optional, Union, Callable
+from __future__ import annotations
+from typing import Optional, Union, Callable, TYPE_CHECKING
 
 import copy
 import math
@@ -9,9 +10,28 @@ from torch import Tensor, nn
 from einops import rearrange
 
 import comfy.ops
+import comfy.model_management
+import comfy.patcher_extension
+from comfy.patcher_extension import WrappersMP
+import comfy.utils
 from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.attention import CrossAttention, FeedForward
 from comfy.model_patcher import ModelPatcher, PatcherInjection
+if TYPE_CHECKING:
+    from comfy.sd import VAE
+    from comfy.model_base import BaseModel
+
+from .utils_model import get_motion_model_path, vae_encode_raw_batched
+from .utils_motion import extend_to_batch_size
+from .logger import logger
+
+
+class HMRefConst:
+    HMREF = "ADE_HMREF"
+    REF_STATES = "ade_ref_states"
+    REF_MODE = "ade_ref_mode"
+    WRITE = "write"
+    READ = "read"
 
 
 def zero_module(module: nn.Module):
@@ -28,10 +48,132 @@ def _hm_forward_timestep_embed_patch_ade(layer, x, emb, context, transformer_opt
 
 
 
+class HMModelPatcher(ModelPatcher):
+    '''Class used only for type hints.'''
+    def __init__(self):
+        self.model: HMReferenceAdapter
+
+
+def create_HMModelPatcher(model: HMReferenceAdapter, load_device, offload_device) -> HMModelPatcher:
+    patcher = ModelPatcher(model, load_device=load_device, offload_device=offload_device)
+    return patcher
+
+
+def load_hmreferenceadapter(model_name: str):
+    model_path = get_motion_model_path(model_name)
+    logger.info(f"Loading HMReferenceAdapter {model_name}")
+    state_dict = comfy.utils.load_torch_file(model_path, safe_load=True)
+    state_dict = prepare_hmref_state_dict(state_dict=state_dict, name=model_name)
+    # initialize HMReferenceAdapter
+    if comfy.model_management.unet_manual_cast(comfy.model_management.unet_dtype(), comfy.model_management.get_torch_device()) is None:
+        ops = comfy.ops.disable_weight_init
+    else:
+        ops = comfy.ops.manual_cast
+    hmref = HMReferenceAdapter(ops=ops)
+    hmref.to(comfy.model_management.unet_dtype())
+    hmref.to(comfy.model_management.unet_offload_device())
+    load_result = hmref.load_state_dict(state_dict, strict=True)
+    hmref_model = create_HMModelPatcher(model=hmref, load_device=comfy.model_management.get_torch_device(),
+                                        offload_device=comfy.model_management.unet_offload_device())
+    return hmref_model
+
+
+def prepare_hmref_state_dict(state_dict: dict[str, Tensor], name: str):
+    for key in list(state_dict.keys()):
+        # the last down module is not used at all; don't bother loading it
+        if key.startswith("reference_modules_down.3"):
+            state_dict.pop(key)
+    return state_dict
+
+
+def create_hmref_attachment(model: ModelPatcher, attachment: HMRefAttachment):
+    model.set_attachments(HMRefConst.HMREF, attachment)
+
+
+def get_hmref_attachment(model: ModelPatcher) -> Union[HMRefAttachment, None]:
+    return model.get_attachment(HMRefConst.HMREF)
+
+
+def create_hmref_apply_model_wrapper(model_options: dict):
+    comfy.patcher_extension.add_wrapper_with_key(WrappersMP.APPLY_MODEL,
+                                                 HMRefConst.HMREF,
+                                                 _hmref_apply_model_wrapper,
+                                                 model_options, is_model_options=True)
+
+
+def _hmref_apply_model_wrapper(executor, *args, **kwargs):
+    # args (from BaseModel._apply_model):
+    # 0: x
+    # 1: t
+    # 2: c_concat
+    # 3: c_crossattn
+    # 4: control
+    # 5: transformer_options
+    transformer_options: dict[str] = args[5]
+    try:
+        transformer_options[HMRefConst.REF_STATES] = HMRefStates()
+        transformer_options[HMRefConst.REF_MODE] = HMRefConst.WRITE
+        # run in WRITE mode to get REF_STATES filled up
+        executor(*args, **kwargs)
+        # run in READ mode now
+        transformer_options[HMRefConst.REF_MODE] = HMRefConst.READ
+        return executor(*args, **kwargs)
+    finally:
+        # clean up transformer_options
+        del transformer_options[HMRefConst.REF_STATES]
+        del transformer_options[HMRefConst.REF_MODE]
+
+class HMRefAttachment:
+    def __init__(self,
+                 image: Tensor,
+                 vae: VAE):
+        self.image = image
+        self.vae = vae
+        # cached values
+        self.cached_shape = None
+        self.ref_latent: Tensor = None
+
+    def on_model_patcher_clone(self, *args, **kwargs):
+        n = HMRefAttachment(image=self.image, vae=self.vae)
+        return n
+
+    def prepare_ref_latent(self, model: BaseModel, x: Tensor):
+        # if already prepared, return it on expected device
+        if self.ref_latent is not None:
+            return self.ref_latent.to(device=x.device, dtype=x.dtype)
+        # get currently used models so they can be properly reloaded after perfoming VAE Encoding
+        cached_loaded_models = comfy.model_management.loaded_models(only_currently_used=True)
+        try:
+            b, c, h, w = x.shape
+            # transform range [0, 1] into [-1, 1]
+            #usable_ref = self.image.clone()
+            usable_ref = 2.0 * self.image - 1.0
+            # resize image to match latent size
+            usable_ref = usable_ref.movedim(-1, 1)
+            usable_ref = comfy.utils.common_upscale(samples=usable_ref, width=w*self.vae.downscale_ratio, height=h*self.vae.downscale_ratio,
+                                               upscale_method="bilinear", crop="center")
+            usable_ref = usable_ref.movedim(1, -1)
+            # VAE encode images
+            logger.info("VAE Encoding HMREF input images...")
+            usable_ref = model.process_latent_in(vae_encode_raw_batched(vae=self.vae, pixels=usable_ref, show_pbar=False))
+            logger.info("VAE Encoding HMREF input images complete.")
+            # make usable_ref expected length
+            usable_ref = extend_to_batch_size(usable_ref, b)
+            self.ref_latent = usable_ref.to(device=x.device, dtype=x.dtype)
+            return self.ref_latent
+        finally:
+            comfy.model_management.load_models_gpu(cached_loaded_models)
+
+    def cleanup(self, *args, **kwargs):
+        del self.ref_latent
+        self.ref_latent = None
+
+
 class HMReferenceAdapter(nn.Module):
     def __init__(self,
                  block_out_channels: tuple[int] = (320, 640, 1280, 1280),
                  num_attention_heads: Optional[Union[int, tuple[int]]] = 8,
+                 ignore_last_down: bool = True,
                  ops=comfy.ops.disable_weight_init
                  ):
         super().__init__()
@@ -45,12 +187,15 @@ class HMReferenceAdapter(nn.Module):
         self.reference_modules_mid = None
         self.reference_modules_up = nn.ModuleList([])
 
-        for i in range(len(block_out_channels)):
+        # ignore last block (only CrossAttn blocks matter), unless otherwise specified
+        channels_to_parse = block_out_channels if not ignore_last_down else block_out_channels[:-1]
+        for i in range(len(channels_to_parse)):
             output_channel = block_out_channels[i]
             
             self.reference_modules_down.append(
                 SKReferenceAttention(
                     in_channels=output_channel,
+                    index=i,
                     num_attention_heads=num_attention_heads[i],
                     ops=ops
                 )
@@ -58,6 +203,7 @@ class HMReferenceAdapter(nn.Module):
 
         self.reference_modules_mid = SKReferenceAttention(
             in_channels=block_out_channels[-1],
+            index=0,
             num_attention_heads=num_attention_heads[-1],
             ops=ops
         )
@@ -67,13 +213,16 @@ class HMReferenceAdapter(nn.Module):
 
         output_channel = reversed_block_out_channels[0]
         for i in range(len(block_out_channels)):
+            # need prev_output_channel due to Upsample locations
             prev_output_channel = output_channel
             output_channel = reversed_block_out_channels[i]
 
+            # ignore first block (only CrossAttn blocks matter)
             if i > 0:
                 self.reference_modules_up.append(
                     SKReferenceAttention(
                         in_channels=prev_output_channel,
+                        index=i,
                         num_attention_heads=reversed_num_attention_heads[i],
                         ops=ops
                     )
@@ -83,26 +232,39 @@ class HMReferenceAdapter(nn.Module):
         unet: openaimodel.UNetModel = model.model.diffusion_model
         # inject input (down) blocks
         if self.reference_modules_down is not None:
-            self._inject_down(unet.input_blocks)
+            self._inject_up_down(unet.input_blocks, self.reference_modules_down, "Downsample")
         # inject mid block
         if self.reference_modules_mid is not None:
             self._inject_mid([unet.middle_block])
+        #print(unet.middle_block)
         # inject output (up) blocks
         if self.reference_modules_up is not None:
-            self._inject_up(unet.output_blocks)
+            self._inject_up_down(unet.output_blocks, self.reference_modules_up, "Upsample")
         del unet
 
-    def _inject_down(self, unet_blocks: nn.ModuleList):
-        b = 20
-
-    def _inject_up(self, unet_blocks: nn.ModuleList):
-        b = 20
+    def _inject_up_down(self, unet_blocks: nn.ModuleList, ref_blocks: nn.ModuleList, sample_module_name: str):
+        injection_count = 0
+        unet_idx = 0
+        injection_goal = len(ref_blocks)
+        # only stop injecting when modules exhausted
+        while injection_count < injection_goal:
+            if unet_idx >= len(unet_blocks):
+                break
+            # look for sample_module_name block in current unet_idx
+            sample_idx = -1
+            for idx, component in enumerate(unet_blocks[unet_idx]):
+                if type(component).__name__ == sample_module_name:
+                    sample_idx = idx
+            # if found, place ref_block right after it
+            if sample_idx >= 0:
+                unet_blocks[unet_idx].insert(sample_idx+1, ref_blocks[injection_count])
+                injection_count += 1
+            # increment unet_idx
+            unet_idx += 1
 
     def _inject_mid(self, unet_blocks: nn.ModuleList):
         # add middle block at the end
-        injection_count = 0
-        unet_idx = 0
-        injection_goal = 1
+        unet_blocks[0].insert(len(unet_blocks[0]), self.reference_modules_mid)
 
     def eject(self, model: ModelPatcher):
         unet: openaimodel.UNetModel = model.model.diffusion_model
@@ -112,6 +274,7 @@ class HMReferenceAdapter(nn.Module):
         # eject mid block (encapsulate in list to make compatible)
         if hasattr(unet, "middle_block"):
             self._eject([unet.middle_block])
+        #print(unet.middle_block)
         # eject output (up) blocks
         if hasattr(unet, "output_blocks"):
             self._eject(unet.output_blocks)
@@ -132,9 +295,15 @@ class HMReferenceAdapter(nn.Module):
         return PatcherInjection(inject=self.inject, eject=self.eject)
 
 
+class HMRefStates:
+    def __init__(self):
+        self.states = {}
+
+
 class SKReferenceAttention(nn.Module):
     def __init__(self,
                  in_channels: int,
+                 index: int,
                  num_attention_heads: int=1,
                  norm_elementwise_affine: bool = True,
                  norm_eps: float = 1e-5,
@@ -142,6 +311,7 @@ class SKReferenceAttention(nn.Module):
                  ops = comfy.ops.disable_weight_init,
                  ):
         super().__init__()
+        self.index = index
         self.pos_embed = SinusoidalPositionalEmbedding(in_channels, max_seq_length=num_positional_embeddings)
         self.attn1 = CrossAttention(
             query_dim=in_channels,
@@ -158,23 +328,34 @@ class SKReferenceAttention(nn.Module):
         self.norm = ops.LayerNorm(in_channels, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
         self.proj = zero_module(ops.Conv2d(in_channels, in_channels, kernel_size=3, padding=1))
 
+    def get_ref_state_id(self, transformer_options: dict[str]):
+        block = transformer_options["block"]
+        return f"{block[0]}_{self.index}"
+
     # def forward(self, hidden_states: Tensor, ref_states: Tensor, num_frames: int):
     def forward(self, hidden_states: Tensor, transformer_options: dict[str]):
+        ref_mode = transformer_options.get(HMRefConst.REF_MODE, HMRefConst.WRITE)
+        if ref_mode == HMRefConst.WRITE:
+            ref_states: HMRefStates = transformer_options.setdefault(HMRefConst.REF_STATES, HMRefStates())
+            ref_states.states[self.get_ref_state_id(transformer_options)] = hidden_states.clone()
+            return hidden_states
+
         h, w = hidden_states.shape[-2:]
 
-        ref_states: Tensor = transformer_options["ade_ref_states"]
-        ad_params: dict[str] = transformer_options["ad_params"]
-        num_frames = ad_params.get("context_length", ad_params["full_length"])
+        states: Tensor = transformer_options[HMRefConst.REF_STATES].states[self.get_ref_state_id(transformer_options)]
+        num_frames = hidden_states.shape[0] // len(transformer_options["cond_or_uncond"])
+        #ad_params: dict[str] = transformer_options["ad_params"]
+        #num_frames = ad_params.get("context_length", ad_params["full_length"])
 
-        if ref_states.shape[0] != hidden_states.shape[0]:
-            ref_states = ref_states.repeat_interleave(num_frames, dim=0)
-        cat_states = torch.cat([hidden_states, ref_states], dim=-1)
+        if states.shape[0] != hidden_states.shape[0]:
+            states = states.repeat_interleave(num_frames, dim=0)
+        cat_states = torch.cat([hidden_states, states], dim=-1)
 
         cat_states = rearrange(cat_states.contiguous(), "b c h w -> (b h) w c")
         res1 = self.attn1(self.norm(self.pos_embed(cat_states)))
         res1 = rearrange(res1[:, :w, :], "(b h) w c -> b c h w", h=h)
 
-        cat_states2 = torch.cat([res1, ref_states], dim=-2)
+        cat_states2 = torch.cat([res1, states], dim=-2)
         cat_states2 = rearrange(cat_states2.contiguous(), "b c h w -> (b w) h c")
         res2 = self.attn2(self.norm(self.pos_embed(cat_states2)))
 

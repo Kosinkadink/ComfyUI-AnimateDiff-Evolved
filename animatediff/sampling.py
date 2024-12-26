@@ -26,6 +26,7 @@ from .utils_model import MachineState, vae_encode_raw_batched, vae_decode_raw_ba
 from .utils_motion import composite_extend, prepare_mask_batch, extend_to_batch_size
 from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup, get_mm_attachment
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion
+from .adapter_hellomeme import HMRefConst, HMRefStates, get_hmref_attachment, create_hmref_apply_model_wrapper
 from .logger import logger
 
 
@@ -367,6 +368,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
     cached_latents = None
     cached_noise = None
     function_injections = FunctionInjectionHolder()
+    hmref_attachment = None
 
     try:
         guider: comfy.samplers.CFGGuider = executor.class_obj
@@ -435,6 +437,34 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
         iter_kwargs = {}
         # NOTE: original KSampler stuff is not doable here, so skipping...
 
+    
+        # NOTE: this will never be used as I have hidden HelloMeme RefNet nodes from being loaded
+        # if have HMRef, then do what's needed
+        hmref_attachment = get_hmref_attachment(helper.model)
+        if hmref_attachment is not None:
+            ref_latents = None
+            #sigmas: Tensor = args[3]
+            try:
+                hmref_attachment.prepare_ref_latent(helper.model.model, x=latents)
+                # NOTE: trying out using the hmrefnet more like other types of refnets
+                create_hmref_apply_model_wrapper(guider.model_options)
+                # ref_latents = hmref_attachment.prepare_ref_latent(helper.model.model, x=latents)
+                # ref_sigmas = torch.tensor([helper.model.model.model_sampling.sigma_min, torch.tensor(0.0)]).to(device=sigmas.device, dtype=sigmas.dtype)
+                # new_args = args.copy()
+                # new_args[3] = ref_sigmas
+                # make sure transformer_options has necessary HMREF stuff
+                # guider.model_options["transformer_options"][HMRefConst.REF_STATES] = HMRefStates()
+                # guider.model_options["transformer_options"][HMRefConst.REF_MODE] = HMRefConst.WRITE
+                # ADGS.update_with_inject_params(params)
+                # ADGS.start_step = 0
+                # ADGS.current_step = ADGS.start_step
+                # ADGS.last_step = 0
+                # executor(*tuple(new_args), **kwargs)
+                # guider.model_options["transformer_options"][HMRefConst.REF_MODE] = HMRefConst.READ
+            finally:
+                del ref_latents
+                #del sigmas
+
         for curr_i in range(iter_opts.iterations):
             # handle GLOBALSTATE vars and step tally
             # NOTE: only KSampler/KSampler (Advanced) would have steps;
@@ -493,6 +523,9 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
         del cached_latents
         del cached_noise
         del orig_model_options
+        if hmref_attachment is not None:
+            hmref_attachment.cleanup()
+        del hmref_attachment
         # reset global state
         ADGS.reset()
         # clean motion_models

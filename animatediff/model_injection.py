@@ -1,3 +1,4 @@
+from __future__ import annotations
 import copy
 from typing import Union, Callable
 from collections import namedtuple
@@ -56,7 +57,7 @@ class ModelPatcherHelper:
         self.model = model
 
     def set_all_properties(self, outer_sampler_wrapper: Callable, calc_cond_batch_wrapper: Callable,
-                           params: 'InjectionParams', sample_settings: SampleSettings=None, motion_models: 'MotionModelGroup'=None):
+                           params: InjectionParams, sample_settings: SampleSettings=None, motion_models: MotionModelGroup=None):
         self.set_outer_sample_wrapper(outer_sampler_wrapper)
         self.set_calc_cond_batch_wrapper(calc_cond_batch_wrapper)
         self.set_sample_settings(sample_settings = sample_settings if sample_settings is not None else SampleSettings())
@@ -122,16 +123,18 @@ class ModelPatcherHelper:
 
 
     def get_sample_settings(self) -> SampleSettings:
-        return self.model.get_attachment(self.SAMPLE_SETTINGS)
+        sample_settings = self.model.get_attachment(self.SAMPLE_SETTINGS)
+        return sample_settings if sample_settings is not None else SampleSettings()
     
     def set_sample_settings(self, sample_settings: SampleSettings):
         self.model.set_attachments(self.SAMPLE_SETTINGS, sample_settings)
     
 
-    def get_params(self) -> 'InjectionParams':
-        return self.model.get_attachment(self.PARAMS)
+    def get_params(self) -> InjectionParams:
+        params = self.model.get_attachment(self.PARAMS)
+        return params if params is not None else InjectionParams()
     
-    def set_params(self, params: 'InjectionParams'):
+    def set_params(self, params: InjectionParams):
         self.model.set_attachments(self.PARAMS, params)
         if params.context_options.context_length is not None:
             self.set_ACN_outer_sample_wrapper(throw_exception=False)
@@ -236,7 +239,7 @@ def _mm_clean_callback(self: MotionModelPatcher, *args, **kwargs):
     attachment.cleanup(self)
 
 
-def get_mm_attachment(patcher: MotionModelPatcher) -> 'MotionModelAttachment':
+def get_mm_attachment(patcher: MotionModelPatcher) -> MotionModelAttachment:
     return patcher.get_attachment(ModelPatcherHelper.ADE)
 
 
@@ -623,7 +626,7 @@ class MotionModelGroup:
     def is_empty(self) -> bool:
         return len(self.models) == 0
     
-    def clone(self) -> 'MotionModelGroup':
+    def clone(self) -> MotionModelGroup:
         cloned = MotionModelGroup()
         for mm in self.models:
             cloned.add(mm)
@@ -1080,7 +1083,7 @@ class InjectionParams:
     def reset_context(self):
         self.context_options = ContextOptionsGroup.default()
     
-    def clone(self) -> 'InjectionParams':
+    def clone(self) -> InjectionParams:
         new_params = InjectionParams(
             self.unlimited_area_hack, self.apply_mm_groupnorm_hack, apply_v2_properly=self.apply_v2_properly,
             )
