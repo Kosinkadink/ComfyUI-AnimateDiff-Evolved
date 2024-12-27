@@ -1313,6 +1313,8 @@ class TemporalTransformerBlock(nn.Module):
 
         self.ff = FeedForward(dim, dropout=dropout, glu=(activation_fn == "geglu"), operations=ops)
         self.ff_norm = ops.LayerNorm(dim)
+        # for MotionCtrl (CMCM) use
+        self.cc_projections: comfy.ops.disable_weight_init.Linear = None
 
     def set_scale_multiplier(self, idx: int, multiplier: Union[float, None]):
         self.attention_blocks[idx].set_scale_multiplier(multiplier)
@@ -1346,6 +1348,7 @@ class TemporalTransformerBlock(nn.Module):
             elif view_options.context_length == video_length and not view_options.use_on_equal_length:
                 view_options = None
         if not view_options:
+            count = 0
             for attention_block, norm, scale_mask in zip(self.attention_blocks, self.norms, scale_masks):
                 norm_hidden_states = norm(hidden_states).to(hidden_states.dtype)
                 hidden_states = (
@@ -1362,6 +1365,15 @@ class TemporalTransformerBlock(nn.Module):
                         transformer_options=transformer_options,
                     ) + hidden_states
                 )
+                # do MotionCtrl-CMCM stuff if needed
+                if self.cc_projections is not None and count==0 and 'ADE_RT' in transformer_options:
+                    RT: Tensor = transformer_options['ADE_RT']
+                    B, t, _ = RT.shape
+                    RT = RT.reshape(B*t, 1, -1)
+                    RT = RT.repeat(1, hidden_states.shape[1])
+                    hidden_states = torch.cat([hidden_states, RT], dim=-1)
+                    hidden_states = self.cc_projections(hidden_states)
+                count += 1
         else:
             # views idea gotten from diffusers AnimateDiff FreeNoise implementation:
             # https://github.com/arthur-qiu/FreeNoise-AnimateDiff/blob/main/animatediff/models/motion_module.py
@@ -1381,6 +1393,7 @@ class TemporalTransformerBlock(nn.Module):
                 sub_hidden_states = rearrange(hidden_states[:, sub_idxs], "b f d c -> (b f) d c")
                 if has_camera_feature:
                     mm_kwargs["camera_feature"] = orig_camera_feature[:, sub_idxs, :]
+                count = 0
                 for attention_block, norm, scale_mask in zip(self.attention_blocks, self.norms, scale_masks):
                     norm_hidden_states = norm(sub_hidden_states).to(sub_hidden_states.dtype)
                     sub_hidden_states = (
@@ -1397,6 +1410,7 @@ class TemporalTransformerBlock(nn.Module):
                             transformer_options=transformer_options,
                         ) + sub_hidden_states
                     )
+                    count += 1
                 sub_hidden_states = rearrange(sub_hidden_states, "(b f) d c -> b f d c", f=len(sub_idxs))
 
                 weights = get_context_weights(len(sub_idxs), view_options.fuse_method) * batched_conds
