@@ -1,6 +1,6 @@
 import comfy.sample as comfy_sample
 
-from .nodes_gen1 import (AnimateDiffLoaderGen1, LegacyAnimateDiffLoaderWithContext)
+from .nodes_gen1 import (AnimateDiffLoaderGen1,)
 from .nodes_gen2 import (UseEvolvedSamplingNode, ApplyAnimateDiffModelNode, ApplyAnimateDiffModelBasicNode, ADKeyframeNode,
                          LoadAnimateDiffModelNode)
 from .nodes_animatelcmi2v import (ApplyAnimateLCMI2VModel, LoadAnimateLCMI2VModelNode, LoadAnimateDiffAndInjectI2VNode, UpscaleAndVaeEncode)
@@ -8,6 +8,7 @@ from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateD
                                LoadCameraPosesFromFile, LoadCameraPosesFromPath,
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
+from .nodes_motionctrl import (LoadMotionCtrlCMCM, LoadMotionCtrlOMCM, ApplyAnimateDiffMotionCtrlModel)
 from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
 from .nodes_fancyvideo import (ApplyAnimateDiffFancyVideo,)
 from .nodes_hellomeme import (TestHMRefNetInjection,)
@@ -44,7 +45,7 @@ from .nodes_per_block import (ADBlockComboNode, ADBlockIndivNode, PerBlockHighLe
                               PerBlock_SD15_LowLevelNode, PerBlock_SD15_MidLevelNode, PerBlock_SD15_FromFloatsNode,
                               PerBlock_SDXL_LowLevelNode, PerBlock_SDXL_MidLevelNode, PerBlock_SDXL_FromFloatsNode)
 from .nodes_extras import AnimateDiffUnload, EmptyLatentImageLarge, CheckpointLoaderSimpleWithNoiseSelect, PerturbedAttentionGuidanceMultival, RescaleCFGMultival
-from .nodes_deprecated import (AnimateDiffLoaderDEPR, AnimateDiffLoaderAdvancedDEPR, AnimateDiffCombineDEPR,
+from .nodes_deprecated import (AnimateDiffLoaderDEPR, AnimateDiffLoaderAdvancedDEPR, LegacyAnimateDiffLoaderWithContextDEPR, AnimateDiffCombineDEPR,
                                AnimateDiffModelSettingsDEPR, AnimateDiffModelSettingsSimpleDEPR, AnimateDiffModelSettingsAdvancedDEPR, AnimateDiffModelSettingsAdvancedAttnStrengthsDEPR)
 from .nodes_lora import AnimateDiffLoraLoader
 
@@ -182,7 +183,6 @@ NODE_CLASS_MAPPINGS = {
     "ADE_RescaleCFGMultival": RescaleCFGMultival,
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderGen1": AnimateDiffLoaderGen1,
-    "ADE_AnimateDiffLoaderWithContext": LegacyAnimateDiffLoaderWithContext,
     # Gen2 Nodes
     "ADE_UseEvolvedSampling": UseEvolvedSamplingNode,
     "ADE_ApplyAnimateDiffModelSimple": ApplyAnimateDiffModelBasicNode,
@@ -193,6 +193,10 @@ NODE_CLASS_MAPPINGS = {
     "ADE_LoadAnimateLCMI2VModel": LoadAnimateLCMI2VModelNode,
     "ADE_UpscaleAndVAEEncode": UpscaleAndVaeEncode,
     "ADE_InjectI2VIntoAnimateDiffModel": LoadAnimateDiffAndInjectI2VNode,
+    # MotionCtrl Nodes
+    LoadMotionCtrlCMCM.NodeID: LoadMotionCtrlCMCM,
+    LoadMotionCtrlOMCM.NodeID: LoadMotionCtrlOMCM,
+    ApplyAnimateDiffMotionCtrlModel.NodeID: ApplyAnimateDiffMotionCtrlModel,
     # CameraCtrl Nodes
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
     "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
@@ -216,6 +220,7 @@ NODE_CLASS_MAPPINGS = {
     # HelloMeme
     #TestHMRefNetInjection.NodeID: TestHMRefNetInjection,
     # Deprecated Nodes
+    "ADE_AnimateDiffLoaderWithContext": LegacyAnimateDiffLoaderWithContextDEPR,
     "AnimateDiffLoaderV1": AnimateDiffLoaderDEPR,
     "ADE_AnimateDiffLoaderV1Advanced": AnimateDiffLoaderAdvancedDEPR,
     "ADE_AnimateDiffCombine": AnimateDiffCombineDEPR,
@@ -355,7 +360,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_RescaleCFGMultival": "RescaleCFG [Multival] 🎭🅐🅓",
     # Gen1 Nodes
     "ADE_AnimateDiffLoaderGen1": "AnimateDiff Loader 🎭🅐🅓①",
-    "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader [Legacy] 🎭🅐🅓①",
     # Gen2 Nodes
     "ADE_UseEvolvedSampling": "Use Evolved Sampling 🎭🅐🅓②",
     "ADE_ApplyAnimateDiffModelSimple": "Apply AnimateDiff Model 🎭🅐🅓②",
@@ -366,6 +370,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_LoadAnimateLCMI2VModel": "Load AnimateLCM-I2V Model 🎭🅐🅓②",
     "ADE_UpscaleAndVAEEncode": "Scale Ref Image and VAE Encode 🎭🅐🅓②",
     "ADE_InjectI2VIntoAnimateDiffModel": "🧪Inject I2V into AnimateDiff Model 🎭🅐🅓②",
+    # MotionCtrl Nodes
+    LoadMotionCtrlCMCM.NodeID: LoadMotionCtrlCMCM.NodeName,
+    LoadMotionCtrlOMCM.NodeID: LoadMotionCtrlOMCM.NodeName,
+    ApplyAnimateDiffMotionCtrlModel.NodeID: ApplyAnimateDiffMotionCtrlModel.NodeName,
     # CameraCtrl Nodes
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": "Apply AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
     "ADE_LoadAnimateDiffModelWithCameraCtrl": "Load AnimateDiff+CameraCtrl Model 🎭🅐🅓②",
@@ -389,6 +397,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # HelloMeme
     TestHMRefNetInjection.NodeID: TestHMRefNetInjection.NodeName,
     # Deprecated Nodes
+    "ADE_AnimateDiffLoaderWithContext": "AnimateDiff Loader [Legacy] 🎭🅐🅓①",
     "AnimateDiffLoaderV1": "🚫AnimateDiff Loader [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffLoaderV1Advanced": "🚫AnimateDiff Loader (Advanced) [DEPRECATED] 🎭🅐🅓",
     "ADE_AnimateDiffCombine": "🚫AnimateDiff Combine [DEPRECATED, Use Video Combine (VHS) Instead!] 🎭🅐🅓",

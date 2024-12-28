@@ -2,15 +2,14 @@ import torch
 from torch import Tensor
 
 from .ad_settings import AnimateDiffSettings
-from .adapter_motionctrl import injection_motionctrl_cmcm, load_motionctrl_omcm
+from .adapter_motionctrl import inject_motionctrl_cmcm, load_motionctrl_omcm
 
-from .motion_module_ad import AllPerBlocks
 from .model_injection import MotionModelPatcher, MotionModelGroup, load_motion_module_gen2
 from .motion_lora import MotionLoraList
 
 from .nodes_gen2 import ApplyAnimateDiffModelNode
 from .utils_model import get_available_motion_models
-from .utils_motion import ADKeyframeGroup
+from .utils_motion import ADKeyframeGroup, AllPerBlocks
 
 
 class LoadMotionCtrlCMCM:
@@ -24,6 +23,7 @@ class LoadMotionCtrlCMCM:
                 "motionctrl_cmcm": (get_available_motion_models(),),
             },
             "optional": {
+                "override_ad_weights": ("BOOLEAN", {"default": True}),
                 "ad_settings": ("AD_SETTINGS",),
             }
         }
@@ -33,9 +33,10 @@ class LoadMotionCtrlCMCM:
     CATEGORY = "Animate Diff 🎭🅐🅓/② Gen2 nodes ②/MotionCtrl"
     FUNCTION = "load_motionctrl_cmcm"
 
-    def load_motionctrl_cmcm(self, model_name: str, motionctrl_cmcm: str, ad_settings: AnimateDiffSettings=None):
+    def load_motionctrl_cmcm(self, model_name: str, motionctrl_cmcm: str,
+                             override_ad_weights=True, ad_settings: AnimateDiffSettings=None,):
         motion_model = load_motion_module_gen2(model_name=model_name, motion_model_settings=ad_settings)
-        motion_model = injection_motionctrl_cmcm(motion_model, cmcm_name=motionctrl_cmcm)
+        inject_motionctrl_cmcm(motion_model.model, cmcm_name=motionctrl_cmcm, apply_non_ccs=override_ad_weights)
         return (motion_model,)
 
 

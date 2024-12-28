@@ -8,24 +8,50 @@ import comfy.ops
 import comfy.utils
 
 from .adapter_cameractrl import ResnetBlockCameraCtrl
+from .ad_settings import AnimateDiffSettings
 from .motion_module_ad import AnimateDiffModel
+from .model_injection import apply_mm_settings
 from .utils_model import get_motion_model_path
 
+
 # cmcm (Camera Control)
-def injection_motionctrl_cmcm(motion_model: AnimateDiffModel, cmcm_name: str):
-    pass
+def inject_motionctrl_cmcm(motion_model: AnimateDiffModel, cmcm_name: str, ad_settings: AnimateDiffSettings=None,
+                           apply_non_ccs=True):
+    cmcm_path = get_motion_model_path(cmcm_name)
+    state_dict = comfy.utils.load_torch_file(cmcm_path, safe_load=True)
+    _remove_module_prefix(state_dict)
+    # if applicable, apply ad_settings to cmcm to match expected behavior
+    if ad_settings is not None:
+        state_dict = apply_mm_settings(model_dict=state_dict, mm_settings=ad_settings)
+    motion_model.init_motionctrl_cc_projections(state_dict=state_dict)
+    # seperate out PE keys so can be applied separately in case dims don't match
+    apply_dict = {}
+    for key in list(state_dict.keys()):
+        if "cc_projection" in key:
+            apply_dict[key] = state_dict[key]
+            state_dict.pop(key)
+    pe_dict = {}
+    for key in list(state_dict.keys()):
+        if "pos_encoder" in key:
+            pe_dict[key] = state_dict[key]
+            state_dict.pop(key)
+    if apply_non_ccs:
+        apply_dict.update(state_dict)
+        for key, value in pe_dict.items():
+            comfy.utils.set_attr(motion_model, key, value)
+    _, unexpected = motion_model.load_state_dict(apply_dict, strict=False)
+    if len(unexpected) > 0:
+        raise Exception(f"MotionCtrl CMCM model had unexpected keys: {unexpected}")
+    # make sure model is still has proper dtype and offload device
+    motion_model.to(comfy.model_management.unet_dtype())
+    motion_model.to(comfy.model_management.unet_offload_device())
 
 
 # omcm (Object Control)
 def load_motionctrl_omcm(omcm_name: str):
     omcm_path = get_motion_model_path(omcm_name)
     state_dict = comfy.utils.load_torch_file(omcm_path, safe_load=True)
-    for key in list(state_dict.keys()):
-        # remove 'module.' prefix
-        if key.startswith('module.'):
-            new_key = key.replace('module.', '')
-            state_dict[new_key] = state_dict[key]
-            state_dict.pop(key)
+    _remove_module_prefix(state_dict)
     
     if comfy.model_management.unet_manual_cast(comfy.model_management.unet_dtype(), comfy.model_management.get_torch_device()) is None:
         ops = comfy.ops.disable_weight_init
@@ -46,6 +72,15 @@ def load_motionctrl_omcm(omcm_name: str):
 def _create_OMCMModelPatcher(model, load_device, offload_device) -> ObjectControlModelPatcher:
     patcher = ModelPatcher(model, load_device=load_device, offload_device=offload_device)
     return patcher
+
+
+def _remove_module_prefix(state_dict: dict[str, Tensor]):
+    for key in list(state_dict.keys()):
+        # remove 'module.' prefix
+        if key.startswith('module.'):
+            new_key = key.replace('module.', '')
+            state_dict[new_key] = state_dict[key]
+            state_dict.pop(key)
 
 
 class ObjectControlModelPatcher(ModelPatcher):

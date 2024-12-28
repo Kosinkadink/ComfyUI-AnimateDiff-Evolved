@@ -2,9 +2,9 @@ from typing import Union
 from torch import Tensor
 
 from .documentation import short_desc, register_description, coll, DocHelper
-from .motion_module_ad import PerBlock, PerBlockId, BlockType, AllPerBlocks
+from .motion_module_ad import BlockType
 from .utils_model import ModelTypeSD
-from .utils_motion import extend_list_to_batch_size
+from .utils_motion import AllPerBlocks, PerBlock, PerBlockId, extend_list_to_batch_size
 
 
 class ADBlockHolder:
@@ -119,7 +119,7 @@ class PerBlockHighLevelNode:
             if block is not None:
                 blocks.append(PerBlock(id=id, effect=block.effect, scales=block.scales))
         if len(blocks) == 0:
-            return (None,)
+            blocks = None
         return (AllPerBlocks(blocks),)
 
 
@@ -175,7 +175,7 @@ class PerBlock_SD15_MidLevelNode:
             if block is not None:
                 blocks.append(PerBlock(id=id, effect=block.effect, scales=block.scales))
         if len(blocks) == 0:
-            return (None,)
+            blocks = None
         return (AllPerBlocks(blocks, ModelTypeSD.SD1_5),)
 
 
@@ -267,7 +267,7 @@ class PerBlock_SD15_LowLevelNode:
             if block is not None:
                 blocks.append(PerBlock(id=id, effect=block.effect, scales=block.scales))
         if len(blocks) == 0:
-            return (None,)
+            blocks = None
         return (AllPerBlocks(blocks, ModelTypeSD.SD1_5),)
 
 
@@ -305,7 +305,7 @@ class PerBlock_SD15_FromFloatsNode:
                          effect_21_floats: Union[list[float], None]=None,
                          scale_21_floats: Union[list[float], None]=None):
         if effect_21_floats is None and scale_21_floats is None:
-            return (None,)
+            return (AllPerBlocks(None, ModelTypeSD.SD1_5),)
         # SD1.5 has 21 blocks
         block_total = 21
         holders = [ADBlockHolder() for _ in range(block_total)]
@@ -366,7 +366,7 @@ class PerBlock_SDXL_MidLevelNode:
             if block is not None:
                 blocks.append(PerBlock(id=id, effect=block.effect, scales=block.scales))
         if len(blocks) == 0:
-            return (None,)
+            blocks = None
         return (AllPerBlocks(blocks, ModelTypeSD.SDXL),)
 
 
@@ -443,7 +443,7 @@ class PerBlock_SDXL_LowLevelNode:
             if block is not None:
                 blocks.append(PerBlock(id=id, effect=block.effect, scales=block.scales))
         if len(blocks) == 0:
-            return (None,)
+            blocks = None
         return (AllPerBlocks(blocks, ModelTypeSD.SDXL),)
 
 
@@ -481,7 +481,7 @@ class PerBlock_SDXL_FromFloatsNode:
                          effect_16_floats: Union[list[float], None]=None,
                          scale_16_floats: Union[list[float], None]=None):
         if effect_16_floats is None and scale_16_floats is None:
-            return (None,)
+            return (AllPerBlocks(None, ModelTypeSD.SDXL),)
         # SDXL has 16 blocks
         block_total = 16
         holders = [ADBlockHolder() for _ in range(block_total)]
