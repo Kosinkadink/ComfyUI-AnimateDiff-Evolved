@@ -291,6 +291,12 @@ class MotionModelAttachment:
         self.prev_fancy_latents_shape: tuple = None
         self.fancy_multival: Union[float, Tensor] = None
 
+        # MotionCtrl
+        self.orig_RT: Tensor = None
+        self.RT: Tensor = None
+        self.prev_RT_shape: tuple = None
+        self.prev_RT_uuids: list = None
+
         # temporary variables
         self.current_used_steps = 0
         self.current_keyframe: ADKeyframe = None
@@ -460,6 +466,43 @@ class MotionModelAttachment:
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
 
+    def prepare_motionctrl_camera(self, patcher: MotionModelPatcher, x: Tensor, transformer_options: dict[str]):
+        '''Used for MotionCtrl'''
+        # if no cc enabled, done
+        if not patcher.model.is_motionctrl_cc_enabled():
+            if "ADE_RT" in transformer_options:
+                transformer_options.pop("ADE_RT")
+            return
+        cond_or_uncond: list[int] = transformer_options["cond_or_uncond"]
+        uuids: list = transformer_options["uuids"]
+        batched_number = len(cond_or_uncond)
+        ad_params = transformer_options["ad_params"]
+        full_length = ad_params["full_length"]
+        sub_idxs = ad_params["sub_idxs"]
+        goal_length = x.size(0) // batched_number
+        if self.prev_RT_shape != x.shape or sub_idxs != self.prev_sub_idxs or uuids != self.prev_RT_uuids:
+            real_RT = self.orig_RT.clone().to(dtype=x.dtype, device=x.device) # [t, 12]
+            # make sure RT is of the valid length
+            real_RT = extend_to_batch_size(real_RT, full_length)
+            if sub_idxs is not None:
+                real_RT = real_RT[sub_idxs]
+            real_RT = real_RT.unsqueeze(0) # [1, t, 12]
+            # match batch length - conds get real_RT, unconds get empty
+            if batched_number > 1:
+                batched_RTs = []
+                for condtype in cond_or_uncond:
+                    if condtype == 0: # cond
+                        batched_RTs.append(real_RT)
+                    else: # uncond
+                        batched_RTs.append(torch.zeros_like(real_RT))
+                real_RT = torch.cat(batched_RTs, dim=0)
+            self.RT = real_RT.to(dtype=x.dtype, device=x.device)
+            self.prev_RT_shape = x.shape
+        transformer_options["ADE_RT"] = self.RT
+        self.prev_sub_idxs = sub_idxs
+        self.prev_batched_number = batched_number
+
+
     def get_pia_c_concat(self, model: BaseModel, x: Tensor) -> Tensor:
         '''Used for PIA'''
         # if have cached shape, check if matches - if so, return cached pia_latents
@@ -583,6 +626,10 @@ class MotionModelAttachment:
         # PIA
         self.combined_pia_mask = None
         self.combined_pia_effect = None
+        # MotionCtrl
+        self.RT = None
+        self.prev_RT_shape = None
+        self.prev_RT_uuids = None
         # Default
         self.current_used_steps = 0
         self.current_keyframe = None

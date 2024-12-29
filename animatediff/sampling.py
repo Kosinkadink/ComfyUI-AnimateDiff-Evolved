@@ -193,6 +193,7 @@ def _apply_model_wrapper(executor, *args, **kwargs):
                 attachment = get_mm_attachment(motion_model)
                 attachment.prepare_alcmi2v_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=executor.class_obj.latent_format)
                 attachment.prepare_camera_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
+                attachment.prepare_motionctrl_camera(motion_model, x=x, transformer_options=transformer_options)
     del x
     return executor(*args, **kwargs)
 
@@ -285,9 +286,9 @@ class FunctionInjectionHolder:
                         helper.model.model.memory_required = unlimited_memory_required
                 except Exception:
                     pass
-            # if img_encoder or camera_encoder present, inject apply_model to handle correctly
+            # if AnimateLCM-I2V, CameraCtrl, or MotionCtrl present, inject apply_model to handle correctly
             for motion_model in helper.get_motion_models():
-                if (motion_model.model.img_encoder is not None) or (motion_model.model.camera_encoder is not None):
+                if motion_model.model.needs_apply_model_wrapper():
                     create_special_model_apply_model_wrapper(model_options)
                     break
             del info

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math
 from typing import Iterable, Tuple, Union, TYPE_CHECKING
 import re
@@ -366,7 +367,7 @@ class AnimateDiffModel(nn.Module):
         if has_img_encoder(mm_state_dict):
             self.init_img_encoder()
         # CameraCtrl stuff
-        self.camera_encoder: 'CameraPoseEncoder' = None
+        self.camera_encoder: CameraPoseEncoder = None
         # PIA/FancyVideo stuff - create conv_in if keys are present for it
         self.conv_in: comfy.ops.disable_weight_init.Conv2d = None
         self.orig_conv_in: comfy.ops.disable_weight_init.Conv2d = None
@@ -382,11 +383,15 @@ class AnimateDiffModel(nn.Module):
         # get_unet_func initialization
         self.get_unet_func = init_kwargs.get(InitKwargs.GET_UNET_FUNC, get_unet_default)
 
+    def needs_apply_model_wrapper(self):
+        '''Returns true of AnimateLCM-I2V, CameraCtrl, or MotionCtrl is in use.'''
+        return self.img_encoder is not None or self.camera_encoder is not None or self.is_motionctrl_cc_enabled()
+
     def init_img_encoder(self):
         del self.img_encoder
         self.img_encoder = AdapterEmbed(cin=4, channels=self.layer_channels, nums_rb=2, ksize=1, sk=True, use_conv=False, ops=self.ops)
 
-    def set_camera_encoder(self, camera_encoder: 'CameraPoseEncoder'):
+    def set_camera_encoder(self, camera_encoder: CameraPoseEncoder):
         del self.camera_encoder
         self.camera_encoder = camera_encoder
 
@@ -427,6 +432,13 @@ class AnimateDiffModel(nn.Module):
                 ttb_key = key.split('.cc_projection')[0]
                 ttb: TemporalTransformerBlock = comfy.utils.get_attr(self, ttb_key)
                 ttb.init_cc_projection(in_features=in_features, out_features=out_features, ops=self.ops)
+
+    def is_motionctrl_cc_enabled(self):
+        '''Used for MotionCtrl'''
+        if self.down_blocks:
+            ttb: TemporalTransformerBlock = self.down_blocks[0].motion_modules[0].temporal_transformer.transformer_blocks[0]
+            return ttb.cc_projection is not None
+        return False
 
     def get_fancyvideo_emb_patches(self, dtype, device, fps=25, motion_score=3.0):
         patches = []
@@ -1320,12 +1332,12 @@ class TemporalTransformerBlock(nn.Module):
                 )
                 # do MotionCtrl-CMCM stuff if needed
                 if self.cc_projection is not None and count==0 and 'ADE_RT' in transformer_options:
-                    RT: Tensor = transformer_options['ADE_RT']
+                    RT: Tensor = transformer_options['ADE_RT'].to(dtype=hidden_states.dtype)
                     B, t, _ = RT.shape
                     RT = RT.reshape(B*t, 1, -1)
-                    RT = RT.repeat(1, hidden_states.shape[1])
+                    RT = RT.repeat(1, hidden_states.shape[1], 1)
                     hidden_states = torch.cat([hidden_states, RT], dim=-1)
-                    hidden_states = self.cc_projection(hidden_states)
+                    hidden_states = self.cc_projection(hidden_states).to(dtype=hidden_states.dtype)
                 count += 1
         else:
             # views idea gotten from diffusers AnimateDiff FreeNoise implementation:

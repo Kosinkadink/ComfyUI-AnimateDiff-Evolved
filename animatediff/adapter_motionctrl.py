@@ -1,6 +1,7 @@
 # main code adapted from https://github.com/TencentARC/MotionCtrl/tree/animatediff
 from __future__ import annotations
 from torch import nn, Tensor
+import torch
 
 from comfy.model_patcher import ModelPatcher
 import comfy.model_management
@@ -81,6 +82,16 @@ def _remove_module_prefix(state_dict: dict[str, Tensor]):
             new_key = key.replace('module.', '')
             state_dict[new_key] = state_dict[key]
             state_dict.pop(key)
+
+
+def convert_cameractrl_poses_to_RT(poses: list[list[float]]):
+    tensors = []
+    for pose in poses:
+        new_tensor = torch.tensor(pose[7:])
+        new_tensor = new_tensor.unsqueeze(0)
+        tensors.append(new_tensor)
+    RT = torch.cat(tensors, dim=0)
+    return RT
 
 
 class ObjectControlModelPatcher(ModelPatcher):

@@ -8,7 +8,7 @@ from .nodes_cameractrl import (LoadAnimateDiffModelWithCameraCtrl, ApplyAnimateD
                                LoadCameraPosesFromFile, LoadCameraPosesFromPath,
                                CameraCtrlPoseBasic, CameraCtrlPoseCombo, CameraCtrlPoseAdvanced, CameraCtrlManualAppendPose,
                                CameraCtrlReplaceCameraParameters, CameraCtrlSetOriginalAspectRatio)
-from .nodes_motionctrl import (LoadMotionCtrlCMCM, LoadMotionCtrlOMCM, ApplyAnimateDiffMotionCtrlModel)
+from .nodes_motionctrl import (LoadMotionCtrlCMCM, LoadMotionCtrlOMCM, ApplyAnimateDiffMotionCtrlModel, LoadMotionCtrlCameraPosesFromFile)
 from .nodes_pia import (ApplyAnimateDiffPIAModel, LoadAnimateDiffAndInjectPIANode, InputPIA_MultivalNode, InputPIA_PaperPresetsNode, PIA_ADKeyframeNode)
 from .nodes_fancyvideo import (ApplyAnimateDiffFancyVideo,)
 from .nodes_hellomeme import (TestHMRefNetInjection,)
@@ -197,6 +197,7 @@ NODE_CLASS_MAPPINGS = {
     LoadMotionCtrlCMCM.NodeID: LoadMotionCtrlCMCM,
     LoadMotionCtrlOMCM.NodeID: LoadMotionCtrlOMCM,
     ApplyAnimateDiffMotionCtrlModel.NodeID: ApplyAnimateDiffMotionCtrlModel,
+    LoadMotionCtrlCameraPosesFromFile.NodeID: LoadMotionCtrlCameraPosesFromFile,
     # CameraCtrl Nodes
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
     "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
