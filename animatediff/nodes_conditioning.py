@@ -12,7 +12,6 @@ import comfy_extras.nodes_hooks
 import comfy.hooks
 import comfy.utils
 
-from .conditioning import (COND_CONST)
 from .utils_model import BIGMAX, InterpolationMethod
 from .logger import logger
 
@@ -25,6 +24,12 @@ from .logger import logger
 #------------------------------------------------------------------
 #------------------------------------------------------------------
 #------------------------------------------------------------------
+class COND_CONST:
+    COND_AREA_DEFAULT = "default"
+    COND_AREA_MASK_BOUNDS = "mask bounds"
+    _LIST_COND_AREA = [COND_AREA_DEFAULT, COND_AREA_MASK_BOUNDS]
+
+
 class CreateLoraHookKeyframeInterpolationDEPR:
     @classmethod
     def INPUT_TYPES(s):

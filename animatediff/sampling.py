@@ -54,13 +54,13 @@ class AnimateDiffGlobalState:
             if self.sample_settings.custom_cfg is not None:
                 self.sample_settings.custom_cfg.initialize_timesteps(model)
 
-    def prepare_current_keyframes(self, x: Tensor, timestep: Tensor):
+    def prepare_current_keyframes(self, x: Tensor, timestep: Tensor, transformer_options: dict[str, Tensor]):
         if self.motion_models is not None:
-            self.motion_models.prepare_current_keyframe(x=x, t=timestep)
+            self.motion_models.prepare_current_keyframe(x=x, t=timestep, transformer_options=transformer_options)
         if self.params.context_options is not None:
-            self.params.context_options.prepare_current(t=timestep)
+            self.params.context_options.prepare_current(t=timestep, transformer_options=transformer_options)
         if self.sample_settings.custom_cfg is not None:
-            self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
+            self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep, transformer_options=transformer_options)
 
     def perform_special_model_features(self, model: BaseModel, conds: list, x_in: Tensor, model_options: dict[str]):
         if self.motion_models is not None:
@@ -540,7 +540,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
 def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS: AnimateDiffGlobalState = model_options["transformer_options"]["ADGS"]
     ADGS.initialize(model)
-    ADGS.prepare_current_keyframes(x=x, timestep=timestep)
+    ADGS.prepare_current_keyframes(x=x, timestep=timestep, transformer_options=model_options["transformer_options"])
     try:
         # add AD/evolved-sampling params to model_options (transformer_options)
         model_options = model_options.copy()

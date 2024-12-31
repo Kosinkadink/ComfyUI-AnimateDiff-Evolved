@@ -29,9 +29,8 @@ from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError
                            PerBlock, AllPerBlocks, get_combined_per_block_list,
                            get_combined_multival, get_combined_input, get_combined_input_effect_multival,
                            ade_broadcast_image_to, extend_to_batch_size, prepare_mask_batch)
-from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched
+from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched, BIGMAX
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .dinklink import DinkLinkConst, get_dinklink, get_acn_outer_sample_wrapper
 
@@ -328,14 +327,15 @@ class MotionModelAttachment:
             for keyframe in self.keyframes.keyframes:
                 keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
 
-    def prepare_current_keyframe(self, patcher: MotionModelPatcher, x: Tensor, t: Tensor):
+    def prepare_current_keyframe(self, patcher: MotionModelPatcher, x: Tensor, t: Tensor, transformer_options: dict[str, Tensor]):
         curr_t: float = t[0]
         # if curr_t was previous_t, then do nothing (already accounted for this step)
         if curr_t == self.previous_t:
             return
         prev_index = self.current_index
+        max_sigma = torch.max(transformer_options.get("sigmas", BIGMAX))
         # if met guaranteed steps, look for next keyframe in case need to switch
-        if self.current_keyframe is None or self.current_used_steps >= self.current_keyframe.guarantee_steps:
+        if self.current_keyframe is None or self.current_used_steps >= self.current_keyframe.get_effective_guarantee_steps(max_sigma):
             # if has next index, loop through and see if need to switch
             if self.keyframes.has_index(self.current_index+1):
                 for i in range(self.current_index+1, len(self.keyframes)):
@@ -373,7 +373,7 @@ class MotionModelAttachment:
                         elif not self.current_keyframe.inherit_missing:
                             self.current_pia_input = None
                         # if guarantee_steps greater than zero, stop searching for other keyframes
-                        if self.current_keyframe.guarantee_steps > 0:
+                        if self.current_keyframe.get_effective_guarantee_steps(max_sigma) > 0:
                             break
                     # if eval_kf is outside the percent range, stop looking further
                     else:
@@ -723,10 +723,10 @@ class MotionModelGroup:
         for motion_model in self.models:
             motion_model.cleanup()
     
-    def prepare_current_keyframe(self, x: Tensor, t: Tensor):
+    def prepare_current_keyframe(self, x: Tensor, t: Tensor, transformer_options: dict[str, Tensor]):
         for motion_model in self.models:
             attachment = get_mm_attachment(motion_model)
-            attachment.prepare_current_keyframe(motion_model, x=x, t=t)
+            attachment.prepare_current_keyframe(motion_model, x=x, t=t, transformer_options=transformer_options)
 
     def get_special_models(self):
         pia_motion_models: list[MotionModelPatcher] = []
