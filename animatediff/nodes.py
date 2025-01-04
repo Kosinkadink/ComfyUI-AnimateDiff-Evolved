@@ -194,10 +194,10 @@ NODE_CLASS_MAPPINGS = {
     "ADE_UpscaleAndVAEEncode": UpscaleAndVaeEncode,
     "ADE_InjectI2VIntoAnimateDiffModel": LoadAnimateDiffAndInjectI2VNode,
     # MotionCtrl Nodes
-    LoadMotionCtrlCMCM.NodeID: LoadMotionCtrlCMCM,
-    LoadMotionCtrlOMCM.NodeID: LoadMotionCtrlOMCM,
-    ApplyAnimateDiffMotionCtrlModel.NodeID: ApplyAnimateDiffMotionCtrlModel,
-    LoadMotionCtrlCameraPosesFromFile.NodeID: LoadMotionCtrlCameraPosesFromFile,
+    #LoadMotionCtrlCMCM.NodeID: LoadMotionCtrlCMCM,
+    #LoadMotionCtrlOMCM.NodeID: LoadMotionCtrlOMCM,
+    #ApplyAnimateDiffMotionCtrlModel.NodeID: ApplyAnimateDiffMotionCtrlModel,
+    #LoadMotionCtrlCameraPosesFromFile.NodeID: LoadMotionCtrlCameraPosesFromFile,
     # CameraCtrl Nodes
     "ADE_ApplyAnimateDiffModelWithCameraCtrl": ApplyAnimateDiffWithCameraCtrl,
     "ADE_LoadAnimateDiffModelWithCameraCtrl": LoadAnimateDiffModelWithCameraCtrl,
