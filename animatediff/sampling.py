@@ -28,6 +28,7 @@ from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGro
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion
 from .adapter_hellomeme import HMRefConst, HMRefStates, get_hmref_attachment, create_hmref_apply_model_wrapper
 from .logger import logger
+from .dinklink import get_acn_dinklink_version
 
 
 ##################################################################################
@@ -724,7 +725,11 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             # check if ContextRef ReferenceAdvanced ACN objs should_run
             actually_should_run = True
             for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                refcn.prepare_current_timestep(timestep, model_options["transformer_options"])
+                acn_dl_version = get_acn_dinklink_version()
+                if acn_dl_version > 10000:
+                    refcn.prepare_current_timestep(timestep, model_options["transformer_options"])
+                else:
+                    refcn.prepare_current_timestep(timestep)
                 if not refcn.should_run():
                     actually_should_run = False
             if actually_should_run:
