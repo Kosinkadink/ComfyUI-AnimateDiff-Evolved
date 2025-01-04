@@ -724,7 +724,7 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             # check if ContextRef ReferenceAdvanced ACN objs should_run
             actually_should_run = True
             for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                refcn.prepare_current_timestep(timestep)
+                refcn.prepare_current_timestep(timestep, model_options["transformer_options"])
                 if not refcn.should_run():
                     actually_should_run = False
             if actually_should_run:
