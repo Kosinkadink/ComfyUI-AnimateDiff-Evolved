@@ -12,6 +12,7 @@ from comfy.model_base import BaseModel
 from comfy.model_patcher import ModelPatcher
 
 from .context_extras import ContextExtrasGroup
+from .utils_model import BIGMAX
 from .utils_motion import get_sorted_list_via_attr
 
 
@@ -64,6 +65,12 @@ class ContextOptions:
         self._step = value
         if self.view_options:
             self.view_options.step = value
+
+    def get_effective_guarantee_steps(self, max_sigma: torch.Tensor):
+        '''If keyframe starts before current sampling range (max_sigma), treat as 0.'''
+        if self.start_t > max_sigma:
+            return 0
+        return self.guarantee_steps
 
     def clone(self):
         n = ContextOptions(context_length=self.context_length, context_stride=self.context_stride,
@@ -141,18 +148,19 @@ class ContextOptionsGroup:
             context.start_t = model.model_sampling.percent_to_sigma(context.start_percent)
         self.extras.initialize_timesteps(model)
 
-    def prepare_current(self, t: Tensor):
-        self.prepare_current_context(t)
-        self.extras.prepare_current(t)
+    def prepare_current(self, t: Tensor, transformer_options):
+        self.prepare_current_context(t, transformer_options)
+        self.extras.prepare_current(t, transformer_options)
 
-    def prepare_current_context(self, t: Tensor):
+    def prepare_current_context(self, t: Tensor, transformer_options: dict[str, Tensor]):
         curr_t: float = t[0]
         # if same as previous, do nothing as step already accounted for
         if curr_t == self._previous_t:
             return
         prev_index = self._current_index
+        max_sigma = torch.max(transformer_options.get("sigmas", BIGMAX))
         # if met guaranteed steps, look for next context in case need to switch
-        if self._current_used_steps >= self._current_context.guarantee_steps:
+        if self._current_used_steps >= self._current_context.get_effective_guarantee_steps(max_sigma):
             # if has next index, loop through and see if need to switch
             if self.has_index(self._current_index+1):
                 for i in range(self._current_index+1, len(self.contexts)):
@@ -164,7 +172,7 @@ class ContextOptionsGroup:
                         self._current_context = eval_c
                         self._current_used_steps = 0
                         # if guarantee_steps greater than zero, stop searching for other keyframes
-                        if self._current_context.guarantee_steps > 0:
+                        if self._current_context.get_effective_guarantee_steps(max_sigma) > 0:
                             break
                     # if eval_c is outside the percent range, stop looking further
                     else:

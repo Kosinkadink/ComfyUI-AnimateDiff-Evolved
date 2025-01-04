@@ -1,7 +1,7 @@
+from __future__ import annotations
 import math
 from typing import Iterable, Tuple, Union, TYPE_CHECKING
 import re
-from dataclasses import dataclass
 from collections.abc import Iterable as IterColl
 
 import torch
@@ -15,7 +15,7 @@ from comfy.ldm.modules.diffusionmodules.util import timestep_embedding
 from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ldm.modules.diffusionmodules.openaimodel import SpatialTransformer
 from comfy.controlnet import broadcast_image_to
-from comfy.utils import repeat_to_batch_size
+import comfy.utils
 import comfy.ops
 import comfy.model_management
 
@@ -24,7 +24,9 @@ from .adapter_animatelcm_i2v import AdapterEmbed
 if TYPE_CHECKING:  # avoids circular import
     from .adapter_cameractrl import CameraPoseEncoder
 from .adapter_fancyvideo import FancyVideoCondEmbedding, FancyVideoKeys, initialize_weights_to_zero
-from .utils_motion import (CrossAttentionMM, MotionCompatibilityError, DummyNNModule, extend_to_batch_size, extend_list_to_batch_size,
+from .utils_motion import (CrossAttentionMM, MotionCompatibilityError, DummyNNModule,
+                           PerBlock, PerBlockId,
+                           extend_to_batch_size, extend_list_to_batch_size,
                            prepare_mask_batch, get_combined_multival)
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
@@ -65,61 +67,6 @@ class AnimateDiffInfo:
     def get_string(self):
         return f"{self.mm_name}:{self.mm_version}:{self.mm_format}:{self.sd_type}"
 
-
-#######################
-# Facilitate Per-Block Effect and Scale Control
-class PerAttn:
-    def __init__(self, attn_idx: Union[int, None], scale: Union[float, Tensor, None]):
-        self.attn_idx = attn_idx
-        self.scale = scale
-    
-    def matches(self, id: int):
-        if self.attn_idx is None:
-            return True
-        return self.attn_idx == id
-
-
-class PerBlockId:
-    def __init__(self, block_type: str, block_idx: Union[int, None]=None, module_idx: Union[int, None]=None):
-        self.block_type = block_type
-        self.block_idx = block_idx
-        self.module_idx = module_idx
-    
-    def matches(self, other: 'PerBlockId') -> bool:
-        # block_type
-        if other.block_type != self.block_type:
-            return False
-        # block_idx
-        if other.block_idx is None:
-            return True
-        elif other.block_idx != self.block_idx:
-            return False
-        # module_idx
-        if other.module_idx is None:
-            return True
-        return other.module_idx == self.module_idx
-    
-    def __str__(self):
-        return f"PerBlockId({self.block_type},{self.block_idx},{self.module_idx})"
-
-
-class PerBlock:
-    def __init__(self, id: PerBlockId, effect: Union[float, Tensor, None]=None,
-                 scales: Union[list[Union[float, Tensor, None]], None]=None):
-        self.id = id
-        self.effect = effect
-        self.scales = scales
-
-    def matches(self, id: PerBlockId):
-        return self.id.matches(id)
-    
-
-@dataclass
-class AllPerBlocks:
-    per_block_list: list[PerBlock]
-    sd_type: Union[str, None] = None
-#----------------------
-#######################
 
 def is_hotshotxl(mm_state_dict: dict[str, Tensor]) -> bool:
     # use pos_encoder naming to determine if hotshotxl model
@@ -420,7 +367,7 @@ class AnimateDiffModel(nn.Module):
         if has_img_encoder(mm_state_dict):
             self.init_img_encoder()
         # CameraCtrl stuff
-        self.camera_encoder: 'CameraPoseEncoder' = None
+        self.camera_encoder: CameraPoseEncoder = None
         # PIA/FancyVideo stuff - create conv_in if keys are present for it
         self.conv_in: comfy.ops.disable_weight_init.Conv2d = None
         self.orig_conv_in: comfy.ops.disable_weight_init.Conv2d = None
@@ -436,18 +383,20 @@ class AnimateDiffModel(nn.Module):
         # get_unet_func initialization
         self.get_unet_func = init_kwargs.get(InitKwargs.GET_UNET_FUNC, get_unet_default)
 
+    def needs_apply_model_wrapper(self):
+        '''Returns true of AnimateLCM-I2V, CameraCtrl, or MotionCtrl is in use.'''
+        return self.img_encoder is not None or self.camera_encoder is not None or self.is_motionctrl_cc_enabled()
+
     def init_img_encoder(self):
         del self.img_encoder
         self.img_encoder = AdapterEmbed(cin=4, channels=self.layer_channels, nums_rb=2, ksize=1, sk=True, use_conv=False, ops=self.ops)
 
-    def set_camera_encoder(self, camera_encoder: 'CameraPoseEncoder'):
+    def set_camera_encoder(self, camera_encoder: CameraPoseEncoder):
         del self.camera_encoder
         self.camera_encoder = camera_encoder
 
     def init_conv_in(self, mm_state_dict: dict[str, Tensor]):
-        '''
-        Used for PIA/FancyVideo
-        '''
+        '''Used for PIA/FancyVideo'''
         del self.conv_in
         # hardcoded values, for now
         # dim=2, in_channels=9, model_channels=320, kernel=3, padding=1,
@@ -459,9 +408,7 @@ class AnimateDiffModel(nn.Module):
                                         dtype=comfy.model_management.unet_dtype(), device=comfy.model_management.unet_offload_device())
 
     def init_fps_embedding(self, mm_state_dict: dict[str, Tensor]):
-        '''
-        Used for FancyVideo
-        '''
+        '''Used for FancyVideo'''
         del self.fps_embedding
         in_channels = mm_state_dict["fps_embedding.linear.weight"].size(1) # expected to be 320
         cond_embed_dim = mm_state_dict["fps_embedding.linear.weight"].size(0) # expected to be 1280
@@ -469,14 +416,29 @@ class AnimateDiffModel(nn.Module):
         self.fps_embedding.apply(initialize_weights_to_zero)
 
     def init_motion_embedding(self, mm_state_dict: dict[str, Tensor]):
-        '''
-        Used for FancyVideo
-        '''
+        '''Used for FancyVideo'''
         del self.motion_embedding
         in_channels = mm_state_dict["motion_embedding.linear.weight"].size(1) # expected to be 320
         cond_embed_dim = mm_state_dict["motion_embedding.linear.weight"].size(0) # expected to be 1280
         self.motion_embedding = FancyVideoCondEmbedding(in_channels=in_channels, cond_embed_dim=cond_embed_dim)
         self.motion_embedding.apply(initialize_weights_to_zero)
+
+    def init_motionctrl_cc_projections(self, state_dict: dict[str, Tensor]):
+        '''Used for MotionCtrl'''
+        for key, value in state_dict.items():
+            if key.endswith('cc_projection.weight'):
+                in_features = value.shape[1]
+                out_features = value.shape[0]
+                ttb_key = key.split('.cc_projection')[0]
+                ttb: TemporalTransformerBlock = comfy.utils.get_attr(self, ttb_key)
+                ttb.init_cc_projection(in_features=in_features, out_features=out_features, ops=self.ops)
+
+    def is_motionctrl_cc_enabled(self):
+        '''Used for MotionCtrl'''
+        if self.down_blocks:
+            ttb: TemporalTransformerBlock = self.down_blocks[0].motion_modules[0].temporal_transformer.transformer_blocks[0]
+            return ttb.cc_projection is not None
+        return False
 
     def get_fancyvideo_emb_patches(self, dtype, device, fps=25, motion_score=3.0):
         patches = []
@@ -1150,7 +1112,7 @@ class TemporalTransformer3DModel(nn.Module):
         # otherwise, calculate temp mask
         self.prev_hidden_states_batch = batch
         mask = prepare_mask_batch(self.raw_scale_masks[idx], shape=(self.full_length, 1, height, width))
-        mask = repeat_to_batch_size(mask, self.full_length)
+        mask = extend_to_batch_size(mask, self.full_length)
         # if mask not the same amount length as full length, make it match
         if self.full_length != mask.shape[0]:
             mask = broadcast_image_to(mask, self.full_length, 1)
@@ -1196,7 +1158,7 @@ class TemporalTransformer3DModel(nn.Module):
         # otherwise, calculate temp_cameractrl
         self.prev_cameractrl_hidden_states_batch = batch
         mask = prepare_mask_batch(self.raw_cameractrl_effect, shape=(self.full_length, 1, height, width))
-        mask = repeat_to_batch_size(mask, self.full_length)
+        mask = extend_to_batch_size(mask, self.full_length)
         # if mask not the same amount length as full length, make it match
         if self.full_length != mask.shape[0]:
             mask = broadcast_image_to(mask, self.full_length, 1)
@@ -1313,6 +1275,8 @@ class TemporalTransformerBlock(nn.Module):
 
         self.ff = FeedForward(dim, dropout=dropout, glu=(activation_fn == "geglu"), operations=ops)
         self.ff_norm = ops.LayerNorm(dim)
+        # for MotionCtrl (CMCM) use
+        self.cc_projection: comfy.ops.disable_weight_init.Linear = None
 
     def set_scale_multiplier(self, idx: int, multiplier: Union[float, None]):
         self.attention_blocks[idx].set_scale_multiplier(multiplier)
@@ -1324,6 +1288,9 @@ class TemporalTransformerBlock(nn.Module):
     def reset_temp_vars(self):
         for block in self.attention_blocks:
             block.reset_temp_vars()
+
+    def init_cc_projection(self, in_features: int, out_features: int, ops: comfy.ops.disable_weight_init):
+        self.cc_projection = ops.Linear(in_features=in_features, out_features=out_features)
 
     def forward(
         self,
@@ -1346,6 +1313,7 @@ class TemporalTransformerBlock(nn.Module):
             elif view_options.context_length == video_length and not view_options.use_on_equal_length:
                 view_options = None
         if not view_options:
+            count = 0
             for attention_block, norm, scale_mask in zip(self.attention_blocks, self.norms, scale_masks):
                 norm_hidden_states = norm(hidden_states).to(hidden_states.dtype)
                 hidden_states = (
@@ -1362,6 +1330,15 @@ class TemporalTransformerBlock(nn.Module):
                         transformer_options=transformer_options,
                     ) + hidden_states
                 )
+                # do MotionCtrl-CMCM stuff if needed
+                if self.cc_projection is not None and count==0 and 'ADE_RT' in transformer_options:
+                    RT: Tensor = transformer_options['ADE_RT'].to(dtype=hidden_states.dtype)
+                    B, t, _ = RT.shape
+                    RT = RT.reshape(B*t, 1, -1)
+                    RT = RT.repeat(1, hidden_states.shape[1], 1)
+                    hidden_states = torch.cat([hidden_states, RT], dim=-1)
+                    hidden_states = self.cc_projection(hidden_states).to(dtype=hidden_states.dtype)
+                count += 1
         else:
             # views idea gotten from diffusers AnimateDiff FreeNoise implementation:
             # https://github.com/arthur-qiu/FreeNoise-AnimateDiff/blob/main/animatediff/models/motion_module.py
@@ -1381,6 +1358,7 @@ class TemporalTransformerBlock(nn.Module):
                 sub_hidden_states = rearrange(hidden_states[:, sub_idxs], "b f d c -> (b f) d c")
                 if has_camera_feature:
                     mm_kwargs["camera_feature"] = orig_camera_feature[:, sub_idxs, :]
+                count = 0
                 for attention_block, norm, scale_mask in zip(self.attention_blocks, self.norms, scale_masks):
                     norm_hidden_states = norm(sub_hidden_states).to(sub_hidden_states.dtype)
                     sub_hidden_states = (
@@ -1397,6 +1375,7 @@ class TemporalTransformerBlock(nn.Module):
                             transformer_options=transformer_options,
                         ) + sub_hidden_states
                     )
+                    count += 1
                 sub_hidden_states = rearrange(sub_hidden_states, "(b f) d c -> b f d c", f=len(sub_idxs))
 
                 weights = get_context_weights(len(sub_idxs), view_options.fuse_method) * batched_conds
@@ -1413,10 +1392,7 @@ class TemporalTransformerBlock(nn.Module):
             del value_final
             del count_final
 
-        hidden_states = self.ff(self.ff_norm(hidden_states)) + hidden_states
-
-        output = hidden_states
-        return output
+        return self.ff(self.ff_norm(hidden_states)) + hidden_states
 
 
 class PositionalEncoding(nn.Module):
@@ -1458,7 +1434,6 @@ class VersatileAttention(CrossAttentionMM):
     ):
         super().__init__(operations=ops, *args, **kwargs)
         assert attention_mode == "Temporal"
-
         self.attention_mode = attention_mode
         self.is_cross_attention = kwargs["context_dim"] is not None
 
@@ -1537,9 +1512,8 @@ class VersatileAttention(CrossAttentionMM):
             transformer_options=transformer_options,
         )
 
-        hidden_states = rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
+        return rearrange(hidden_states, "(b d) f c -> (b f) d c", d=d)
 
-        return hidden_states
 
 ############################################################################
 ### EncoderOnly Version

@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 import comfy.model_management as model_management
 import comfy.ops
@@ -335,11 +336,77 @@ def get_combined_input_effect_multival(inputA: Union[InputPIA, None], inputB: Un
     return get_combined_multival(inputA.effect_multival, inputB.effect_multival)
 
 
+#######################
+# Facilitate Per-Block Effect and Scale Control
+class PerAttn:
+    def __init__(self, attn_idx: Union[int, None], scale: Union[float, Tensor, None]):
+        self.attn_idx = attn_idx
+        self.scale = scale
+    
+    def matches(self, id: int):
+        if self.attn_idx is None:
+            return True
+        return self.attn_idx == id
+
+
+class PerBlockId:
+    def __init__(self, block_type: str, block_idx: Union[int, None]=None, module_idx: Union[int, None]=None):
+        self.block_type = block_type
+        self.block_idx = block_idx
+        self.module_idx = module_idx
+    
+    def matches(self, other: 'PerBlockId') -> bool:
+        # block_type
+        if other.block_type != self.block_type:
+            return False
+        # block_idx
+        if other.block_idx is None:
+            return True
+        elif other.block_idx != self.block_idx:
+            return False
+        # module_idx
+        if other.module_idx is None:
+            return True
+        return other.module_idx == self.module_idx
+    
+    def __str__(self):
+        return f"PerBlockId({self.block_type},{self.block_idx},{self.module_idx})"
+
+
+class PerBlock:
+    def __init__(self, id: PerBlockId, effect: Union[float, Tensor, None]=None,
+                 scales: Union[list[Union[float, Tensor, None]], None]=None):
+        self.id = id
+        self.effect = effect
+        self.scales = scales
+
+    def matches(self, id: PerBlockId):
+        return self.id.matches(id)
+    
+
+@dataclass
+class AllPerBlocks:
+    per_block_list: list[PerBlock]
+    sd_type: Union[str, None] = None
+
+
+def get_combined_per_block_list(listDefault: Union[list[PerBlock], None], listNew: Union[list[PerBlock], None]):
+    if listDefault is None:
+        return listNew
+    elif listNew is None:
+        return listDefault
+    else:
+        return listNew
+#----------------------
+#######################
+
+
 class ADKeyframe:
     def __init__(self,
                  start_percent: float = 0.0,
                  scale_multival: Union[float, Tensor]=None,
                  effect_multival: Union[float, Tensor]=None,
+                 per_block_replace: AllPerBlocks=None,
                  cameractrl_multival: Union[float, Tensor]=None,
                  pia_input: InputPIA=None,
                  inherit_missing: bool=True,
@@ -350,23 +417,39 @@ class ADKeyframe:
         self.start_t = 999999999.9
         self.scale_multival = scale_multival
         self.effect_multival = effect_multival
+        self._per_block_replace = per_block_replace
         self.cameractrl_multival = cameractrl_multival
         self.pia_input = pia_input
         self.inherit_missing = inherit_missing
         self.guarantee_steps = guarantee_steps
         self.default = default
     
+    @property
+    def per_block_list(self):
+        if self._per_block_replace is None:
+            return None
+        return self._per_block_replace.per_block_list
+
     def has_scale(self):
         return self.scale_multival is not None
     
     def has_effect(self):
         return self.effect_multival is not None
 
+    def has_per_block_replace(self):
+        return self._per_block_replace is not None
+
     def has_cameractrl_effect(self):
         return self.cameractrl_multival is not None
     
     def has_pia_input(self):
         return self.pia_input is not None
+
+    def get_effective_guarantee_steps(self, max_sigma: torch.Tensor):
+        '''If keyframe starts before current sampling range (max_sigma), treat as 0.'''
+        if self.start_t > max_sigma:
+            return 0
+        return self.guarantee_steps
 
 
 class ADKeyframeGroup:

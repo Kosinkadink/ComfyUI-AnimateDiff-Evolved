@@ -5,6 +5,7 @@ from torch import Tensor
 
 from comfy.model_base import BaseModel
 
+from .utils_model import BIGMAX
 from .utils_motion import (prepare_mask_batch, extend_to_batch_size, get_combined_multival, resize_multival,
                            get_sorted_list_via_attr)
 
@@ -25,7 +26,7 @@ class ContextExtra:
         self.start_t = model.model_sampling.percent_to_sigma(self.start_percent)
         self.end_t = model.model_sampling.percent_to_sigma(self.end_percent)
 
-    def prepare_current(self, t: Tensor):
+    def prepare_current(self, t: Tensor, transformer_options: dict[str, Tensor]):
         self.curr_t = t[0]
 
     def should_run(self):
@@ -260,6 +261,12 @@ class NaiveReuseKeyframe:
         self.guarantee_steps = guarantee_steps
         self.inherit_missing = inherit_missing
     
+    def get_effective_guarantee_steps(self, max_sigma: torch.Tensor):
+        '''If keyframe starts before current sampling range (max_sigma), treat as 0.'''
+        if self.start_t > max_sigma:
+            return 0
+        return self.guarantee_steps
+
     def clone(self):
         c = NaiveReuseKeyframe(mult=self.mult, mult_multival=self.mult_multival,
                                start_percent=self.start_percent, guarantee_steps=self.guarantee_steps)
@@ -330,7 +337,7 @@ class NaiveReuseKeyframeGroup:
         for keyframe in self.keyframes:
             keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
     
-    def prepare_current_keyframe(self, t: Tensor):
+    def prepare_current_keyframe(self, t: Tensor, transformer_options: dict[str, Tensor]):
         if self.is_empty():
             return
         curr_t: float = t[0]
@@ -338,8 +345,9 @@ class NaiveReuseKeyframeGroup:
         if curr_t == self._previous_t:
             return
         prev_index = self._current_index
+        max_sigma = torch.max(transformer_options.get("sigmas", BIGMAX))
         # if met guaranteed steps, look for next keyframe in case need to switch
-        if self._current_used_steps >= self._current_keyframe.guarantee_steps:
+        if self._current_used_steps >= self._current_keyframe.get_effective_guarantee_steps(max_sigma):
             # if has next index, loop through and see if need t oswitch
             if self.has_index(self._current_index+1):
                 for i in range(self._current_index+1, len(self.keyframes)):
@@ -351,7 +359,7 @@ class NaiveReuseKeyframeGroup:
                         self._current_keyframe = eval_c
                         self._current_used_steps = 0
                         # if guarantee_steps greater than zero, stop searching for other keyframes
-                        if self._current_keyframe.guarantee_steps > 0:
+                        if self._current_keyframe.get_effective_guarantee_steps(max_sigma) > 0:
                             break
                     # if eval_c is outside the percent range, stop looking further
                     else: break
@@ -394,9 +402,9 @@ class NaiveReuse(ContextExtra):
         super().initialize_timesteps(model)
         self.keyframe.initialize_timesteps(model)
 
-    def prepare_current(self, t: Tensor):
-        super().prepare_current(t)
-        self.keyframe.prepare_current_keyframe(t)
+    def prepare_current(self, t: Tensor, transformer_options: dict[str, Tensor]):
+        super().prepare_current(t, transformer_options)
+        self.keyframe.prepare_current_keyframe(t, transformer_options)
 
     def get_effective_weighted_mean(self, x: Tensor, idxs: list[int]):
         if self.orig_multival is None and self.keyframe.mult_multival is None:
@@ -427,6 +435,10 @@ class NaiveReuse(ContextExtra):
 #--------------------------------
 
 
+################################
+# DenoiseReuse 
+
+
 class ContextExtrasGroup:
     def __init__(self):
         self.context_ref: ContextRef = None
@@ -444,9 +456,9 @@ class ContextExtrasGroup:
         for extra in self.get_extras_list():
             extra.initialize_timesteps(model)
 
-    def prepare_current(self, t: Tensor):
+    def prepare_current(self, t: Tensor, transformer_options):
         for extra in self.get_extras_list():
-            extra.prepare_current(t)
+            extra.prepare_current(t, transformer_options)
 
     def should_run_context_ref(self):
         if not self.context_ref:

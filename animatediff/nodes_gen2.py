@@ -7,12 +7,12 @@ from .ad_settings import AnimateDiffSettings
 from .context import ContextOptionsGroup
 from .logger import logger
 from .utils_model import BIGMAX, BetaSchedules, get_available_motion_models
-from .utils_motion import ADKeyframeGroup, ADKeyframe, InputPIA
+from .utils_motion import ADKeyframeGroup, ADKeyframe, InputPIA, AllPerBlocks
 from .motion_lora import MotionLoraList
-from .motion_module_ad import AllPerBlocks
 from .model_injection import (ModelPatcherHelper,
                               InjectionParams, MotionModelGroup, MotionModelPatcher, get_mm_attachment, create_fresh_motion_module,
-                              load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2, validate_per_block_compatibility)
+                              load_motion_module_gen2, load_motion_lora_as_patches, validate_model_compatibility_gen2,
+                              validate_per_block_compatibility, validate_per_block_compatibility_keyframes)
 from .sample_settings import SampleSettings
 from .sampling import outer_sample_wrapper, sliding_calc_cond_batch
 
@@ -135,6 +135,7 @@ class ApplyAnimateDiffModelNode:
             validate_per_block_compatibility(motion_model=motion_model, all_per_blocks=per_block)
             attachment.per_block_list = per_block.per_block_list
         attachment.keyframes = ad_keyframes.clone() if ad_keyframes else ADKeyframeGroup()
+        validate_per_block_compatibility_keyframes(motion_model=motion_model, keyframes=attachment.keyframes)
         attachment.timestep_percent_range = (start_percent, end_percent)
         # add to beginning, so that after injection, it will be the earliest of prev_m_models to be run
         prev_m_models.add_to_start(mm=motion_model)
@@ -211,6 +212,7 @@ class ADKeyframeNode:
                 "prev_ad_keyframes": ("AD_KEYFRAMES", ),
                 "scale_multival": ("MULTIVAL",),
                 "effect_multival": ("MULTIVAL",),
+                "per_block_replace": ("PER_BLOCK",),
                 "inherit_missing": ("BOOLEAN", {"default": True}, ),
                 "guarantee_steps": ("INT", {"default": 1, "min": 0, "max": BIGMAX}),
             },
@@ -227,6 +229,7 @@ class ADKeyframeNode:
     def load_keyframe(self,
                       start_percent: float, prev_ad_keyframes=None,
                       scale_multival: Union[float, torch.Tensor]=None, effect_multival: Union[float, torch.Tensor]=None,
+                      per_block_replace: AllPerBlocks=None,
                       cameractrl_multival: Union[float, torch.Tensor]=None, pia_input: InputPIA=None,
                       inherit_missing: bool=True, guarantee_steps: int=1):
         if not prev_ad_keyframes:
@@ -234,6 +237,7 @@ class ADKeyframeNode:
         prev_ad_keyframes = prev_ad_keyframes.clone()
         keyframe = ADKeyframe(start_percent=start_percent,
                               scale_multival=scale_multival, effect_multival=effect_multival,
+                              per_block_replace=per_block_replace,
                               cameractrl_multival=cameractrl_multival, pia_input=pia_input,
                               inherit_missing=inherit_missing, guarantee_steps=guarantee_steps)
         prev_ad_keyframes.add(keyframe)

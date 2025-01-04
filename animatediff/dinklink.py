@@ -60,3 +60,14 @@ def get_acn_outer_sample_wrapper(throw_exception=True):
             raise Exception("Advanced-ControlNet nodes need to be installed to make use of ContextRef; " + \
                             "they are either not installed or are of an insufficient version.")
     return None
+
+def get_acn_dinklink_version(throw_exception=True):
+    d = get_dinklink()
+    try:
+        link_acn = d[DinkLinkConst.ACN]
+        return link_acn[DinkLinkConst.VERSION]
+    except KeyError:
+        if throw_exception:
+            raise Exception("Advanced-ControlNet nodes need to be installed to make use of ContextRef; " + \
+                            "they are either not installed or are of an insufficient version.")
+    return None

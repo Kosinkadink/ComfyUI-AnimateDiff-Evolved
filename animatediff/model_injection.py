@@ -1,3 +1,4 @@
+from __future__ import annotations
 import copy
 from typing import Union, Callable
 from collections import namedtuple
@@ -21,15 +22,15 @@ from comfy.sd import CLIP, VAE
 from .ad_settings import AnimateDiffSettings, AdjustPE, AdjustWeight
 from .adapter_cameractrl import CameraPoseEncoder, CameraEntry, prepare_pose_embedding
 from .context import ContextOptions, ContextOptions, ContextOptionsGroup
-from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, AnimateDiffInfo, EncoderOnlyAnimateDiffModel, VersatileAttention, PerBlock, AllPerBlocks,
+from .motion_module_ad import (AnimateDiffModel, AnimateDiffFormat, AnimateDiffInfo, EncoderOnlyAnimateDiffModel, VersatileAttention,
                                VanillaTemporalModule, has_mid_block, normalize_ad_state_dict, get_position_encoding_max_len)
 from .logger import logger
 from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError, InputPIA,
+                           PerBlock, AllPerBlocks, get_combined_per_block_list,
                            get_combined_multival, get_combined_input, get_combined_input_effect_multival,
                            ade_broadcast_image_to, extend_to_batch_size, prepare_mask_batch)
-from .conditioning import HookRef, LoraHook, LoraHookGroup, LoraHookMode
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched
+from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched, BIGMAX
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .dinklink import DinkLinkConst, get_dinklink, get_acn_outer_sample_wrapper
 
@@ -56,7 +57,7 @@ class ModelPatcherHelper:
         self.model = model
 
     def set_all_properties(self, outer_sampler_wrapper: Callable, calc_cond_batch_wrapper: Callable,
-                           params: 'InjectionParams', sample_settings: SampleSettings=None, motion_models: 'MotionModelGroup'=None):
+                           params: InjectionParams, sample_settings: SampleSettings=None, motion_models: MotionModelGroup=None):
         self.set_outer_sample_wrapper(outer_sampler_wrapper)
         self.set_calc_cond_batch_wrapper(calc_cond_batch_wrapper)
         self.set_sample_settings(sample_settings = sample_settings if sample_settings is not None else SampleSettings())
@@ -122,16 +123,18 @@ class ModelPatcherHelper:
 
 
     def get_sample_settings(self) -> SampleSettings:
-        return self.model.get_attachment(self.SAMPLE_SETTINGS)
+        sample_settings = self.model.get_attachment(self.SAMPLE_SETTINGS)
+        return sample_settings if sample_settings is not None else SampleSettings()
     
     def set_sample_settings(self, sample_settings: SampleSettings):
         self.model.set_attachments(self.SAMPLE_SETTINGS, sample_settings)
     
 
-    def get_params(self) -> 'InjectionParams':
-        return self.model.get_attachment(self.PARAMS)
+    def get_params(self) -> InjectionParams:
+        params = self.model.get_attachment(self.PARAMS)
+        return params if params is not None else InjectionParams()
     
-    def set_params(self, params: 'InjectionParams'):
+    def set_params(self, params: InjectionParams):
         self.model.set_attachments(self.PARAMS, params)
         if params.context_options.context_length is not None:
             self.set_ACN_outer_sample_wrapper(throw_exception=False)
@@ -236,7 +239,7 @@ def _mm_clean_callback(self: MotionModelPatcher, *args, **kwargs):
     attachment.cleanup(self)
 
 
-def get_mm_attachment(patcher: MotionModelPatcher) -> 'MotionModelAttachment':
+def get_mm_attachment(patcher: MotionModelPatcher) -> MotionModelAttachment:
     return patcher.get_attachment(ModelPatcherHelper.ADE)
 
 
@@ -263,6 +266,9 @@ class MotionModelAttachment:
         self.camera_features: list[Tensor] = None  # temporary
         self.camera_features_shape: tuple = None
         self.cameractrl_multival: Union[float, Tensor] = None
+        ## temp
+        self.current_cameractrl_effect: Union[float, Tensor] = None
+        self.combined_cameractrl_effect: Union[float, Tensor] = None
 
         # PIA
         self.orig_pia_images: Tensor = None
@@ -272,6 +278,10 @@ class MotionModelAttachment:
         self.prev_pia_latents_shape: tuple = None
         self.prev_current_pia_input: InputPIA = None
         self.pia_multival: Union[float, Tensor] = None
+        ## temp
+        self.current_pia_input: InputPIA = None
+        self.combined_pia_mask: Union[float, Tensor] = None
+        self.combined_pia_effect: Union[float, Tensor] = None
 
         # FancyVideo
         self.orig_fancy_images: Tensor = None
@@ -280,6 +290,12 @@ class MotionModelAttachment:
         self.prev_fancy_latents_shape: tuple = None
         self.fancy_multival: Union[float, Tensor] = None
 
+        # MotionCtrl
+        self.orig_RT: Tensor = None
+        self.RT: Tensor = None
+        self.prev_RT_shape: tuple = None
+        self.prev_RT_uuids: list = None
+
         # temporary variables
         self.current_used_steps = 0
         self.current_keyframe: ADKeyframe = None
@@ -287,14 +303,10 @@ class MotionModelAttachment:
         self.previous_t = -1
         self.current_scale: Union[float, Tensor] = None
         self.current_effect: Union[float, Tensor] = None
-        self.current_cameractrl_effect: Union[float, Tensor] = None
-        self.current_pia_input: InputPIA = None
+        self.current_per_block_list: Union[list[PerBlock], None] = None
         self.combined_scale: Union[float, Tensor] = None
         self.combined_effect: Union[float, Tensor] = None
-        self.combined_per_block_list: Union[float, Tensor] = None
-        self.combined_cameractrl_effect: Union[float, Tensor] = None
-        self.combined_pia_mask: Union[float, Tensor] = None
-        self.combined_pia_effect: Union[float, Tensor] = None
+        self.combined_per_block_list: Union[list[PerBlock], None] = None
         self.was_within_range = False
         self.prev_sub_idxs = None
         self.prev_batched_number = None
@@ -315,14 +327,15 @@ class MotionModelAttachment:
             for keyframe in self.keyframes.keyframes:
                 keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
 
-    def prepare_current_keyframe(self, patcher: MotionModelPatcher, x: Tensor, t: Tensor):
+    def prepare_current_keyframe(self, patcher: MotionModelPatcher, x: Tensor, t: Tensor, transformer_options: dict[str, Tensor]):
         curr_t: float = t[0]
         # if curr_t was previous_t, then do nothing (already accounted for this step)
         if curr_t == self.previous_t:
             return
         prev_index = self.current_index
+        max_sigma = torch.max(transformer_options.get("sigmas", BIGMAX))
         # if met guaranteed steps, look for next keyframe in case need to switch
-        if self.current_keyframe is None or self.current_used_steps >= self.current_keyframe.guarantee_steps:
+        if self.current_keyframe is None or self.current_used_steps >= self.current_keyframe.get_effective_guarantee_steps(max_sigma):
             # if has next index, loop through and see if need to switch
             if self.keyframes.has_index(self.current_index+1):
                 for i in range(self.current_index+1, len(self.keyframes)):
@@ -333,25 +346,34 @@ class MotionModelAttachment:
                         self.current_index = i
                         self.current_keyframe = eval_kf
                         self.current_used_steps = 0
-                        # keep track of scale and effect multivals, accounting for inherit_missing
+                        # NOTE: handle possible inputs from keyframe, taking into account inherit_missing
+                        # scale
                         if self.current_keyframe.has_scale():
                             self.current_scale = self.current_keyframe.scale_multival
                         elif not self.current_keyframe.inherit_missing:
                             self.current_scale = None
+                        # effect
                         if self.current_keyframe.has_effect():
                             self.current_effect = self.current_keyframe.effect_multival
                         elif not self.current_keyframe.inherit_missing:
                             self.current_effect = None
+                        # per_block_list
+                        if self.current_keyframe.has_per_block_replace():
+                            self.current_per_block_list = self.current_keyframe.per_block_list
+                        elif not self.current_keyframe.inherit_missing:
+                            self.current_per_block_list = None
+                        # cameractrl_effect
                         if self.current_keyframe.has_cameractrl_effect():
                             self.current_cameractrl_effect = self.current_keyframe.cameractrl_multival
                         elif not self.current_keyframe.inherit_missing:
                             self.current_cameractrl_effect = None
+                        # pia_input
                         if self.current_keyframe.has_pia_input():
                             self.current_pia_input = self.current_keyframe.pia_input
                         elif not self.current_keyframe.inherit_missing:
                             self.current_pia_input = None
                         # if guarantee_steps greater than zero, stop searching for other keyframes
-                        if self.current_keyframe.guarantee_steps > 0:
+                        if self.current_keyframe.get_effective_guarantee_steps(max_sigma) > 0:
                             break
                     # if eval_kf is outside the percent range, stop looking further
                     else:
@@ -361,12 +383,13 @@ class MotionModelAttachment:
             # combine model's scale and effect with keyframe's scale and effect
             self.combined_scale = get_combined_multival(self.scale_multival, self.current_scale)
             self.combined_effect = get_combined_multival(self.effect_multival, self.current_effect)
+            self.combined_per_block_list = get_combined_per_block_list(self.per_block_list, self.current_per_block_list)
             self.combined_cameractrl_effect = get_combined_multival(self.cameractrl_multival, self.current_cameractrl_effect)
             self.combined_pia_mask = get_combined_input(self.pia_input, self.current_pia_input, x)
             self.combined_pia_effect = get_combined_input_effect_multival(self.pia_input, self.current_pia_input)
             # apply scale and effect
-            patcher.model.set_scale(self.combined_scale, self.per_block_list)
-            patcher.model.set_effect(self.combined_effect, self.per_block_list) # TODO: set combined_per_block_list
+            patcher.model.set_scale(self.combined_scale, self.combined_per_block_list)
+            patcher.model.set_effect(self.combined_effect, self.combined_per_block_list)
             patcher.model.set_cameractrl_effect(self.combined_cameractrl_effect)
         # apply effect - if not within range, set effect to 0, effectively turning model off
         if curr_t > self.timestep_range[0] or curr_t < self.timestep_range[1]:
@@ -375,7 +398,7 @@ class MotionModelAttachment:
         else:
             # if was not in range last step, apply effect to toggle AD status
             if not self.was_within_range:
-                patcher.model.set_effect(self.combined_effect, self.per_block_list)
+                patcher.model.set_effect(self.combined_effect, self.combined_per_block_list)
                 self.was_within_range = True
         # update steps current keyframe is used
         self.current_used_steps += 1
@@ -383,6 +406,7 @@ class MotionModelAttachment:
         self.previous_t = curr_t
 
     def prepare_alcmi2v_features(self, patcher: MotionModelPatcher, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str], latent_format):
+        '''Used for AnimateLCM-I2V'''
         # if no img_encoder, done
         if patcher.model.img_encoder is None:
             return
@@ -409,6 +433,7 @@ class MotionModelAttachment:
         self.prev_batched_number = batched_number
 
     def prepare_camera_features(self, patcher: MotionModelPatcher, x: Tensor, cond_or_uncond: list[int], ad_params: dict[str]):
+        '''Used for CameraCtrl'''
         # if no camera_encoder, done
         if patcher.model.camera_encoder is None:
             return
@@ -441,7 +466,45 @@ class MotionModelAttachment:
         self.prev_sub_idxs = sub_idxs
         self.prev_batched_number = batched_number
 
+    def prepare_motionctrl_camera(self, patcher: MotionModelPatcher, x: Tensor, transformer_options: dict[str]):
+        '''Used for MotionCtrl'''
+        # if no cc enabled, done
+        if not patcher.model.is_motionctrl_cc_enabled():
+            if "ADE_RT" in transformer_options:
+                transformer_options.pop("ADE_RT")
+            return
+        cond_or_uncond: list[int] = transformer_options["cond_or_uncond"]
+        uuids: list = transformer_options["uuids"]
+        batched_number = len(cond_or_uncond)
+        ad_params = transformer_options["ad_params"]
+        full_length = ad_params["full_length"]
+        sub_idxs = ad_params["sub_idxs"]
+        goal_length = x.size(0) // batched_number
+        if self.prev_RT_shape != x.shape or sub_idxs != self.prev_sub_idxs or uuids != self.prev_RT_uuids:
+            real_RT = self.orig_RT.clone().to(dtype=x.dtype, device=x.device) # [t, 12]
+            # make sure RT is of the valid length
+            real_RT = extend_to_batch_size(real_RT, full_length)
+            if sub_idxs is not None:
+                real_RT = real_RT[sub_idxs]
+            real_RT = real_RT.unsqueeze(0) # [1, t, 12]
+            # match batch length - conds get real_RT, unconds get empty
+            if batched_number > 1:
+                batched_RTs = []
+                for condtype in cond_or_uncond:
+                    if condtype == 0: # cond
+                        batched_RTs.append(real_RT)
+                    else: # uncond
+                        batched_RTs.append(torch.zeros_like(real_RT))
+                real_RT = torch.cat(batched_RTs, dim=0)
+            self.RT = real_RT.to(dtype=x.dtype, device=x.device)
+            self.prev_RT_shape = x.shape
+        transformer_options["ADE_RT"] = self.RT
+        self.prev_sub_idxs = sub_idxs
+        self.prev_batched_number = batched_number
+
+
     def get_pia_c_concat(self, model: BaseModel, x: Tensor) -> Tensor:
+        '''Used for PIA'''
         # if have cached shape, check if matches - if so, return cached pia_latents
         if self.prev_pia_latents_shape is not None:
             if self.prev_pia_latents_shape[0] == x.shape[0] and self.prev_pia_latents_shape[2] == x.shape[2] and self.prev_pia_latents_shape[3] == x.shape[3]:
@@ -502,6 +565,7 @@ class MotionModelAttachment:
             comfy.model_management.load_models_gpu(cached_loaded_models)
 
     def get_fancy_c_concat(self, model: BaseModel, x: Tensor) -> Tensor:
+        '''Used for FancyVideo'''
         # if have cached shape, check if matches - if so, return cached fancy_latents
         if self.prev_fancy_latents_shape is not None:
             if self.prev_fancy_latents_shape[0] == x.shape[0] and self.prev_fancy_latents_shape[-2] == x.shape[-2] and self.prev_fancy_latents_shape[-1] == x.shape[-1]:
@@ -562,6 +626,10 @@ class MotionModelAttachment:
         # PIA
         self.combined_pia_mask = None
         self.combined_pia_effect = None
+        # MotionCtrl
+        self.RT = None
+        self.prev_RT_shape = None
+        self.prev_RT_uuids = None
         # Default
         self.current_used_steps = 0
         self.current_keyframe = None
@@ -569,6 +637,7 @@ class MotionModelAttachment:
         self.previous_t = -1
         self.current_scale = None
         self.current_effect = None
+        self.current_per_block_list = None
         self.combined_scale = None
         self.combined_effect = None
         self.combined_per_block_list = None
@@ -623,7 +692,7 @@ class MotionModelGroup:
     def is_empty(self) -> bool:
         return len(self.models) == 0
     
-    def clone(self) -> 'MotionModelGroup':
+    def clone(self) -> MotionModelGroup:
         cloned = MotionModelGroup()
         for mm in self.models:
             cloned.add(mm)
@@ -654,10 +723,10 @@ class MotionModelGroup:
         for motion_model in self.models:
             motion_model.cleanup()
     
-    def prepare_current_keyframe(self, x: Tensor, t: Tensor):
+    def prepare_current_keyframe(self, x: Tensor, t: Tensor, transformer_options: dict[str, Tensor]):
         for motion_model in self.models:
             attachment = get_mm_attachment(motion_model)
-            attachment.prepare_current_keyframe(motion_model, x=x, t=t)
+            attachment.prepare_current_keyframe(motion_model, x=x, t=t, transformer_options=transformer_options)
 
     def get_special_models(self):
         pia_motion_models: list[MotionModelPatcher] = []
@@ -924,6 +993,13 @@ def validate_per_block_compatibility(motion_model: MotionModelPatcher, all_per_b
         raise Exception(f"Per-Block provided is meant for {all_per_blocks.sd_type}, but provided motion module is for {mm_info.sd_type}.")
 
 
+def validate_per_block_compatibility_keyframes(motion_model: MotionModelPatcher, keyframes: ADKeyframeGroup):
+    if keyframes is None:
+        return
+    for keyframe in keyframes.keyframes:
+        validate_per_block_compatibility(motion_model, keyframe._per_block_replace)
+
+
 def interpolate_pe_to_length(model_dict: dict[str, Tensor], key: str, new_length: int):
     pe_shape = model_dict[key].shape
     temp_pe = rearrange(model_dict[key], "(t b) f d -> t b f d", t=1)
@@ -1080,7 +1156,7 @@ class InjectionParams:
     def reset_context(self):
         self.context_options = ContextOptionsGroup.default()
     
-    def clone(self) -> 'InjectionParams':
+    def clone(self) -> InjectionParams:
         new_params = InjectionParams(
             self.unlimited_area_hack, self.apply_mm_groupnorm_hack, apply_v2_properly=self.apply_v2_properly,
             )

@@ -13,9 +13,8 @@ from comfy.model_base import BaseModel
 from comfy.sd import VAE
 
 from . import freeinit
-from .conditioning import LoraHookMode
 from .context import ContextOptions, ContextOptionsGroup
-from .utils_model import SigmaSchedule
+from .utils_model import SigmaSchedule, BIGMAX
 from .utils_motion import extend_to_batch_size, get_sorted_list_via_attr, prepare_mask_batch
 from .logger import logger
 
@@ -611,6 +610,12 @@ class CustomCFGKeyframe:
         self.start_t = 999999999.9
         self.guarantee_steps = guarantee_steps
     
+    def get_effective_guarantee_steps(self, max_sigma: torch.Tensor):
+        '''If keyframe starts before current sampling range (max_sigma), treat as 0.'''
+        if self.start_t > max_sigma:
+            return 0
+        return self.guarantee_steps
+
     def clone(self):
         c = CustomCFGKeyframe(cfg_multival=self.cfg_multival,
                               start_percent=self.start_percent, guarantee_steps=self.guarantee_steps)
@@ -661,14 +666,15 @@ class CustomCFGKeyframeGroup:
         for keyframe in self.keyframes:
             keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
     
-    def prepare_current_keyframe(self, t: Tensor):
+    def prepare_current_keyframe(self, t: Tensor, transformer_options: dict[str, Tensor]):
         curr_t: float = t[0]
         # if curr_t same as before, do nothing as step already accounted for
         if curr_t == self._previous_t:
             return
         prev_index = self._current_index
+        max_sigma = torch.max(transformer_options.get("sigmas", BIGMAX))
         # if met guaranteed steps, look for next keyframe in case need to switch
-        if self._current_used_steps >= self._current_keyframe.guarantee_steps:
+        if self._current_used_steps >= self._current_keyframe.get_effective_guarantee_steps(max_sigma):
             # if has next index, loop through and see if need t oswitch
             if self.has_index(self._current_index+1):
                 for i in range(self._current_index+1, len(self.keyframes)):
@@ -680,7 +686,7 @@ class CustomCFGKeyframeGroup:
                         self._current_keyframe = eval_c
                         self._current_used_steps = 0
                         # if guarantee_steps greater than zero, stop searching for other keyframes
-                        if self._current_keyframe.guarantee_steps > 0:
+                        if self._current_keyframe.get_effective_guarantee_steps(max_sigma) > 0:
                             break
                     # if eval_c is outside the percent range, stop looking further
                     else: break

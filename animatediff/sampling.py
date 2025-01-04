@@ -26,7 +26,9 @@ from .utils_model import MachineState, vae_encode_raw_batched, vae_decode_raw_ba
 from .utils_motion import composite_extend, prepare_mask_batch, extend_to_batch_size
 from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup, get_mm_attachment
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion
+from .adapter_hellomeme import HMRefConst, HMRefStates, get_hmref_attachment, create_hmref_apply_model_wrapper
 from .logger import logger
+from .dinklink import get_acn_dinklink_version
 
 
 ##################################################################################
@@ -53,13 +55,13 @@ class AnimateDiffGlobalState:
             if self.sample_settings.custom_cfg is not None:
                 self.sample_settings.custom_cfg.initialize_timesteps(model)
 
-    def prepare_current_keyframes(self, x: Tensor, timestep: Tensor):
+    def prepare_current_keyframes(self, x: Tensor, timestep: Tensor, transformer_options: dict[str, Tensor]):
         if self.motion_models is not None:
-            self.motion_models.prepare_current_keyframe(x=x, t=timestep)
+            self.motion_models.prepare_current_keyframe(x=x, t=timestep, transformer_options=transformer_options)
         if self.params.context_options is not None:
-            self.params.context_options.prepare_current(t=timestep)
+            self.params.context_options.prepare_current(t=timestep, transformer_options=transformer_options)
         if self.sample_settings.custom_cfg is not None:
-            self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep)
+            self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep, transformer_options=transformer_options)
 
     def perform_special_model_features(self, model: BaseModel, conds: list, x_in: Tensor, model_options: dict[str]):
         if self.motion_models is not None:
@@ -192,6 +194,7 @@ def _apply_model_wrapper(executor, *args, **kwargs):
                 attachment = get_mm_attachment(motion_model)
                 attachment.prepare_alcmi2v_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=executor.class_obj.latent_format)
                 attachment.prepare_camera_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
+                attachment.prepare_motionctrl_camera(motion_model, x=x, transformer_options=transformer_options)
     del x
     return executor(*args, **kwargs)
 
@@ -284,9 +287,9 @@ class FunctionInjectionHolder:
                         helper.model.model.memory_required = unlimited_memory_required
                 except Exception:
                     pass
-            # if img_encoder or camera_encoder present, inject apply_model to handle correctly
+            # if AnimateLCM-I2V, CameraCtrl, or MotionCtrl present, inject apply_model to handle correctly
             for motion_model in helper.get_motion_models():
-                if (motion_model.model.img_encoder is not None) or (motion_model.model.camera_encoder is not None):
+                if motion_model.model.needs_apply_model_wrapper():
                     create_special_model_apply_model_wrapper(model_options)
                     break
             del info
@@ -367,6 +370,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
     cached_latents = None
     cached_noise = None
     function_injections = FunctionInjectionHolder()
+    hmref_attachment = None
 
     try:
         guider: comfy.samplers.CFGGuider = executor.class_obj
@@ -435,6 +439,34 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
         iter_kwargs = {}
         # NOTE: original KSampler stuff is not doable here, so skipping...
 
+    
+        # NOTE: this will never be used as I have hidden HelloMeme RefNet nodes from being loaded
+        # if have HMRef, then do what's needed
+        hmref_attachment = get_hmref_attachment(helper.model)
+        if hmref_attachment is not None:
+            ref_latents = None
+            #sigmas: Tensor = args[3]
+            try:
+                hmref_attachment.prepare_ref_latent(helper.model.model, x=latents)
+                # NOTE: trying out using the hmrefnet more like other types of refnets
+                create_hmref_apply_model_wrapper(guider.model_options)
+                # ref_latents = hmref_attachment.prepare_ref_latent(helper.model.model, x=latents)
+                # ref_sigmas = torch.tensor([helper.model.model.model_sampling.sigma_min, torch.tensor(0.0)]).to(device=sigmas.device, dtype=sigmas.dtype)
+                # new_args = args.copy()
+                # new_args[3] = ref_sigmas
+                # make sure transformer_options has necessary HMREF stuff
+                # guider.model_options["transformer_options"][HMRefConst.REF_STATES] = HMRefStates()
+                # guider.model_options["transformer_options"][HMRefConst.REF_MODE] = HMRefConst.WRITE
+                # ADGS.update_with_inject_params(params)
+                # ADGS.start_step = 0
+                # ADGS.current_step = ADGS.start_step
+                # ADGS.last_step = 0
+                # executor(*tuple(new_args), **kwargs)
+                # guider.model_options["transformer_options"][HMRefConst.REF_MODE] = HMRefConst.READ
+            finally:
+                del ref_latents
+                #del sigmas
+
         for curr_i in range(iter_opts.iterations):
             # handle GLOBALSTATE vars and step tally
             # NOTE: only KSampler/KSampler (Advanced) would have steps;
@@ -493,6 +525,9 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
         del cached_latents
         del cached_noise
         del orig_model_options
+        if hmref_attachment is not None:
+            hmref_attachment.cleanup()
+        del hmref_attachment
         # reset global state
         ADGS.reset()
         # clean motion_models
@@ -506,7 +541,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
 def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS: AnimateDiffGlobalState = model_options["transformer_options"]["ADGS"]
     ADGS.initialize(model)
-    ADGS.prepare_current_keyframes(x=x, timestep=timestep)
+    ADGS.prepare_current_keyframes(x=x, timestep=timestep, transformer_options=model_options["transformer_options"])
     try:
         # add AD/evolved-sampling params to model_options (transformer_options)
         model_options = model_options.copy()
@@ -690,7 +725,11 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             # check if ContextRef ReferenceAdvanced ACN objs should_run
             actually_should_run = True
             for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                refcn.prepare_current_timestep(timestep)
+                acn_dl_version = get_acn_dinklink_version()
+                if acn_dl_version > 10000:
+                    refcn.prepare_current_timestep(timestep, model_options["transformer_options"])
+                else:
+                    refcn.prepare_current_timestep(timestep)
                 if not refcn.should_run():
                     actually_should_run = False
             if actually_should_run:
