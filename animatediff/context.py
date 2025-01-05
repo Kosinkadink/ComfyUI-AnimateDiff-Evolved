@@ -12,7 +12,7 @@ from comfy.model_base import BaseModel
 from comfy.model_patcher import ModelPatcher
 
 from .context_extras import ContextExtrasGroup
-from .utils_model import BIGMAX
+from .utils_model import BIGMAX_TENSOR
 from .utils_motion import get_sorted_list_via_attr
 
 
@@ -158,7 +158,7 @@ class ContextOptionsGroup:
         if curr_t == self._previous_t:
             return
         prev_index = self._current_index
-        max_sigma = torch.max(transformer_options.get("sigmas", BIGMAX))
+        max_sigma = torch.max(transformer_options.get("sample_sigmas", BIGMAX_TENSOR))
         # if met guaranteed steps, look for next context in case need to switch
         if self._current_used_steps >= self._current_context.get_effective_guarantee_steps(max_sigma):
             # if has next index, loop through and see if need to switch
