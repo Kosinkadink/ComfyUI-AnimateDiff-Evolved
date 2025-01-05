@@ -14,7 +14,7 @@ from comfy.sd import VAE
 
 from . import freeinit
 from .context import ContextOptions, ContextOptionsGroup
-from .utils_model import SigmaSchedule, BIGMAX
+from .utils_model import SigmaSchedule, BIGMAX_TENSOR
 from .utils_motion import extend_to_batch_size, get_sorted_list_via_attr, prepare_mask_batch
 from .logger import logger
 
@@ -672,7 +672,7 @@ class CustomCFGKeyframeGroup:
         if curr_t == self._previous_t:
             return
         prev_index = self._current_index
-        max_sigma = torch.max(transformer_options.get("sigmas", BIGMAX))
+        max_sigma = torch.max(transformer_options.get("sample_sigmas", BIGMAX_TENSOR))
         # if met guaranteed steps, look for next keyframe in case need to switch
         if self._current_used_steps >= self._current_keyframe.get_effective_guarantee_steps(max_sigma):
             # if has next index, loop through and see if need t oswitch

@@ -30,7 +30,7 @@ from .utils_motion import (ADKeyframe, ADKeyframeGroup, MotionCompatibilityError
                            get_combined_multival, get_combined_input, get_combined_input_effect_multival,
                            ade_broadcast_image_to, extend_to_batch_size, prepare_mask_batch)
 from .motion_lora import MotionLoraInfo, MotionLoraList
-from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched, BIGMAX
+from .utils_model import get_motion_lora_path, get_motion_model_path, get_sd_model_type, vae_encode_raw_batched, BIGMAX_TENSOR
 from .sample_settings import SampleSettings, SeedNoiseGeneration
 from .dinklink import DinkLinkConst, get_dinklink, get_acn_outer_sample_wrapper
 
@@ -333,7 +333,7 @@ class MotionModelAttachment:
         if curr_t == self.previous_t:
             return
         prev_index = self.current_index
-        max_sigma = torch.max(transformer_options.get("sigmas", BIGMAX))
+        max_sigma = torch.max(transformer_options.get("sample_sigmas", BIGMAX_TENSOR))
         # if met guaranteed steps, look for next keyframe in case need to switch
         if self.current_keyframe is None or self.current_used_steps >= self.current_keyframe.get_effective_guarantee_steps(max_sigma):
             # if has next index, loop through and see if need to switch
