@@ -6,7 +6,7 @@ from comfy.sd import VAE
 
 from .freeinit import FreeInitFilter
 from .sample_settings import (FreeInitOptions, IterationOptions,
-                              NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
+                              NoiseLayerAdd, NoiseLayerAddWeighted, NoiseLayerNormalizedSum, NoiseLayerGroup, NoiseLayerReplace, NoiseLayerType,
                               SeedNoiseGeneration, SampleSettings, NoiseCalibration,
                               CustomCFGKeyframeGroup, CustomCFGKeyframe, CFGExtrasGroup, CFGExtras,
                               NoisedImageToInjectGroup, NoisedImageToInject, NoisedImageInjectOptions)
@@ -169,6 +169,46 @@ class NoiseLayerAddWeightedNode:
         layer = NoiseLayerAddWeighted(noise_type=noise_type, batch_offset=batch_offset, seed_gen_override=seed_gen_override, seed_offset=seed_offset,
                               seed_override=seed_override, mask=mask_optional,
                               noise_weight=noise_weight, balance_multiplier=balance_multiplier)
+        prev_noise_layers.add_to_start(layer)
+        return (prev_noise_layers,)
+
+
+class NoiseLayerNormalizedSumNode:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "batch_offset": ("INT", {"default": 0, "min": 0, "max": BIGMAX}),
+                "noise_type": (NoiseLayerType.LIST,),
+                "seed_gen_override": (SeedNoiseGeneration.LIST_WITH_OVERRIDE,),
+                "seed_offset": ("INT", {"default": 0, "min": BIGMIN, "max": BIGMAX}),
+                "noise_weight": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.001}),
+            },
+            "optional": {
+                "prev_noise_layers": ("NOISE_LAYERS",),
+                "mask_optional": ("MASK",),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
+            },
+            "hidden": {
+                "autosize": ("ADEAUTOSIZE", {"padding": 0}),
+            }
+        }
+
+    RETURN_TYPES = ("NOISE_LAYERS",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/noise layers"
+    FUNCTION = "create_layers"
+
+    def create_layers(self, batch_offset: int, noise_type: str, seed_gen_override: str, seed_offset: int,
+                      noise_weight: float,
+                      prev_noise_layers: NoiseLayerGroup=None, mask_optional: Tensor=None, seed_override: int=None,):
+        # prepare prev_noise_layers
+        if prev_noise_layers is None:
+            prev_noise_layers = NoiseLayerGroup()
+        prev_noise_layers = prev_noise_layers.clone()
+        # create layer
+        layer = NoiseLayerNormalizedSum(noise_type=noise_type, batch_offset=batch_offset, seed_gen_override=seed_gen_override, seed_offset=seed_offset,
+                              seed_override=seed_override, mask=mask_optional,
+                              noise_weight=noise_weight)
         prev_noise_layers.add_to_start(layer)
         return (prev_noise_layers,)
 
