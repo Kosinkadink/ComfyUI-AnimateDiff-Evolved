@@ -185,7 +185,7 @@ class NoiseLayerNormalizedSum(NoiseLayer):
                  noise_weight=1.0):
         super().__init__(noise_type, batch_offset, seed_gen_override, seed_offset, seed_override, mask, noise_weight)
         self.noise_weight = noise_weight
-        self.application = NoiseApplication.ADD_WEIGHTED
+        self.application = NoiseApplication.NORMALIZED_SUM
 
     def apply_layer_noise(self, new_noise: Tensor, old_noise: Tensor) -> Tensor:
         noise_mask = self.get_noise_mask(old_noise)
