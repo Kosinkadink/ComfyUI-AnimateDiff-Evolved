@@ -171,7 +171,8 @@ class NoiseLayerAdd(NoiseLayer):
 class NoiseLayerAddWeighted(NoiseLayerAdd):
     def __init__(self, noise_type: str, batch_offset: int, seed_gen_override: str, seed_offset: int, seed_override: int=None, mask: Tensor=None,
                  noise_weight=1.0, balance_multiplier=1.0):
-        super().__init__(noise_type, batch_offset, seed_gen_override, seed_offset, seed_override, mask, noise_weight)
+        super().__init__(noise_type, batch_offset, seed_gen_override, seed_offset, seed_override, mask)
+        self.noise_weight = noise_weight
         self.balance_multiplier = balance_multiplier
         self.application = NoiseApplication.ADD_WEIGHTED
 
@@ -183,7 +184,7 @@ class NoiseLayerAddWeighted(NoiseLayerAdd):
 class NoiseLayerNormalizedSum(NoiseLayer):
     def __init__(self, noise_type: str, batch_offset: int, seed_gen_override: str, seed_offset: int, seed_override: int=None, mask: Tensor=None,
                  noise_weight=1.0):
-        super().__init__(noise_type, batch_offset, seed_gen_override, seed_offset, seed_override, mask, noise_weight)
+        super().__init__(noise_type, batch_offset, seed_gen_override, seed_offset, seed_override, mask)
         self.noise_weight = noise_weight
         self.application = NoiseApplication.NORMALIZED_SUM
 
