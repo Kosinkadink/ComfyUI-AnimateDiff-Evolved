@@ -23,7 +23,7 @@ from .nodes_conditioning import (CreateLoraHookKeyframeInterpolationDEPR,
                                  PairedConditioningCombineDEPR, ConditioningCombineDEPR,
                                  ConditioningTimestepsNodeDEPR, SetLoraHookKeyframesDEPR,
                                  CreateLoraHookKeyframeDEPR, CreateLoraHookKeyframeFromStrengthListDEPR)
-from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
+from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, NoiseLayerNormalizedSumNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGSimpleNode, CustomCFGKeyframeNode, CustomCFGKeyframeSimpleNode, CustomCFGKeyframeInterpolationNode, CustomCFGKeyframeFromListNode,
                            CFGExtrasPAGNode, CFGExtrasPAGSimpleNode, CFGExtrasRescaleCFGNode, CFGExtrasRescaleCFGSimpleNode,
                            NoisedImageInjectionNode, NoisedImageInjectOptionsNode, NoiseCalibrationNode)
@@ -126,6 +126,7 @@ NODE_CLASS_MAPPINGS = {
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": NoiseLayerAddNode,
     "ADE_NoiseLayerAddWeighted": NoiseLayerAddWeightedNode,
+    "ADE_NoiseLayerNormalizedSum": NoiseLayerNormalizedSumNode,
     "ADE_NoiseLayerReplace": NoiseLayerReplaceNode,
     # AnimateDiff Settings
     "ADE_AnimateDiffSettings": AnimateDiffSettingsNode,
@@ -304,6 +305,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Noise Layer Nodes
     "ADE_NoiseLayerAdd": "Noise Layer [Add] 🎭🅐🅓",
     "ADE_NoiseLayerAddWeighted": "Noise Layer [Add Weighted] 🎭🅐🅓",
+    "ADE_NoiseLayerNormalizedSum": "Noise Layer [Normalized Sum] 🎭🅐🅓",
     "ADE_NoiseLayerReplace": "Noise Layer [Replace] 🎭🅐🅓",
     # AnimateDiff Settings
     "ADE_AnimateDiffSettings": "AnimateDiff Settings 🎭🅐🅓",
