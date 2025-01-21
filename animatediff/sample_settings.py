@@ -42,9 +42,10 @@ class NoiseLayerType:
 class NoiseApplication:
     ADD = "add"
     ADD_WEIGHTED = "add_weighted"
+    NORMALIZED_SUM = "normalized_sum"
     REPLACE = "replace"
     
-    LIST = [ADD, ADD_WEIGHTED, REPLACE]
+    LIST = [ADD, ADD_WEIGHTED, NORMALIZED_SUM, REPLACE]
 
 
 class NoiseNormalize:
@@ -177,6 +178,25 @@ class NoiseLayerAddWeighted(NoiseLayerAdd):
     def apply_layer_noise(self, new_noise: Tensor, old_noise: Tensor) -> Tensor:
         noise_mask = self.get_noise_mask(old_noise)
         return (1-noise_mask)*old_noise + noise_mask*(old_noise * (1.0-(self.noise_weight*self.balance_multiplier)) + new_noise * self.noise_weight)
+
+
+class NoiseLayerNormalizedSum(NoiseLayer):
+    def __init__(self, noise_type: str, batch_offset: int, seed_gen_override: str, seed_offset: int, seed_override: int=None, mask: Tensor=None,
+                 noise_weight=1.0):
+        super().__init__(noise_type, batch_offset, seed_gen_override, seed_offset, seed_override, mask, noise_weight)
+        self.noise_weight = noise_weight
+        self.application = NoiseApplication.ADD_WEIGHTED
+
+    def apply_layer_noise(self, new_noise: Tensor, old_noise: Tensor) -> Tensor:
+        noise_mask = self.get_noise_mask(old_noise)
+        weight_old = 1.0 - self.noise_weight
+        weight_new = self.noise_weight
+        
+        norm_factor = (weight_old**2 + weight_new**2)**0.5
+        weight_old /= norm_factor
+        weight_new /= norm_factor
+
+        return (1 - noise_mask) * old_noise + noise_mask * (weight_old * old_noise + weight_new * new_noise)
 
 
 class NoiseLayerGroup:
