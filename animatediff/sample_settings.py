@@ -664,9 +664,11 @@ class CustomCFGKeyframeGroup:
     
     def initialize_timesteps(self, model: BaseModel):
         for keyframe in self.keyframes:
-            to_assign = model.model_sampling.percent_to_sigma(keyframe.start_percent)
+            to_assign = torch.tensor(model.model_sampling.percent_to_sigma(keyframe.start_percent), device=model.model_sampling.sigma_max.device)
             if keyframe.start_percent == 0.0 and to_assign > model.model_sampling.sigma_max:
                 keyframe.start_t = model.model_sampling.sigma_max
+            else:
+                keyframe.start_t = to_assign
     
     def prepare_current_keyframe(self, t: Tensor, transformer_options: dict[str, Tensor]):
         curr_t: float = t[0]
