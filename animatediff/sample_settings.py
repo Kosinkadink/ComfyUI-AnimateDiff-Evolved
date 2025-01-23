@@ -612,9 +612,9 @@ class CustomCFGKeyframe:
     
     def get_effective_guarantee_steps(self, max_sigma: torch.Tensor):
         '''If keyframe starts before current sampling range (max_sigma), treat as 0.'''
-        if self.start_t > max_sigma:
-            return 0
-        return self.guarantee_steps
+        if torch.allclose(self.start_t, max_sigma) or self.start_t < max_sigma:
+            return self.guarantee_steps
+        return 0
 
     def clone(self):
         c = CustomCFGKeyframe(cfg_multival=self.cfg_multival,
@@ -664,7 +664,9 @@ class CustomCFGKeyframeGroup:
     
     def initialize_timesteps(self, model: BaseModel):
         for keyframe in self.keyframes:
-            keyframe.start_t = model.model_sampling.percent_to_sigma(keyframe.start_percent)
+            to_assign = model.model_sampling.percent_to_sigma(keyframe.start_percent)
+            if keyframe.start_percent == 0.0 and to_assign > model.model_sampling.sigma_max:
+                keyframe.start_t = model.model_sampling.sigma_max
     
     def prepare_current_keyframe(self, t: Tensor, transformer_options: dict[str, Tensor]):
         curr_t: float = t[0]
