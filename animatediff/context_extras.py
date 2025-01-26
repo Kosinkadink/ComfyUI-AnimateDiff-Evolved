@@ -515,6 +515,41 @@ class NaiveReuse(ContextExtra):
             return False
         # if weighted_mean is 0.0, then reuse will take no effect anyway
         return to_return and self.weighted_mean > 0.0 and self.keyframe.mult > 0.0
+
+class NaiveReuseHandler:
+    def __init__(self):
+        self.naivereuse_active = False
+        self.cached_naive_conds = None
+        self.cached_naive_ctx_idxs = None
+    
+    def initialize_step(self, x_in: Tensor, conds):
+        self.cached_naive_conds = [torch.zeros_like(x_in) for _ in conds]
+        #cached_naive_counts = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+        self.naivereuse_active = True
+
+    def cache_first_context_results(self, ctx_idxs: list[int], sub_conds: list, conds_final: list[Tensor], counts_final: list[Tensor]):
+        if self.naivereuse_active:
+            self.cached_naive_ctx_idxs = ctx_idxs
+            for i in range(len(sub_conds)):
+                self.cached_naive_conds[i][ctx_idxs] = conds_final[i][ctx_idxs] / counts_final[i][ctx_idxs]
+            self.naivereuse_active = False
+
+    def apply_cached(self, x_in: Tensor, conds_final: list[Tensor], counts_final: list[Tensor], ADGS: AnimateDiffGlobalState):
+        if self.cached_naive_conds is not None:
+            start_idx = self.cached_naive_ctx_idxs[0]
+            for z in range(0, ADGS.params.full_length, len(self.cached_naive_ctx_idxs)):
+                for i in range(len(self.cached_naive_conds)):
+                    # get the 'true' idxs of this window
+                    new_ctx_idxs = [(zz+start_idx) % ADGS.params.full_length for zz in list(range(z, z+len(self.cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
+                    # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
+                    adjusted_naive_ctx_idxs = self.cached_naive_ctx_idxs[:len(new_ctx_idxs)]
+                    weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
+                    conds_final[i][new_ctx_idxs] = (weighted_mean * (self.cached_naive_conds[i][adjusted_naive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
+            self.cleanup()
+
+    def cleanup(self):
+        del self.cached_naive_conds
+        self.cached_naive_conds = None
 #--------------------------------
 
 

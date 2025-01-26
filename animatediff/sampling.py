@@ -20,7 +20,7 @@ import comfy.conds
 import comfy.ops
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
-from .context_extras import ContextRefHandler
+from .context_extras import ContextRefHandler, NaiveReuseHandler
 from .sample_settings import SampleSettings, NoisedImageToInject
 from .utils_model import vae_encode_raw_batched, vae_decode_raw_batched
 from .utils_motion import composite_extend, prepare_mask_batch, extend_to_batch_size
@@ -706,20 +706,20 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
     biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
     CREF = ContextRefHandler()
+    NAIVE = NaiveReuseHandler()
+    allow_multigpu_contexts = True
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
+        curr_window_idx = -1
+
         if ADGS.params.context_options.extras.should_run_context_ref():
             CREF.initialize_step(timestep, model_options, ADGS)
-
-        curr_window_idx = -1
-        naivereuse_active = False
-        cached_naive_conds = None
-        cached_naive_ctx_idxs = None
+            allow_multigpu_contexts = False
         if ADGS.params.context_options.extras.should_run_naive_reuse():
-            cached_naive_conds = [torch.zeros_like(x_in) for _ in conds]
-            #cached_naive_counts = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
-            naivereuse_active = True
-        # perform calc_conds_batch per context window 
+            NAIVE.initialize_step(x_in, conds)
+            allow_multigpu_contexts = False
+        
+        # perform calc_conds_batch per context window
         for ctx_idxs in context_windows:
             # allow processing to end between context window executions for faster Cancel
             comfy.model_management.throw_exception_if_processing_interrupted()
@@ -761,29 +761,16 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
                     conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
                     counts_final[i][ctx_idxs] += weights_tensor
             # handle NaiveReuse
-            if naivereuse_active:
-                cached_naive_ctx_idxs = ctx_idxs
-                for i in range(len(sub_conds)):
-                    cached_naive_conds[i][ctx_idxs] = conds_final[i][ctx_idxs] / counts_final[i][ctx_idxs]
-                naivereuse_active = False
+            NAIVE.cache_first_context_results(ctx_idxs, sub_conds, conds_final, counts_final)
             # handle ContextRef
             CREF.finalize_step()
     finally:
         CREF.cleanup(model_options)
 
     # handle NaiveReuse
-    if cached_naive_conds is not None:
-        start_idx = cached_naive_ctx_idxs[0]
-        for z in range(0, ADGS.params.full_length, len(cached_naive_ctx_idxs)):
-            for i in range(len(cached_naive_conds)):
-                # get the 'true' idxs of this window
-                new_ctx_idxs = [(zz+start_idx) % ADGS.params.full_length for zz in list(range(z, z+len(cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
-                # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
-                adjusted_naive_ctx_idxs = cached_naive_ctx_idxs[:len(new_ctx_idxs)]
-                weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
-                conds_final[i][new_ctx_idxs] = (weighted_mean * (cached_naive_conds[i][adjusted_naive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
-        del cached_naive_conds
+    NAIVE.apply_cached(x_in, conds_final, counts_final, ADGS)
 
+    # finalize conds
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
         # already normalized, so return as is
         del counts_final
