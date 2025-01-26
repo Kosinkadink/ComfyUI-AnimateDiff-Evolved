@@ -20,15 +20,14 @@ import comfy.conds
 import comfy.ops
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
-from .context_extras import ContextRefMode
+from .context_extras import ContextRefHandler
 from .sample_settings import SampleSettings, NoisedImageToInject
-from .utils_model import MachineState, vae_encode_raw_batched, vae_decode_raw_batched
+from .utils_model import vae_encode_raw_batched, vae_decode_raw_batched
 from .utils_motion import composite_extend, prepare_mask_batch, extend_to_batch_size
 from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup, get_mm_attachment
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion
 from .adapter_hellomeme import HMRefConst, HMRefStates, get_hmref_attachment, create_hmref_apply_model_wrapper
 from .logger import logger
-from .dinklink import get_acn_dinklink_version
 
 
 ##################################################################################
@@ -623,70 +622,71 @@ def perform_image_injection(ADGS: AnimateDiffGlobalState, model: BaseModel, late
         comfy.model_management.load_models_gpu(cached_loaded_models)
 
 
+def prepare_control_objects(control: ControlBase, full_idxs: list[int], ADGS: AnimateDiffGlobalState):
+    if control.previous_controlnet is not None:
+        prepare_control_objects(control.previous_controlnet, full_idxs)
+    if not hasattr(control, "sub_idxs"):
+        raise ValueError(f"Control type {type(control).__name__} may not support required features for sliding context window; \
+                            use ControlNet nodes from Kosinkadink/ComfyUI-Advanced-ControlNet, or make sure ComfyUI-Advanced-ControlNet is updated.")
+    control.sub_idxs = full_idxs
+    control.full_latent_length = ADGS.params.full_length
+    control.context_length = ADGS.params.context_options.context_length
+
 # initial sliding_calc_conds_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
+def get_resized_cond(cond_in, x_in: Tensor, full_idxs: list[int], context_length: int, ADGS: AnimateDiffGlobalState) -> list:
+    if cond_in is None:
+        return None
+    # reuse or resize cond items to match context requirements
+    resized_cond = []
+    # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
+    for actual_cond in cond_in:
+        resized_actual_cond = actual_cond.copy()
+        # now we are in the inner dict - "pooled_output" is a tensor, "control" is a ControlBase object, "model_conds" is dictionary
+        for key in actual_cond:
+            try:
+                cond_item = actual_cond[key]
+                if isinstance(cond_item, Tensor):
+                    # check that tensor is the expected length - x.size(0)
+                    if cond_item.size(0) == x_in.size(0):
+                        # if so, it's subsetting time - tell controls the expected indeces so they can handle them
+                        actual_cond_item = cond_item[full_idxs]
+                        resized_actual_cond[key] = actual_cond_item
+                    else:
+                        resized_actual_cond[key] = cond_item
+                # look for control
+                elif key == "control":
+                    control_item = cond_item
+                    prepare_control_objects(control_item, full_idxs, ADGS)
+                    resized_actual_cond[key] = control_item
+                    del control_item
+                elif isinstance(cond_item, dict):
+                    new_cond_item = cond_item.copy()
+                    # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
+                    for cond_key, cond_value in new_cond_item.items():
+                        if isinstance(cond_value, Tensor):
+                            if cond_value.size(0) == x_in.size(0):
+                                new_cond_item[cond_key] = cond_value[full_idxs]
+                        # if has cond that is a Tensor, check if needs to be subset
+                        elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
+                            if cond_value.cond.size(0) == x_in.size(0):
+                                new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
+                        elif cond_key == "num_video_frames": # for SVD
+                            new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond)
+                            new_cond_item[cond_key].cond = context_length
+                    resized_actual_cond[key] = new_cond_item
+                else:
+                    resized_actual_cond[key] = cond_item
+            finally:
+                del cond_item  # just in case to prevent VRAM issues
+        resized_cond.append(resized_actual_cond)
+    return resized_cond
+
+
 def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], x_in: Tensor, timestep, model_options):
     ADGS: AnimateDiffGlobalState = model_options["transformer_options"]["ADGS"]
     if not ADGS.is_using_sliding_context():
         return executor(model, conds, x_in, timestep, model_options)
-
-    def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
-        if control.previous_controlnet is not None:
-            prepare_control_objects(control.previous_controlnet, full_idxs)
-        if not hasattr(control, "sub_idxs"):
-            raise ValueError(f"Control type {type(control).__name__} may not support required features for sliding context window; \
-                                use ControlNet nodes from Kosinkadink/ComfyUI-Advanced-ControlNet, or make sure ComfyUI-Advanced-ControlNet is updated.")
-        control.sub_idxs = full_idxs
-        control.full_latent_length = ADGS.params.full_length
-        control.context_length = ADGS.params.context_options.context_length
-    
-    def get_resized_cond(cond_in, full_idxs: list[int], context_length: int) -> list:
-        if cond_in is None:
-            return None
-        # reuse or resize cond items to match context requirements
-        resized_cond = []
-        # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
-        for actual_cond in cond_in:
-            resized_actual_cond = actual_cond.copy()
-            # now we are in the inner dict - "pooled_output" is a tensor, "control" is a ControlBase object, "model_conds" is dictionary
-            for key in actual_cond:
-                try:
-                    cond_item = actual_cond[key]
-                    if isinstance(cond_item, Tensor):
-                        # check that tensor is the expected length - x.size(0)
-                        if cond_item.size(0) == x_in.size(0):
-                            # if so, it's subsetting time - tell controls the expected indeces so they can handle them
-                            actual_cond_item = cond_item[full_idxs]
-                            resized_actual_cond[key] = actual_cond_item
-                        else:
-                            resized_actual_cond[key] = cond_item
-                    # look for control
-                    elif key == "control":
-                        control_item = cond_item
-                        prepare_control_objects(control_item, full_idxs)
-                        resized_actual_cond[key] = control_item
-                        del control_item
-                    elif isinstance(cond_item, dict):
-                        new_cond_item = cond_item.copy()
-                        # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
-                        for cond_key, cond_value in new_cond_item.items():
-                            if isinstance(cond_value, Tensor):
-                                if cond_value.size(0) == x_in.size(0):
-                                    new_cond_item[cond_key] = cond_value[full_idxs]
-                            # if has cond that is a Tensor, check if needs to be subset
-                            elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
-                                if cond_value.cond.size(0) == x_in.size(0):
-                                    new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
-                            elif cond_key == "num_video_frames": # for SVD
-                                new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond)
-                                new_cond_item[cond_key].cond = context_length
-                        resized_actual_cond[key] = new_cond_item
-                    else:
-                        resized_actual_cond[key] = cond_item
-                finally:
-                    del cond_item  # just in case to prevent VRAM issues
-            resized_cond.append(resized_actual_cond)
-        return resized_cond
 
     # get context windows
     ADGS.params.context_options.step = ADGS.current_step
@@ -705,39 +705,11 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
         counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
     biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
-    CONTEXTREF_CONTROL_LIST_ALL = "contextref_control_list_all"
-    CONTEXTREF_MACHINE_STATE = "contextref_machine_state"
-    CONTEXTREF_CLEAN_FUNC = "contextref_clean_func"
-    contextref_active = False
-    contextref_mode = None
-    contextref_idxs_set = None
-    first_context = True
+    CREF = ContextRefHandler()
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
         if ADGS.params.context_options.extras.should_run_context_ref():
-            # check that ACN provided ContextRef as requested
-            temp_refcn_list = model_options["transformer_options"].get(CONTEXTREF_CONTROL_LIST_ALL, None)
-            if temp_refcn_list is None:
-                raise Exception("Advanced-ControlNet nodes are either missing or too outdated to support ContextRef. Update/install ComfyUI-Advanced-ControlNet to use ContextRef.")
-            if len(temp_refcn_list) == 0:
-                raise Exception("Unexpected ContextRef issue; Advanced-ControlNet did not provide any ContextRef objs for AnimateDiff-Evolved.")
-            del temp_refcn_list
-            # check if ContextRef ReferenceAdvanced ACN objs should_run
-            actually_should_run = True
-            for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                acn_dl_version = get_acn_dinklink_version()
-                if acn_dl_version > 10000:
-                    refcn.prepare_current_timestep(timestep, model_options["transformer_options"])
-                else:
-                    refcn.prepare_current_timestep(timestep)
-                if not refcn.should_run():
-                    actually_should_run = False
-            if actually_should_run:
-                contextref_active = True
-                for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                    # get mode_override if present, mode otherwise
-                    contextref_mode = refcn.get_contextref_mode_replace() or ADGS.params.context_options.extras.context_ref.mode
-                contextref_idxs_set = contextref_mode.indexes.copy()
+            CREF.initialize_step(timestep, model_options, ADGS)
 
         curr_window_idx = -1
         naivereuse_active = False
@@ -762,39 +734,10 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             # get subsections of x, timestep, conds
             sub_x = x_in[ctx_idxs]
             sub_timestep = timestep[ctx_idxs]
-            sub_conds = [get_resized_cond(cond, ctx_idxs, len(ctx_idxs)) for cond in conds]
+            sub_conds = [get_resized_cond(cond, x_in, ctx_idxs, len(ctx_idxs), ADGS) for cond in conds]
 
-            if contextref_active:
-                # set cond counter to 0 (each cond encountered will increment it by 1)
-                for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                    refcn.contextref_cond_idx = 0
-                if first_context:
-                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
-                else:
-                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
-                    if contextref_mode.mode == ContextRefMode.SLIDING: # if sliding, check if time to READ and WRITE
-                        if curr_window_idx % (contextref_mode.sliding_width-1) == 0:
-                            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
-                # override with indexes mode, if set
-                if contextref_mode.mode == ContextRefMode.INDEXES:
-                    contains_idx = False
-                    for i in ctx_idxs:
-                        if i in contextref_idxs_set:
-                            contains_idx = True
-                            # single trigger decides if each index should only trigger READ_WRITE once per step
-                            if not contextref_mode.single_trigger:
-                                break
-                            contextref_idxs_set.remove(i)
-                    if contains_idx:
-                        model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
-                        if first_context:
-                            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
-                    else:
-                        model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
-            else:
-                model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.OFF
-            #logger.info(f"window: {curr_window_idx} - {model_options['transformer_options'][CONTEXTREF_MACHINE_STATE]}")
-
+            CREF.prepare_referencecn(ctx_idxs, curr_window_idx, model_options)
+            
             sub_conds_out = executor(model, sub_conds, sub_x, sub_timestep, model_options)
 
             if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
@@ -823,13 +766,10 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
                 for i in range(len(sub_conds)):
                     cached_naive_conds[i][ctx_idxs] = conds_final[i][ctx_idxs] / counts_final[i][ctx_idxs]
                 naivereuse_active = False
-            # toggle first_context off, if needed
-            if first_context:
-                first_context = False
+            # handle ContextRef
+            CREF.finalize_step()
     finally:
-        # clean contextref stuff with provided ACN function, if applicable
-        if contextref_active:
-            model_options["transformer_options"][CONTEXTREF_CLEAN_FUNC]()
+        CREF.cleanup(model_options)
 
     # handle NaiveReuse
     if cached_naive_conds is not None:
