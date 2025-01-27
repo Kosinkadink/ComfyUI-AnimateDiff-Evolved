@@ -5,6 +5,7 @@ import torch
 from torch import Tensor
 from torch.nn.functional import group_norm
 from einops import rearrange
+import collections
 
 import comfy.model_management
 import comfy.model_patcher
@@ -18,6 +19,8 @@ from comfy.model_patcher import ModelPatcher
 from comfy.patcher_extension import WrapperExecutor, WrappersMP
 import comfy.conds
 import comfy.ops
+if hasattr(comfy, 'multigpu'):
+    import comfy.multigpu
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
 from .context_extras import ContextRefHandler, NaiveReuseHandler
@@ -691,6 +694,7 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
     # get context windows
     ADGS.params.context_options.step = ADGS.current_step
     context_windows = get_context_windows(ADGS.params.full_length, ADGS.params.context_options)
+    enumerated_context_windows = list(enumerate(context_windows))
 
     if ADGS.motion_models is not None:
         ADGS.motion_models.set_view_options(ADGS.params.context_options.view_options)
@@ -708,10 +712,9 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
     CREF = ContextRefHandler()
     NAIVE = NaiveReuseHandler()
     allow_multigpu_contexts = True
+    ctxs_relative_work = None
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
-        curr_window_idx = -1
-
         if ADGS.params.context_options.extras.should_run_context_ref():
             CREF.initialize_step(timestep, model_options, ADGS)
             allow_multigpu_contexts = False
@@ -719,51 +722,33 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             NAIVE.initialize_step(x_in, conds)
             allow_multigpu_contexts = False
         
-        # perform calc_conds_batch per context window
-        for ctx_idxs in context_windows:
-            # allow processing to end between context window executions for faster Cancel
-            comfy.model_management.throw_exception_if_processing_interrupted()
-            curr_window_idx += 1
-            ADGS.params.sub_idxs = ctx_idxs
-            if ADGS.motion_models is not None:
-                ADGS.motion_models.set_sub_idxs(ctx_idxs)
-                ADGS.motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
-            # update exposed params
-            model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
-            model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
-            # get subsections of x, timestep, conds
-            sub_x = x_in[ctx_idxs]
-            sub_timestep = timestep[ctx_idxs]
-            sub_conds = [get_resized_cond(cond, x_in, ctx_idxs, len(ctx_idxs), ADGS) for cond in conds]
+        if 'multigpu_clones' in model_options and allow_multigpu_contexts:
+            cond_count = len([x for x in conds if x is not None])
+            context_count = len(context_windows)
+            # figure out if conds or ctxs would be better for splitting work
+            cond_relative_work, idle_cond = comfy.multigpu.load_balance_devices(model_options, cond_count, return_idle_time=True)
+            ctxs_relative_work, idle_ctxs = comfy.multigpu.load_balance_devices(model_options, context_count, return_idle_time=True,
+                                                                                work_normalized=cond_count)
+            # if splitting conds is better or equal to splitting contexts, don't split contexts
+            if idle_cond <= idle_ctxs:
+                allow_multigpu_contexts = False
 
-            CREF.prepare_referencecn(ctx_idxs, curr_window_idx, model_options)
-            
-            sub_conds_out = executor(model, sub_conds, sub_x, sub_timestep, model_options)
 
-            if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
-                full_length = ADGS.params.full_length
-                for pos, idx in enumerate(ctx_idxs):
-                    # bias is the influence of a specific index in relation to the whole context window
-                    bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
-                    bias = max(1e-2, bias)
-                    # take weighted average relative to total bias of current idx
-                    for i in range(len(sub_conds_out)):
-                        bias_total = biases_final[i][idx]
-                        prev_weight = (bias_total / (bias_total + bias))
-                        new_weight = (bias / (bias_total + bias))
-                        conds_final[i][idx] = conds_final[i][idx] * prev_weight + sub_conds_out[i][pos] * new_weight
-                        biases_final[i][idx] = bias_total + bias
-            else:
-                # add conds and counts based on weights of fuse method
-                weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep)
-                weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-                for i in range(len(sub_conds_out)):
-                    conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
-                    counts_final[i][ctx_idxs] += weights_tensor
-            # handle NaiveReuse
-            NAIVE.cache_first_context_results(ctx_idxs, sub_conds, conds_final, counts_final)
-            # handle ContextRef
-            CREF.finalize_step()
+        if allow_multigpu_contexts:
+            multigpu_windows = {}
+            start_idx = 0
+            for device, work in ctxs_relative_work.items():
+                if work == 0:
+                    continue
+                end_idx = start_idx + work
+                multigpu_windows[device] = enumerated_context_windows[start_idx: end_idx]
+
+
+        for enum_window in enumerated_context_windows:
+            results = evaluate_context_windows(executor, model, x_in, conds, timestep, [enum_window], model_options, CREF, ADGS)
+            for result in results:
+                combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, timestep,
+                                               ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
     finally:
         CREF.cleanup(model_options)
 
@@ -781,6 +766,60 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             conds_final[i] /= counts_final[i]
         del counts_final
         return conds_final
+
+ContextResults = collections.namedtuple("ContextResults", ['window_idx', 'sub_conds_out', 'sub_conds', 'ctx_idxs'])
+def evaluate_context_windows(executor, model, x_in, conds, timestep, enumerated_context_windows: list[tuple[int, list[int]]],
+                             model_options, CREF: ContextRefHandler, ADGS: AnimateDiffGlobalState):
+    results: list[ContextResults] = []
+    for window_idx, ctx_idxs in enumerated_context_windows:
+        # allow processing to end between context window executions for faster Cancel
+        comfy.model_management.throw_exception_if_processing_interrupted()
+        ADGS.params.sub_idxs = ctx_idxs
+        if ADGS.motion_models is not None:
+            ADGS.motion_models.set_sub_idxs(ctx_idxs)
+            ADGS.motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
+        # update exposed params
+        model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
+        model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
+        # get subsections of x, timestep, conds
+        sub_x = x_in[ctx_idxs]
+        sub_timestep = timestep[ctx_idxs]
+        sub_conds = [get_resized_cond(cond, x_in, ctx_idxs, len(ctx_idxs), ADGS) for cond in conds]
+
+        CREF.prepare_referencecn(ctx_idxs, window_idx, model_options)
+        
+        sub_conds_out = executor(model, sub_conds, sub_x, sub_timestep, model_options)
+        results.append(ContextResults(window_idx, sub_conds_out, sub_conds, ctx_idxs))
+    return results
+
+
+def combine_context_window_results(x_in: Tensor, sub_conds_out, sub_conds, ctx_idxs: list[int], timestep,
+                                   ADGS: AnimateDiffGlobalState, NAIVE: NaiveReuseHandler, CREF: ContextRefHandler,
+                                   conds_final: list[Tensor], counts_final: list[Tensor], biases_final: list[Tensor]):
+    if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+        full_length = ADGS.params.full_length
+        for pos, idx in enumerate(ctx_idxs):
+            # bias is the influence of a specific index in relation to the whole context window
+            bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
+            bias = max(1e-2, bias)
+            # take weighted average relative to total bias of current idx
+            for i in range(len(sub_conds_out)):
+                bias_total = biases_final[i][idx]
+                prev_weight = (bias_total / (bias_total + bias))
+                new_weight = (bias / (bias_total + bias))
+                conds_final[i][idx] = conds_final[i][idx] * prev_weight + sub_conds_out[i][pos] * new_weight
+                biases_final[i][idx] = bias_total + bias
+    else:
+        # add conds and counts based on weights of fuse method
+        weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep)
+        weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        for i in range(len(sub_conds_out)):
+            conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
+            counts_final[i][ctx_idxs] += weights_tensor
+    # handle NaiveReuse
+    NAIVE.cache_first_context_results(ctx_idxs, sub_conds, conds_final, counts_final)
+    # handle ContextRef
+    CREF.finalize_step()
 
 
 def get_conds_with_c_concat(conds: list[dict], c_concat: comfy.conds.CONDNoiseShape):
