@@ -286,7 +286,7 @@ class ContextRefHandler:
                 self.contextref_mode = refcn.get_contextref_mode_replace() or ADGS.params.context_options.extras.context_ref.mode
             self.contextref_idxs_set = self.contextref_mode.indexes.copy()
 
-    def prepare_referencecn(self, ctx_idxs: list[int], curr_window_idx: int, model_options):
+    def prepare_referencecn(self, ctx_idxs: list[int], window_idx: int, model_options):
         if self.contextref_active:
             # set cond counter to 0 (each cond encountered will increment it by 1)
             for refcn in model_options["transformer_options"][self.CONTEXTREF_CONTROL_LIST_ALL]:
@@ -296,7 +296,7 @@ class ContextRefHandler:
             else:
                 model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.READ
                 if self.contextref_mode.mode == ContextRefMode.SLIDING: # if sliding, check if time to READ and WRITE
-                    if curr_window_idx % (self.contextref_mode.sliding_width-1) == 0:
+                    if window_idx % (self.contextref_mode.sliding_width-1) == 0:
                         model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
             # override with indexes mode, if set
             if self.contextref_mode.mode == ContextRefMode.INDEXES:
@@ -316,7 +316,7 @@ class ContextRefHandler:
                     model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.READ
         else:
             model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.OFF
-        #logger.info(f"window: {curr_window_idx} - {model_options['transformer_options'][CONTEXTREF_MACHINE_STATE]}")
+        #logger.info(f"window: {window_idx} - {model_options['transformer_options'][CONTEXTREF_MACHINE_STATE]}")
 
 
     def finalize_step(self):

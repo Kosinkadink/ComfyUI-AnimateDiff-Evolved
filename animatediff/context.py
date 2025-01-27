@@ -337,7 +337,7 @@ def create_windows_default(num_frames: int, opts: Union[ContextOptionsGroup, Con
     return [list(range(num_frames))]
 
 
-def get_context_windows(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]):
+def get_context_windows(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]) -> list[list[int]]:
     context_func = CONTEXT_MAPPING.get(opts.context_schedule, None)
     if not context_func:
         raise ValueError(f"Unknown context_schedule '{opts.context_schedule}'.")
