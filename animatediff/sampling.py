@@ -711,7 +711,7 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
 
     CREF = ContextRefHandler()
     NAIVE = NaiveReuseHandler()
-    allow_multigpu_contexts = True
+    allow_multigpu_contexts = 'multigpu_clones' in model_options
     ctxs_relative_work = None
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
@@ -722,7 +722,7 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             NAIVE.initialize_step(x_in, conds)
             allow_multigpu_contexts = False
         
-        if 'multigpu_clones' in model_options and allow_multigpu_contexts:
+        if allow_multigpu_contexts:
             cond_count = len([x for x in conds if x is not None])
             context_count = len(context_windows)
             # figure out if conds or ctxs would be better for splitting work
