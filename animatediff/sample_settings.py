@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections.abc import Iterable
 from typing import Union, Callable
 import torch
@@ -5,9 +6,11 @@ from torch import Tensor
 import torch.fft as fft
 from einops import rearrange
 
+import comfy.k_diffusion.sampling
 import comfy.sample
 import comfy.samplers
 import comfy.model_management
+from comfy.patcher_extension import WrappersMP, add_wrapper_with_key
 from comfy.model_patcher import ModelPatcher
 from comfy.model_base import BaseModel
 from comfy.sd import VAE
@@ -29,6 +32,13 @@ def prepare_mask_ad(noise_mask, shape, device):
     return noise_mask
 
 
+class NoiseDeterminism:
+    DEFAULT = "default"
+    DETERMINISTIC = "deterministic"
+
+    _LIST = [DEFAULT, DETERMINISTIC]
+
+
 class NoiseLayerType:
     DEFAULT = "default"
     CONSTANT = "constant"
@@ -37,6 +47,7 @@ class NoiseLayerType:
     FREENOISE = "FreeNoise"
 
     LIST = [DEFAULT, CONSTANT, EMPTY, REPEATED_CONTEXT, FREENOISE]
+    LIST_ANCESTRAL = [DEFAULT, CONSTANT]
 
 
 class NoiseApplication:
@@ -56,10 +67,10 @@ class NoiseNormalize:
 
 
 class SampleSettings:
-    def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: 'NoiseLayerGroup'=None,
+    def __init__(self, batch_offset: int=0, noise_type: str=None, seed_gen: str=None, seed_offset: int=0, noise_layers: NoiseLayerGroup=None,
                  iteration_opts=None, seed_override:int=None, negative_cond_flipflop=False, adapt_denoise_steps: bool=False,
-                 custom_cfg: 'CustomCFGKeyframeGroup'=None, sigma_schedule: SigmaSchedule=None, image_injection: 'NoisedImageToInjectGroup'=None,
-                 noise_calibration: 'NoiseCalibration'=None):
+                 custom_cfg: CustomCFGKeyframeGroup=None, sigma_schedule: SigmaSchedule=None, image_injection: NoisedImageToInjectGroup=None,
+                 noise_calibration: NoiseCalibration=None, ancestral_opts: AncestralOptions=None):
         self.batch_offset = batch_offset
         self.noise_type = noise_type if noise_type is not None else NoiseLayerType.DEFAULT
         self.seed_gen = seed_gen if seed_gen is not None else SeedNoiseGeneration.COMFY
@@ -73,6 +84,7 @@ class SampleSettings:
         self.sigma_schedule = sigma_schedule
         self.image_injection = image_injection.clone() if image_injection else NoisedImageToInjectGroup()
         self.noise_calibration = noise_calibration
+        self.ancestral_opts = ancestral_opts
     
     def prepare_noise(self, seed: int, latents: Tensor, noise: Tensor, extra_seed_offset=0, extra_args:dict={}, force_create_noise=True):
         if self.seed_override is not None:
@@ -113,7 +125,84 @@ class SampleSettings:
         return SampleSettings(batch_offset=self.batch_offset, noise_type=self.noise_type, seed_gen=self.seed_gen, seed_offset=self.seed_offset,
                            noise_layers=self.noise_layers.clone(), iteration_opts=self.iteration_opts, seed_override=self.seed_override,
                            negative_cond_flipflop=self.negative_cond_flipflop, adapt_denoise_steps=self.adapt_denoise_steps, custom_cfg=self.custom_cfg,
-                           sigma_schedule=self.sigma_schedule, image_injection=self.image_injection, noise_calibration=self.noise_calibration)
+                           sigma_schedule=self.sigma_schedule, image_injection=self.image_injection, noise_calibration=self.noise_calibration,
+                           ancestral_opts=self.ancestral_opts)
+
+
+class AncestralOptions:
+    def __init__(self, noise_type: str, determinism: str, seed_offset: int, seed_override: int=None):
+        self.noise_type = noise_type
+        self.determinism = determinism
+        self.seed_offset = seed_offset
+        self.seed_override = seed_override
+    
+    def init_custom_noise_sampler(self, seed: int):
+        if self.seed_override is not None:
+            seed = self.seed_override
+        if isinstance(seed, Iterable):
+            raise Exception("Passing in a list of seeds for Ancestral Options is not supported at this time.")
+        seed += self.seed_offset
+        return _custom_noise_sampler_factory(real_seed=seed, noise_type=self.noise_type, determinism=self.determinism)
+
+    def add_wrapper_sampler_sample(self, model_options, seed):
+        add_wrapper_with_key(WrappersMP.SAMPLER_SAMPLE, "ADE",
+                             _sampler_sample_ancestral_options_factory(self.init_custom_noise_sampler(seed)),
+                             model_options, is_model_options=True)
+
+
+def _sampler_sample_ancestral_options_factory(custom_noise_sampler: Callable):
+    def sampler_sample_ancestral_options_wrapper(executor, *args, **kwargs):
+        try:
+            # TODO: implement this as a model_options thing instead in core ComfyUI
+            orig_default_noise_sampler = comfy.k_diffusion.sampling.default_noise_sampler
+            comfy.k_diffusion.sampling.default_noise_sampler = custom_noise_sampler
+            return executor(*args, **kwargs)
+        finally:
+            comfy.k_diffusion.sampling.default_noise_sampler = orig_default_noise_sampler
+    return sampler_sample_ancestral_options_wrapper
+
+
+def _custom_noise_sampler_factory(real_seed: int, noise_type: str, determinism: str):
+    def custom_noise_sampler(x: Tensor, seed: int=None):
+        single_generator = None
+        multiple_generators = []
+        if determinism == NoiseDeterminism.DEFAULT:
+            # prepare generators
+            single_generator = torch.Generator(device=x.device)
+            single_generator.manual_seed(real_seed)
+            # create function to handle determinism type
+            def sample_default(sigma, sigma_next):
+                if noise_type == NoiseLayerType.CONSTANT:
+                    goal_shape = list(x.shape)
+                    goal_shape[0] = 1
+                    one_noise = torch.randn(goal_shape, dtype=x.dtype, layout=x.layout, device=x.device, generator=single_generator)
+                    return torch.cat([one_noise]*x.shape[0], dim=0)
+                return torch.randn(x.size(), dtype=x.dtype, layout=x.layout, device=x.device, generator=single_generator)
+            # return function
+            return sample_default
+        elif determinism == NoiseDeterminism.DETERMINISTIC:
+            # prepare generators
+            for i in range(x.size(0)):
+                generator = torch.Generator(device=x.device)
+                multiple_generators.append(generator.manual_seed(real_seed+i))
+            # create function to handle determinism type
+            def sample_deterministic(sigma, sigma_next):
+                goal_shape = list(x.shape)
+                goal_shape[0] = 1
+                if noise_type == NoiseLayerType.CONSTANT:
+                    one_noise = torch.randn(goal_shape, dtype=x.dtype, layout=x.layout, device=x.device, generator=multiple_generators[0])
+                    return torch.cat([one_noise]*x.shape[0], dim=0)
+                noises = []
+                for generator in multiple_generators:
+                    one_noise = torch.randn(goal_shape, dtype=x.dtype, layout=x.layout, device=x.device, generator=generator)
+                    noises.append(one_noise)
+                return torch.cat(noises, dim=0)
+            # return function
+            return sample_deterministic
+        else:
+            raise Exception(f"Determinism type '{determinism}' is not recognized.")
+    # return function
+    return custom_noise_sampler
 
 
 class NoiseLayer:

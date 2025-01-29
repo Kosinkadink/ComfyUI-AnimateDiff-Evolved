@@ -410,6 +410,9 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
         # if noise is not disabled, do noise stuff
         if not disable_noise:
             noise = helper.get_sample_settings().prepare_noise(seed, latents, noise, extra_args=noise_extra_args, force_create_noise=False)
+        # handle AncestralOptions, if present
+        if helper.get_sample_settings().ancestral_opts is not None:
+            helper.get_sample_settings().ancestral_opts.add_wrapper_sampler_sample(guider.model_options, seed)
 
         # callback setup
         original_callback = args[-3]

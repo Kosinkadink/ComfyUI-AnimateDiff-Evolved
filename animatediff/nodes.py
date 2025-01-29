@@ -26,7 +26,7 @@ from .nodes_conditioning import (CreateLoraHookKeyframeInterpolationDEPR,
 from .nodes_sample import (FreeInitOptionsNode, NoiseLayerAddWeightedNode, NoiseLayerNormalizedSumNode, SampleSettingsNode, NoiseLayerAddNode, NoiseLayerReplaceNode, IterationOptionsNode,
                            CustomCFGNode, CustomCFGSimpleNode, CustomCFGKeyframeNode, CustomCFGKeyframeSimpleNode, CustomCFGKeyframeInterpolationNode, CustomCFGKeyframeFromListNode,
                            CFGExtrasPAGNode, CFGExtrasPAGSimpleNode, CFGExtrasRescaleCFGNode, CFGExtrasRescaleCFGSimpleNode,
-                           NoisedImageInjectionNode, NoisedImageInjectOptionsNode, NoiseCalibrationNode)
+                           NoisedImageInjectionNode, NoisedImageInjectOptionsNode, NoiseCalibrationNode, AncestralOptionsNode)
 from .nodes_sigma_schedule import (SigmaScheduleNode, RawSigmaScheduleNode, WeightedAverageSigmaScheduleNode, InterpolatedWeightedAverageSigmaScheduleNode, SplitAndCombineSigmaScheduleNode, SigmaScheduleToSigmasNode)
 from .nodes_context import (LegacyLoopedUniformContextOptionsNode, LoopedUniformContextOptionsNode, LoopedUniformViewOptionsNode, StandardUniformContextOptionsNode, StandardStaticContextOptionsNode, BatchedContextOptionsNode,
                             StandardStaticViewOptionsNode, StandardUniformViewOptionsNode, ViewAsContextOptionsNode,
@@ -158,6 +158,7 @@ NODE_CLASS_MAPPINGS = {
     "ADE_SigmaScheduleToSigmas": SigmaScheduleToSigmasNode,
     "ADE_NoisedImageInjection": NoisedImageInjectionNode,
     "ADE_NoisedImageInjectOptions": NoisedImageInjectOptionsNode,
+    "ADE_AncestralOptions": AncestralOptionsNode,
     #"ADE_NoiseCalibration": NoiseCalibrationNode,
     # Scheduling
     PromptSchedulingNode.NodeID: PromptSchedulingNode,
@@ -338,6 +339,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ADE_NoisedImageInjection": "Image Injection 🎭🅐🅓",
     "ADE_NoisedImageInjectOptions": "Image Injection Options 🎭🅐🅓",
     "ADE_NoiseCalibration": "Noise Calibration 🎭🅐🅓",
+    "ADE_AncestralOptions": "Ancestral Options 🎭🅐🅓",
     # Scheduling
     PromptSchedulingNode.NodeID: PromptSchedulingNode.NodeName,
     PromptSchedulingLatentsNode.NodeID: PromptSchedulingLatentsNode.NodeName,
