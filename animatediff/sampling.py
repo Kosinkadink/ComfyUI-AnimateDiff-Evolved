@@ -6,6 +6,7 @@ from torch import Tensor
 from torch.nn.functional import group_norm
 from einops import rearrange
 import collections
+import threading
 
 import comfy.model_management
 import comfy.model_patcher
@@ -671,7 +672,7 @@ def prepare_control_objects(control: ControlBase, full_idxs: list[int], ADGS: An
 
 # initial sliding_calc_conds_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
-def get_resized_cond(cond_in, x_in: Tensor, full_idxs: list[int], context_length: int, ADGS: AnimateDiffGlobalState) -> list:
+def get_resized_cond(cond_in, x_in: Tensor, full_idxs: list[int], context_length: int, ADGS: AnimateDiffGlobalState, device=None) -> list:
     if cond_in is None:
         return None
     # reuse or resize cond items to match context requirements
@@ -688,9 +689,9 @@ def get_resized_cond(cond_in, x_in: Tensor, full_idxs: list[int], context_length
                     if cond_item.size(0) == x_in.size(0):
                         # if so, it's subsetting time - tell controls the expected indeces so they can handle them
                         actual_cond_item = cond_item[full_idxs]
-                        resized_actual_cond[key] = actual_cond_item
+                        resized_actual_cond[key] = actual_cond_item.to(device)
                     else:
-                        resized_actual_cond[key] = cond_item
+                        resized_actual_cond[key] = cond_item.to(device)
                 # look for control
                 elif key == "control":
                     control_item = cond_item
@@ -703,11 +704,11 @@ def get_resized_cond(cond_in, x_in: Tensor, full_idxs: list[int], context_length
                     for cond_key, cond_value in new_cond_item.items():
                         if isinstance(cond_value, Tensor):
                             if cond_value.size(0) == x_in.size(0):
-                                new_cond_item[cond_key] = cond_value[full_idxs]
+                                new_cond_item[cond_key] = cond_value[full_idxs].to(device)
                         # if has cond that is a Tensor, check if needs to be subset
                         elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
                             if cond_value.cond.size(0) == x_in.size(0):
-                                new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
+                                new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs].to(device))
                         elif cond_key == "num_video_frames": # for SVD
                             new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond)
                             new_cond_item[cond_key].cond = context_length
@@ -763,8 +764,8 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             cond_relative_work, idle_cond = comfy.multigpu.load_balance_devices(model_options, cond_count, return_idle_time=True)
             ctxs_relative_work, idle_ctxs = comfy.multigpu.load_balance_devices(model_options, context_count, return_idle_time=True,
                                                                                 work_normalized=cond_count)
-            # if splitting conds is better or equal to splitting contexts, don't split contexts
-            if idle_cond <= idle_ctxs:
+            # if splitting conds is better to splitting contexts, don't split contexts
+            if idle_cond < idle_ctxs:
                 allow_multigpu_contexts = False
 
 
@@ -772,17 +773,45 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             multigpu_windows = {}
             start_idx = 0
             for device, work in ctxs_relative_work.items():
+                # if device == x_in.device:
+                #     continue
+                # multigpu_windows[device] = enumerated_context_windows
                 if work == 0:
                     continue
                 end_idx = start_idx + work
-                multigpu_windows[device] = enumerated_context_windows[start_idx: end_idx]
+                multigpu_windows[device] = enumerated_context_windows[start_idx:end_idx]
+                start_idx = end_idx
+            def _handle_context_batch(device: torch.device, batch_windows, model_options_batch, results: list[list[ContextResults]]):
+                model_options_batch = comfy.model_patcher.create_model_options_clone(model_options_batch)
+                with torch.no_grad():
+                    results.append(evaluate_context_windows(executor, model, x_in, conds, timestep, batch_windows, model_options_batch, CREF, ADGS,
+                                                       device=device))
+            combined_results: list[list[ContextResults]] = []
+            threads: list[threading.Thread] = []
+            try:
+                multigpu_entry = model_options.pop('multigpu_clones')
+                # for device, thread_windows in multigpu_windows.items():
+                #     _handle_context_batch(device, thread_windows, combined_results)
+                for device, thread_windows in multigpu_windows.items():
+                    new_thread = threading.Thread(target=_handle_context_batch, args=(device, thread_windows, model_options, combined_results))
+                    threads.append(new_thread)
+                    new_thread.start()
+                for thread in threads:
+                    thread.join()
+            finally:
+                model_options['multigpu_clones'] = multigpu_entry
 
-
-        for enum_window in enumerated_context_windows:
-            results = evaluate_context_windows(executor, model, x_in, conds, timestep, [enum_window], model_options, CREF, ADGS)
-            for result in results:
-                combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, timestep,
-                                               ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
+            for results in combined_results:
+                for result in results:
+                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, timestep,
+                                                ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
+            
+        else:
+            for enum_window in enumerated_context_windows:
+                results = evaluate_context_windows(executor, model, x_in, conds, timestep, [enum_window], model_options, CREF, ADGS)
+                for result in results:
+                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, timestep,
+                                                ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
     finally:
         CREF.cleanup(model_options)
 
@@ -803,26 +832,39 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
 
 ContextResults = collections.namedtuple("ContextResults", ['window_idx', 'sub_conds_out', 'sub_conds', 'ctx_idxs'])
 def evaluate_context_windows(executor, model: BaseModel, x_in: Tensor, conds, timestep: Tensor, enumerated_context_windows: list[tuple[int, list[int]]],
-                             model_options, CREF: ContextRefHandler, ADGS: AnimateDiffGlobalState):
+                             model_options, CREF: ContextRefHandler, ADGS: AnimateDiffGlobalState, device=None):
     results: list[ContextResults] = []
     for window_idx, ctx_idxs in enumerated_context_windows:
         # allow processing to end between context window executions for faster Cancel
         comfy.model_management.throw_exception_if_processing_interrupted()
         ADGS.params.sub_idxs = ctx_idxs
-        for motion_models in ADGS.motion_models_devices.values():
+
+        if device is None:
+            motion_models_devices = ADGS.motion_models_devices.values()
+        else:
+            motion_models_devices = ADGS.motion_models_devices.get(device, None)
+            if motion_models_devices is None:
+                motion_models_devices = []
+            else:
+                motion_models_devices = [motion_models_devices]
+            model = ADGS.model_patcher_devices[device].model
+        for motion_models in motion_models_devices:
             motion_models.set_sub_idxs(ctx_idxs)
             motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
         # update exposed params
         model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
         model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
         # get subsections of x, timestep, conds
-        sub_x = x_in[ctx_idxs]
-        sub_timestep = timestep[ctx_idxs]
+        sub_x = x_in[ctx_idxs].to(device)
+        sub_timestep = timestep[ctx_idxs].to(device)
         sub_conds = [get_resized_cond(cond, x_in, ctx_idxs, len(ctx_idxs), ADGS) for cond in conds]
 
         CREF.prepare_referencecn(ctx_idxs, window_idx, model_options)
         
         sub_conds_out = executor(model, sub_conds, sub_x, sub_timestep, model_options)
+        if device is not None:
+            for i in range(len(sub_conds_out)):
+                sub_conds_out[i] = sub_conds_out[i].to(x_in.device)
         results.append(ContextResults(window_idx, sub_conds_out, sub_conds, ctx_idxs))
     return results
 
