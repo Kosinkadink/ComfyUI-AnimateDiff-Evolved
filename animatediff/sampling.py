@@ -661,7 +661,7 @@ def perform_image_injection(ADGS: AnimateDiffGlobalState, model: BaseModel, late
 
 def prepare_control_objects(control: ControlBase, full_idxs: list[int], ADGS: AnimateDiffGlobalState):
     if control.previous_controlnet is not None:
-        prepare_control_objects(control.previous_controlnet, full_idxs)
+        prepare_control_objects(control.previous_controlnet, full_idxs, ADGS)
     if not hasattr(control, "sub_idxs"):
         raise ValueError(f"Control type {type(control).__name__} may not support required features for sliding context window; \
                             use ControlNet nodes from Kosinkadink/ComfyUI-Advanced-ControlNet, or make sure ComfyUI-Advanced-ControlNet is updated.")
