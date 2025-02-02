@@ -659,9 +659,12 @@ def perform_image_injection(ADGS: AnimateDiffGlobalState, model: BaseModel, late
         comfy.model_management.load_models_gpu(cached_loaded_models)
 
 
-def prepare_control_objects(control: ControlBase, full_idxs: list[int], ADGS: AnimateDiffGlobalState):
+def prepare_control_objects(control: ControlBase, full_idxs: list[int], ADGS: AnimateDiffGlobalState, device=None):
+    # get controlnet matching device (multigpu only)
+    if device is not None:
+        control = control.get_instance_for_device(device)
     if control.previous_controlnet is not None:
-        prepare_control_objects(control.previous_controlnet, full_idxs, ADGS)
+        prepare_control_objects(control.previous_controlnet, full_idxs, ADGS, device)
     if not hasattr(control, "sub_idxs"):
         raise ValueError(f"Control type {type(control).__name__} may not support required features for sliding context window; \
                             use ControlNet nodes from Kosinkadink/ComfyUI-Advanced-ControlNet, or make sure ComfyUI-Advanced-ControlNet is updated.")
@@ -669,6 +672,7 @@ def prepare_control_objects(control: ControlBase, full_idxs: list[int], ADGS: An
         control.sub_idxs = full_idxs
         control.full_latent_length = ADGS.params.full_length
         control.context_length = ADGS.params.context_options.context_length
+    return control
 
 # initial sliding_calc_conds_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
@@ -694,10 +698,7 @@ def get_resized_cond(cond_in, x_in: Tensor, full_idxs: list[int], context_length
                         resized_actual_cond[key] = cond_item.to(device)
                 # look for control
                 elif key == "control":
-                    control_item = cond_item
-                    prepare_control_objects(control_item, full_idxs, ADGS)
-                    resized_actual_cond[key] = control_item
-                    del control_item
+                    resized_actual_cond[key] = prepare_control_objects(cond_item, full_idxs, ADGS, device)
                 elif isinstance(cond_item, dict):
                     new_cond_item = cond_item.copy()
                     # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
@@ -752,10 +753,9 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
     try:
         if ADGS.params.context_options.extras.should_run_context_ref():
             CREF.initialize_step(timestep, model_options, ADGS)
-            allow_multigpu_contexts = False
+            allow_multigpu_contexts = False  # ContextRef requires windows get run in a specific order
         if ADGS.params.context_options.extras.should_run_naive_reuse():
             NAIVE.initialize_step(x_in, conds)
-            allow_multigpu_contexts = False
         
         if allow_multigpu_contexts:
             cond_count = len([x for x in conds if x is not None])
@@ -803,14 +803,14 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
 
             for results in combined_results:
                 for result in results:
-                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, timestep,
+                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, result.window_idx, timestep,
                                                 ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
             
         else:
             for enum_window in enumerated_context_windows:
                 results = evaluate_context_windows(executor, model, x_in, conds, timestep, [enum_window], model_options, CREF, ADGS)
                 for result in results:
-                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, timestep,
+                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, result.window_idx, timestep,
                                                 ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
     finally:
         CREF.cleanup(model_options)
@@ -857,7 +857,7 @@ def evaluate_context_windows(executor, model: BaseModel, x_in: Tensor, conds, ti
         # get subsections of x, timestep, conds
         sub_x = x_in[ctx_idxs].to(device)
         sub_timestep = timestep[ctx_idxs].to(device)
-        sub_conds = [get_resized_cond(cond, x_in, ctx_idxs, len(ctx_idxs), ADGS) for cond in conds]
+        sub_conds = [get_resized_cond(cond, x_in, ctx_idxs, len(ctx_idxs), ADGS, device) for cond in conds]
 
         CREF.prepare_referencecn(ctx_idxs, window_idx, model_options)
         
@@ -869,7 +869,7 @@ def evaluate_context_windows(executor, model: BaseModel, x_in: Tensor, conds, ti
     return results
 
 
-def combine_context_window_results(x_in: Tensor, sub_conds_out, sub_conds, ctx_idxs: list[int], timestep,
+def combine_context_window_results(x_in: Tensor, sub_conds_out, sub_conds, ctx_idxs: list[int], window_idx: int, timestep,
                                    ADGS: AnimateDiffGlobalState, NAIVE: NaiveReuseHandler, CREF: ContextRefHandler,
                                    conds_final: list[Tensor], counts_final: list[Tensor], biases_final: list[Tensor]):
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
@@ -892,7 +892,7 @@ def combine_context_window_results(x_in: Tensor, sub_conds_out, sub_conds, ctx_i
             conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
             counts_final[i][ctx_idxs] += weights_tensor
     # handle NaiveReuse
-    NAIVE.cache_first_context_results(ctx_idxs, sub_conds, conds_final, counts_final)
+    NAIVE.cache_first_context_results(window_idx, ctx_idxs, sub_conds, conds_final, counts_final)
     # handle ContextRef
     CREF.finalize_step()
 

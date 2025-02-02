@@ -527,8 +527,8 @@ class NaiveReuseHandler:
         #cached_naive_counts = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
         self.naivereuse_active = True
 
-    def cache_first_context_results(self, ctx_idxs: list[int], sub_conds: list, conds_final: list[Tensor], counts_final: list[Tensor]):
-        if self.naivereuse_active:
+    def cache_first_context_results(self, window_idx, ctx_idxs: list[int], sub_conds: list, conds_final: list[Tensor], counts_final: list[Tensor]):
+        if self.naivereuse_active and window_idx == 0:
             self.cached_naive_ctx_idxs = ctx_idxs
             for i in range(len(sub_conds)):
                 self.cached_naive_conds[i][ctx_idxs] = conds_final[i][ctx_idxs] / counts_final[i][ctx_idxs]
