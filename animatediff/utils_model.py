@@ -23,7 +23,7 @@ from .logger import logger
 
 BIGMIN = -(2**53-1)
 BIGMAX = (2**53-1)
-BIGMAX_TENSOR = torch.tensor(BIGMAX)
+BIGMAX_TENSOR = torch.tensor(9999999999.9)
 
 MAX_RESOLUTION = 16384  # mirrors ComfyUI's nodes.py MAX_RESOLUTION
 
