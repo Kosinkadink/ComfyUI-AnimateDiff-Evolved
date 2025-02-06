@@ -650,7 +650,7 @@ def generate_context_visualization(model: ModelPatcher, context_opts: ContextOpt
 
     for i, t in enumerate(sigmas):
         # make context_opts reflect current step/sigma
-        context_opts.prepare_current([t])
+        context_opts.prepare_current([t], {})
         context_opts.step = start_step+i
 
         # check if context should even be active in this case
