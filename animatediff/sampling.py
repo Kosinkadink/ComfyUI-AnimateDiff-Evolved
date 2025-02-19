@@ -783,6 +783,7 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
                 start_idx = end_idx
             def _handle_context_batch(device: torch.device, batch_windows, model_options_batch, results: list[list[ContextResults]]):
                 model_options_batch = comfy.model_patcher.create_model_options_clone(model_options_batch)
+                comfy.samplers.cast_transformer_options(model_options_batch["transformer_options"], device=device)
                 with torch.no_grad():
                     results.append(evaluate_context_windows(executor, model, x_in, conds, timestep, batch_windows, model_options_batch, CREF, ADGS,
                                                        device=device))
