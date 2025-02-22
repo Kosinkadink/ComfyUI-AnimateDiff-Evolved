@@ -1,7 +1,7 @@
 from typing import Union
 
 from .documentation import register_description, short_desc, coll, DocHelper
-from .scheduling import (evaluate_prompt_schedule, evaluate_value_schedule, TensorInterp, PromptOptions,
+from .scheduling import (evaluate_prompt_schedule, evaluate_value_schedule, extract_cond_from_schedule, TensorInterp, PromptOptions,
                          verify_key_value)
 from .utils_model import BIGMAX
 from .logger import logger
@@ -23,6 +23,10 @@ desc_floats = {'floats': 'List of floats, likely outputted by a Value Scheduling
 desc_FLOAT = {'FLOAT': 'Float (or list of floats) to convert to FLOATS type.'}
 desc_value_key = {'value_key': 'Key to use for value schedule in Prompt Scheduling node. Can only contain a-z, A-Z, 0-9, and _ characters. In Prompt Scheduling, keys can be referred to as `some_key`, where the key is surrounded by ` characters.'}
 desc_prev_replace = {'prev_replace': 'OPTIONAL, other values_replace can be chained.'}
+
+desc_input_conditioning = {'conditioning': 'Encoded prompts. The output of a Prompt Scheduling node.'}
+desc_index = {'index': 'The index to extract. Must be within the range [0,N] where N is the length of scheduled prompts.'}
+desc_output_conditioning_single = {'CONDITIONING': 'The single step conditioning from the schedule.'}
 
 desc_output_conditioning = {'CONDITIONING': 'Encoded prompts.'}
 desc_output_latent = {'LATENT': 'Unmodified input latents; can be used as pipe, or can be ignored.'}
@@ -281,3 +285,30 @@ class FloatToFloatsNode:
         else:
             floats = list(FLOAT)
         return (floats,)
+
+class ConditionExtractionNode:
+    NodeID = 'ADE_ConditionExtraction'
+    NodeName = 'Condition Step Extraction 🎭🅐🅓'
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "conditioning": ("CONDITIONING",),
+                "index": ("INT", {"default": 0, "min": 0, "step": 1})
+            },
+        }
+
+    RETURN_TYPES = ("CONDITIONING",)
+    CATEGORY = "Animate Diff 🎭🅐🅓/scheduling"
+    FUNCTION = "extract_conditioning"
+
+    Desc = [
+        short_desc('Extract a single conditioning step from a schedule of prompts.'),
+        {coll('Inputs'): DocHelper.combine(desc_input_conditioning, desc_index)},
+        {coll('Outputs'): DocHelper.combine(desc_output_conditioning)}
+    ]
+    register_description(NodeID, Desc)
+
+    def extract_conditioning(self, conditioning, index: int=0):
+        conditioning_step = extract_cond_from_schedule(conditioning, index)
+        return (conditioning_step,)

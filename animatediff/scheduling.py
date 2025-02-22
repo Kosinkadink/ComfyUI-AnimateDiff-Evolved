@@ -112,6 +112,8 @@ class PromptOptions:
     print_schedule: bool = False
     add_dict: dict[str] = None
 
+IndividualConditioning = tuple[torch.Tensor, dict[str, torch.Tensor]]
+Conditioning = list[IndividualConditioning]
 
 def evaluate_prompt_schedule(text: str, length: int, clip: CLIP, options: PromptOptions):
     text = strip_input(text)
@@ -445,6 +447,29 @@ def _handle_prompt_interpolation(pairs: list[InputPair], length: int, clip: CLIP
     clip.add_hooks_to_dict(final_pooled_dict)
     return [[final_cond, final_pooled_dict]]
 
+def extract_cond_from_schedule(conditioning: Conditioning, index: int) -> Conditioning:
+    return [_extract_single_cond(t, index) for t in conditioning]
+
+def _extract_single_cond(single_cond: IndividualConditioning, index:int) -> IndividualConditioning:
+    if index < 0:
+        return single_cond
+
+    cond, kwargs = single_cond[0], single_cond[1].copy()
+    original_pooled = kwargs["pooled_output"]
+
+    cond_schedules =  cond.shape[0]
+    pooled_schedules = original_pooled.shape[0]
+
+    if cond_schedules <= index or pooled_schedules <= index:
+        logger.warning(f"Trying to get index {index}, only have {cond_schedules} items")
+        return single_cond
+
+    cond_chunks = cond.chunk(cond_schedules)
+    chosen_cond = cond_chunks[index]
+
+    pool_chunks = original_pooled.chunk(pooled_schedules)
+    kwargs["pooled_output"] = pool_chunks[index]
+    return [chosen_cond, kwargs]
 
 def pad_cond(cond: Tensor, target_length: int):
     # FizzNodes-style cond padding
