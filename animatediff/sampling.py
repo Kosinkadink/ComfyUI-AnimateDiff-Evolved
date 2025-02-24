@@ -126,7 +126,14 @@ class AnimateDiffGlobalState:
                         # TODO: fill out
                         special_model.model.restore_unet_conv_in_pia_fancyvideo(model)
 
+    def interrupt_processing(self):
+        self.processing_interrupted = True
+
+    def is_processing_interrupted(self):
+        return self.processing_interrupted
+
     def reset(self):
+        self.processing_interrupted = False
         self.initialized = False
         self.hooks_initialized = False
         self.start_step: int = 0
@@ -781,12 +788,13 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
                 end_idx = start_idx + work
                 multigpu_windows[device] = enumerated_context_windows[start_idx:end_idx]
                 start_idx = end_idx
+            first_device = list(multigpu_windows.keys())[0]
             def _handle_context_batch(device: torch.device, batch_windows, model_options_batch, results: list[list[ContextResults]]):
                 model_options_batch = comfy.model_patcher.create_model_options_clone(model_options_batch)
                 comfy.samplers.cast_transformer_options(model_options_batch["transformer_options"], device=device)
                 with torch.no_grad():
                     results.append(evaluate_context_windows(executor, model, x_in, conds, timestep, batch_windows, model_options_batch, CREF, ADGS,
-                                                       device=device))
+                                                       device=device, first_device=first_device))
             combined_results: list[list[ContextResults]] = []
             threads: list[threading.Thread] = []
             try:
@@ -799,6 +807,8 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
                     new_thread.start()
                 for thread in threads:
                     thread.join()
+                if ADGS.is_processing_interrupted():
+                    raise comfy.model_management.InterruptProcessingException()
             finally:
                 model_options['multigpu_clones'] = multigpu_entry
 
@@ -833,11 +843,26 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
 
 ContextResults = collections.namedtuple("ContextResults", ['window_idx', 'sub_conds_out', 'sub_conds', 'ctx_idxs'])
 def evaluate_context_windows(executor, model: BaseModel, x_in: Tensor, conds, timestep: Tensor, enumerated_context_windows: list[tuple[int, list[int]]],
-                             model_options, CREF: ContextRefHandler, ADGS: AnimateDiffGlobalState, device=None):
+                             model_options, CREF: ContextRefHandler, ADGS: AnimateDiffGlobalState, device=None, first_device=None):
     results: list[ContextResults] = []
     for window_idx, ctx_idxs in enumerated_context_windows:
         # allow processing to end between context window executions for faster Cancel
-        comfy.model_management.throw_exception_if_processing_interrupted()
+        if device is None:
+            # non-MultiGPU execution
+            comfy.model_management.throw_exception_if_processing_interrupted()
+        elif first_device == device:
+            # MultiGPU execution
+            try:
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                if ADGS.is_processing_interrupted():
+                    break
+            except comfy.model_management.InterruptProcessingException:
+                ADGS.interrupt_processing()
+                break
+        else:
+            # MultiGPU execution
+            if ADGS.is_processing_interrupted():
+                break
         ADGS.params.sub_idxs = ctx_idxs
 
         if device is None:
