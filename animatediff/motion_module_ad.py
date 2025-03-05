@@ -30,6 +30,15 @@ from .utils_motion import (CrossAttentionMM, MotionCompatibilityError, DummyNNMo
                            prepare_mask_batch, get_combined_multival)
 from .utils_model import BetaSchedules, ModelTypeSD
 from .logger import logger
+from .dinklink import get_dinklink, DinkLinkConst
+
+
+def prepare_dinklink_motion_module_ad():
+    # expose create_MotionModelPatcher
+    d = get_dinklink()
+    link_ade = d.setdefault(DinkLinkConst.ADE, {})
+    link_ade[DinkLinkConst.ADE_ANIMATEDIFFMODEL] = AnimateDiffModel
+    link_ade[DinkLinkConst.ADE_ANIMATEDIFFINFO] = AnimateDiffInfo
 
 
 def zero_module(module):

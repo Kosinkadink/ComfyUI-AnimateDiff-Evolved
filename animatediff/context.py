@@ -337,7 +337,7 @@ def create_windows_default(num_frames: int, opts: Union[ContextOptionsGroup, Con
     return [list(range(num_frames))]
 
 
-def get_context_windows(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]):
+def get_context_windows(num_frames: int, opts: Union[ContextOptionsGroup, ContextOptions]) -> list[list[int]]:
     context_func = CONTEXT_MAPPING.get(opts.context_schedule, None)
     if not context_func:
         raise ValueError(f"Unknown context_schedule '{opts.context_schedule}'.")
@@ -650,7 +650,7 @@ def generate_context_visualization(model: ModelPatcher, context_opts: ContextOpt
 
     for i, t in enumerate(sigmas):
         # make context_opts reflect current step/sigma
-        context_opts.prepare_current([t])
+        context_opts.prepare_current([t], {})
         context_opts.step = start_step+i
 
         # check if context should even be active in this case

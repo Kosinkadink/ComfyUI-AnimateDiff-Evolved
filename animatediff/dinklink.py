@@ -13,8 +13,6 @@
 from __future__ import annotations
 import comfy.hooks
 
-from .motion_module_ad import AnimateDiffModel, AnimateDiffInfo
-
 DINKLINK = "__DINKLINK"
 
 
@@ -29,7 +27,6 @@ def create_dinklink():
 def get_dinklink() -> dict[str, dict[str]]:
     create_dinklink()
     return getattr(comfy.hooks, DINKLINK)
-
 
 class DinkLinkConst:
     VERSION = "version"
@@ -47,8 +44,6 @@ def prepare_dinklink():
     d = get_dinklink()
     link_ade = d.setdefault(DinkLinkConst.ADE, {})
     link_ade[DinkLinkConst.VERSION] = 10000
-    link_ade[DinkLinkConst.ADE_ANIMATEDIFFMODEL] = AnimateDiffModel
-    link_ade[DinkLinkConst.ADE_ANIMATEDIFFINFO] = AnimateDiffInfo
 
 def get_acn_outer_sample_wrapper(throw_exception=True):
     d = get_dinklink()

@@ -5,6 +5,8 @@ import torch
 from torch import Tensor
 from torch.nn.functional import group_norm
 from einops import rearrange
+import collections
+import threading
 
 import comfy.model_management
 import comfy.model_patcher
@@ -18,17 +20,18 @@ from comfy.model_patcher import ModelPatcher
 from comfy.patcher_extension import WrapperExecutor, WrappersMP
 import comfy.conds
 import comfy.ops
+if hasattr(comfy, 'multigpu'):
+    import comfy.multigpu
 
 from .context import ContextFuseMethod, ContextSchedules, get_context_weights, get_context_windows
-from .context_extras import ContextRefMode
+from .context_extras import ContextRefHandler, NaiveReuseHandler
 from .sample_settings import SampleSettings, NoisedImageToInject
-from .utils_model import MachineState, vae_encode_raw_batched, vae_decode_raw_batched
+from .utils_model import vae_encode_raw_batched, vae_decode_raw_batched
 from .utils_motion import composite_extend, prepare_mask_batch, extend_to_batch_size
 from .model_injection import InjectionParams, ModelPatcherHelper, MotionModelGroup, get_mm_attachment
 from .motion_module_ad import AnimateDiffFormat, AnimateDiffInfo, AnimateDiffVersion
 from .adapter_hellomeme import HMRefConst, HMRefStates, get_hmref_attachment, create_hmref_apply_model_wrapper
 from .logger import logger
-from .dinklink import get_acn_dinklink_version
 
 
 ##################################################################################
@@ -38,57 +41,82 @@ class AnimateDiffGlobalState:
     def __init__(self):
         self.model_patcher: ModelPatcher = None
         self.motion_models: MotionModelGroup = None
+
+        self.model_patcher_devices: dict[torch.device, ModelPatcher] = {}
+        self.motion_models_devices: dict[torch.device, MotionModelGroup] = {}
+
         self.params: InjectionParams = None
         self.sample_settings: SampleSettings = None
         self.callback_output_dict: dict[str] = {}
         self.function_injections: FunctionInjectionHolder = None
         self.reset()
 
-    def initialize(self, model: BaseModel):
+    def initialize(self, model: BaseModel, model_options: dict[str]):
         # this function is to be run in sampling func
         if not self.initialized:
             self.initialized = True
-            if self.motion_models is not None:
-                self.motion_models.initialize_timesteps(model)
+            # initialize multigpu stuff
+            if "multigpu_clones" in model_options:
+                self.model_patcher_devices = model_options["multigpu_clones"].copy()
+                for device, patcher in self.model_patcher_devices.items():
+                    mm_list = ModelPatcherHelper(patcher).get_motion_models()
+                    if len(mm_list) > 0:
+                        self.motion_models_devices[device] = MotionModelGroup(mm_list)
+            else:
+                self.model_patcher_devices[self.model_patcher.load_device] = self.model_patcher
+                if self.motion_models is not None:
+                    self.motion_models_devices[self.model_patcher.load_device] = self.motion_models
+            # initialize timesteps
+            for device, motion_models in self.motion_models_devices.items():
+                base_model = self.model_patcher_devices[device].model
+                motion_models.initialize_timesteps(base_model)
             if self.params.context_options is not None:
                 self.params.context_options.initialize_timesteps(model)
             if self.sample_settings.custom_cfg is not None:
                 self.sample_settings.custom_cfg.initialize_timesteps(model)
 
     def prepare_current_keyframes(self, x: Tensor, timestep: Tensor, transformer_options: dict[str, Tensor]):
-        if self.motion_models is not None:
-            self.motion_models.prepare_current_keyframe(x=x, t=timestep, transformer_options=transformer_options)
+        for motion_models in self.motion_models_devices.values():
+            motion_models.prepare_current_keyframe(x=x, t=timestep, transformer_options=transformer_options)
         if self.params.context_options is not None:
             self.params.context_options.prepare_current(t=timestep, transformer_options=transformer_options)
         if self.sample_settings.custom_cfg is not None:
             self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep, transformer_options=transformer_options)
 
-    def perform_special_model_features(self, model: BaseModel, conds: list, x_in: Tensor, model_options: dict[str]):
-        if self.motion_models is not None:
-            special_models = self.motion_models.get_special_models()
+    def perform_special_model_features(self, conds: list, x_in: Tensor, model_options: dict[str]):
+        # despite there be
+        clone_uuids = set()
+        for device, motion_models in self.motion_models_devices.items():
+            model: BaseModel = self.model_patcher_devices[device].model
+            special_models = motion_models.get_special_models()
             if len(special_models) > 0:
                 for special_model in special_models:
                     if special_model.model.is_in_effect():
                         attachment = get_mm_attachment(special_model)
                         if attachment.is_pia(special_model):
                             special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
-                            conds = get_conds_with_c_concat(conds,
-                                                            attachment.get_pia_c_concat(model, x_in))
+                            if special_model.clone_base_uuid not in clone_uuids:
+                                clone_uuids.add(special_model.clone_base_uuid)
+                                conds = get_conds_with_c_concat(conds,
+                                                                attachment.get_pia_c_concat(model, x_in))
                         elif attachment.is_fancyvideo(special_model):
                             # TODO: handle other weights
                             special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
-                            conds = get_conds_with_c_concat(conds,
-                                                            attachment.get_fancy_c_concat(model, x_in))
-                            # add fps_embedding/motion_embedding patches
-                            emb_patches = special_model.model.get_fancyvideo_emb_patches(dtype=x_in.dtype, device=x_in.device)
-                            transformer_patches = model_options["transformer_options"].get("patches", {})
-                            transformer_patches["emb_patch"] = emb_patches
-                            model_options["transformer_options"]["patches"] = transformer_patches
+                            if special_model.clone_base_uuid not in clone_uuids:
+                                clone_uuids.add(special_model.clone_base_uuid)
+                                conds = get_conds_with_c_concat(conds,
+                                                                attachment.get_fancy_c_concat(model, x_in))
+                                # add fps_embedding/motion_embedding patches
+                                emb_patches = special_model.model.get_fancyvideo_emb_patches(dtype=x_in.dtype, device=x_in.device)
+                                transformer_patches = model_options["transformer_options"].get("patches", {})
+                                transformer_patches["emb_patch"] = emb_patches
+                                model_options["transformer_options"]["patches"] = transformer_patches
         return conds
 
-    def restore_special_model_features(self, model: BaseModel):
-        if self.motion_models is not None:
-            special_models = self.motion_models.get_special_models()
+    def restore_special_model_features(self):
+        for device, motion_models in self.motion_models_devices.items():
+            model: BaseModel = self.model_patcher_devices[device].model
+            special_models = motion_models.get_special_models()
             if len(special_models) > 0:
                 for special_model in reversed(special_models):
                     attachment = get_mm_attachment(special_model)
@@ -98,7 +126,14 @@ class AnimateDiffGlobalState:
                         # TODO: fill out
                         special_model.model.restore_unet_conv_in_pia_fancyvideo(model)
 
+    def interrupt_processing(self):
+        self.processing_interrupted = True
+
+    def is_processing_interrupted(self):
+        return self.processing_interrupted
+
     def reset(self):
+        self.processing_interrupted = False
         self.initialized = False
         self.hooks_initialized = False
         self.start_step: int = 0
@@ -107,13 +142,17 @@ class AnimateDiffGlobalState:
         self.total_steps: int = 0
         self.callback_output_dict.clear()
         self.callback_output_dict = {}
+        # model patchers
+        self.model_patcher_devices.clear()
         if self.model_patcher is not None:
-            self.model_patcher.clean_hooks()
             del self.model_patcher
             self.model_patcher = None
+        # motion models
+        self.motion_models_devices.clear()
         if self.motion_models is not None:
             del self.motion_models
             self.motion_models = None
+        # other
         if self.params is not None:
             self.params.context_options.reset()
             del self.params
@@ -189,12 +228,13 @@ def _apply_model_wrapper(executor, *args, **kwargs):
     cond_or_uncond = transformer_options["cond_or_uncond"]
     ad_params = transformer_options["ad_params"]
     ADGS: AnimateDiffGlobalState = transformer_options["ADGS"]
-    if ADGS.motion_models is not None:
-            for motion_model in ADGS.motion_models.models:
-                attachment = get_mm_attachment(motion_model)
-                attachment.prepare_alcmi2v_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=executor.class_obj.latent_format)
-                attachment.prepare_camera_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
-                attachment.prepare_motionctrl_camera(motion_model, x=x, transformer_options=transformer_options)
+    motion_models = ADGS.motion_models_devices.get(x.device, None)
+    if motion_models is not None:
+        for motion_model in motion_models.models:
+            attachment = get_mm_attachment(motion_model)
+            attachment.prepare_alcmi2v_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params, latent_format=executor.class_obj.latent_format)
+            attachment.prepare_camera_features(motion_model, x=x, cond_or_uncond=cond_or_uncond, ad_params=ad_params)
+            attachment.prepare_motionctrl_camera(motion_model, x=x, transformer_options=transformer_options)
     del x
     return executor(*args, **kwargs)
 
@@ -543,7 +583,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
 
 def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, cond_scale, model_options: dict={}, seed=None):
     ADGS: AnimateDiffGlobalState = model_options["transformer_options"]["ADGS"]
-    ADGS.initialize(model)
+    ADGS.initialize(model, model_options)
     ADGS.prepare_current_keyframes(x=x, timestep=timestep, transformer_options=model_options["transformer_options"])
     try:
         # add AD/evolved-sampling params to model_options (transformer_options)
@@ -554,7 +594,7 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
             model_options["transformer_options"] = model_options["transformer_options"].copy()
         model_options["transformer_options"]["ad_params"] = ADGS.create_exposed_params()
 
-        cond, uncond = ADGS.perform_special_model_features(model, [cond, uncond], x, model_options)
+        cond, uncond = ADGS.perform_special_model_features([cond, uncond], x, model_options)
 
         # only use cfg1_optimization if not using custom_cfg or explicitly set to 1.0
         uncond_ = uncond
@@ -574,7 +614,7 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
         
         return comfy.samplers.cfg_function(model, cond_pred, uncond_pred, cond_scale, x, timestep, model_options, cond, uncond)
     finally:
-        ADGS.restore_special_model_features(model)
+        ADGS.restore_special_model_features()
 
 
 def perform_image_injection(ADGS: AnimateDiffGlobalState, model: BaseModel, latents: Tensor, to_inject: NoisedImageToInject) -> Tensor:
@@ -626,74 +666,78 @@ def perform_image_injection(ADGS: AnimateDiffGlobalState, model: BaseModel, late
         comfy.model_management.load_models_gpu(cached_loaded_models)
 
 
+def prepare_control_objects(control: ControlBase, full_idxs: list[int], ADGS: AnimateDiffGlobalState, device=None):
+    # get controlnet matching device (multigpu only)
+    if device is not None:
+        control = control.get_instance_for_device(device)
+    if control.previous_controlnet is not None:
+        prepare_control_objects(control.previous_controlnet, full_idxs, ADGS, device)
+    if not hasattr(control, "sub_idxs"):
+        raise ValueError(f"Control type {type(control).__name__} may not support required features for sliding context window; \
+                            use ControlNet nodes from Kosinkadink/ComfyUI-Advanced-ControlNet, or make sure ComfyUI-Advanced-ControlNet is updated.")
+    if not hasattr(control, "ACN_VERSION"):
+        control.sub_idxs = full_idxs
+        control.full_latent_length = ADGS.params.full_length
+        control.context_length = ADGS.params.context_options.context_length
+    return control
+
 # initial sliding_calc_conds_batch inspired by ashen's initial hack for 16-frame sliding context:
 # https://github.com/comfyanonymous/ComfyUI/compare/master...ashen-sensored:ComfyUI:master
+def get_resized_cond(cond_in, x_in: Tensor, full_idxs: list[int], context_length: int, ADGS: AnimateDiffGlobalState, device=None) -> list:
+    if cond_in is None:
+        return None
+    # reuse or resize cond items to match context requirements
+    resized_cond = []
+    # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
+    for actual_cond in cond_in:
+        resized_actual_cond = actual_cond.copy()
+        # now we are in the inner dict - "pooled_output" is a tensor, "control" is a ControlBase object, "model_conds" is dictionary
+        for key in actual_cond:
+            try:
+                cond_item = actual_cond[key]
+                if isinstance(cond_item, Tensor):
+                    # check that tensor is the expected length - x.size(0)
+                    if cond_item.size(0) == x_in.size(0):
+                        # if so, it's subsetting time - tell controls the expected indeces so they can handle them
+                        actual_cond_item = cond_item[full_idxs]
+                        resized_actual_cond[key] = actual_cond_item.to(device)
+                    else:
+                        resized_actual_cond[key] = cond_item.to(device)
+                # look for control
+                elif key == "control":
+                    resized_actual_cond[key] = prepare_control_objects(cond_item, full_idxs, ADGS, device)
+                elif isinstance(cond_item, dict):
+                    new_cond_item = cond_item.copy()
+                    # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
+                    for cond_key, cond_value in new_cond_item.items():
+                        if isinstance(cond_value, Tensor):
+                            if cond_value.size(0) == x_in.size(0):
+                                new_cond_item[cond_key] = cond_value[full_idxs].to(device)
+                        # if has cond that is a Tensor, check if needs to be subset
+                        elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
+                            if cond_value.cond.size(0) == x_in.size(0):
+                                new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs].to(device))
+                        elif cond_key == "num_video_frames": # for SVD
+                            new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond)
+                            new_cond_item[cond_key].cond = context_length
+                    resized_actual_cond[key] = new_cond_item
+                else:
+                    resized_actual_cond[key] = cond_item
+            finally:
+                del cond_item  # just in case to prevent VRAM issues
+        resized_cond.append(resized_actual_cond)
+    return resized_cond
+
+
 def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], x_in: Tensor, timestep, model_options):
     ADGS: AnimateDiffGlobalState = model_options["transformer_options"]["ADGS"]
     if not ADGS.is_using_sliding_context():
         return executor(model, conds, x_in, timestep, model_options)
 
-    def prepare_control_objects(control: ControlBase, full_idxs: list[int]):
-        if control.previous_controlnet is not None:
-            prepare_control_objects(control.previous_controlnet, full_idxs)
-        if not hasattr(control, "sub_idxs"):
-            raise ValueError(f"Control type {type(control).__name__} may not support required features for sliding context window; \
-                                use ControlNet nodes from Kosinkadink/ComfyUI-Advanced-ControlNet, or make sure ComfyUI-Advanced-ControlNet is updated.")
-        control.sub_idxs = full_idxs
-        control.full_latent_length = ADGS.params.full_length
-        control.context_length = ADGS.params.context_options.context_length
-    
-    def get_resized_cond(cond_in, full_idxs: list[int], context_length: int) -> list:
-        if cond_in is None:
-            return None
-        # reuse or resize cond items to match context requirements
-        resized_cond = []
-        # cond object is a list containing a dict - outer list is irrelevant, so just loop through it
-        for actual_cond in cond_in:
-            resized_actual_cond = actual_cond.copy()
-            # now we are in the inner dict - "pooled_output" is a tensor, "control" is a ControlBase object, "model_conds" is dictionary
-            for key in actual_cond:
-                try:
-                    cond_item = actual_cond[key]
-                    if isinstance(cond_item, Tensor):
-                        # check that tensor is the expected length - x.size(0)
-                        if cond_item.size(0) == x_in.size(0):
-                            # if so, it's subsetting time - tell controls the expected indeces so they can handle them
-                            actual_cond_item = cond_item[full_idxs]
-                            resized_actual_cond[key] = actual_cond_item
-                        else:
-                            resized_actual_cond[key] = cond_item
-                    # look for control
-                    elif key == "control":
-                        control_item = cond_item
-                        prepare_control_objects(control_item, full_idxs)
-                        resized_actual_cond[key] = control_item
-                        del control_item
-                    elif isinstance(cond_item, dict):
-                        new_cond_item = cond_item.copy()
-                        # when in dictionary, look for tensors and CONDCrossAttn [comfy/conds.py] (has cond attr that is a tensor)
-                        for cond_key, cond_value in new_cond_item.items():
-                            if isinstance(cond_value, Tensor):
-                                if cond_value.size(0) == x_in.size(0):
-                                    new_cond_item[cond_key] = cond_value[full_idxs]
-                            # if has cond that is a Tensor, check if needs to be subset
-                            elif hasattr(cond_value, "cond") and isinstance(cond_value.cond, Tensor):
-                                if cond_value.cond.size(0) == x_in.size(0):
-                                    new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond[full_idxs])
-                            elif cond_key == "num_video_frames": # for SVD
-                                new_cond_item[cond_key] = cond_value._copy_with(cond_value.cond)
-                                new_cond_item[cond_key].cond = context_length
-                        resized_actual_cond[key] = new_cond_item
-                    else:
-                        resized_actual_cond[key] = cond_item
-                finally:
-                    del cond_item  # just in case to prevent VRAM issues
-            resized_cond.append(resized_actual_cond)
-        return resized_cond
-
     # get context windows
     ADGS.params.context_options.step = ADGS.current_step
     context_windows = get_context_windows(ADGS.params.full_length, ADGS.params.context_options)
+    enumerated_context_windows = list(enumerate(context_windows))
 
     if ADGS.motion_models is not None:
         ADGS.motion_models.set_view_options(ADGS.params.context_options.view_options)
@@ -708,145 +752,84 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
         counts_final = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
     biases_final = [([0.0] * x_in.shape[0]) for _ in conds]
 
-    CONTEXTREF_CONTROL_LIST_ALL = "contextref_control_list_all"
-    CONTEXTREF_MACHINE_STATE = "contextref_machine_state"
-    CONTEXTREF_CLEAN_FUNC = "contextref_clean_func"
-    contextref_active = False
-    contextref_mode = None
-    contextref_idxs_set = None
-    first_context = True
+    CREF = ContextRefHandler()
+    NAIVE = NaiveReuseHandler()
+    allow_multigpu_contexts = 'multigpu_clones' in model_options
+    ctxs_relative_work = None
     # need to make sure that contextref stuff gets cleaned up, no matter what
     try:
         if ADGS.params.context_options.extras.should_run_context_ref():
-            # check that ACN provided ContextRef as requested
-            temp_refcn_list = model_options["transformer_options"].get(CONTEXTREF_CONTROL_LIST_ALL, None)
-            if temp_refcn_list is None:
-                raise Exception("Advanced-ControlNet nodes are either missing or too outdated to support ContextRef. Update/install ComfyUI-Advanced-ControlNet to use ContextRef.")
-            if len(temp_refcn_list) == 0:
-                raise Exception("Unexpected ContextRef issue; Advanced-ControlNet did not provide any ContextRef objs for AnimateDiff-Evolved.")
-            del temp_refcn_list
-            # check if ContextRef ReferenceAdvanced ACN objs should_run
-            actually_should_run = True
-            for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                acn_dl_version = get_acn_dinklink_version()
-                if acn_dl_version > 10000:
-                    refcn.prepare_current_timestep(timestep, model_options["transformer_options"])
-                else:
-                    refcn.prepare_current_timestep(timestep)
-                if not refcn.should_run():
-                    actually_should_run = False
-            if actually_should_run:
-                contextref_active = True
-                for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                    # get mode_override if present, mode otherwise
-                    contextref_mode = refcn.get_contextref_mode_replace() or ADGS.params.context_options.extras.context_ref.mode
-                contextref_idxs_set = contextref_mode.indexes.copy()
-
-        curr_window_idx = -1
-        naivereuse_active = False
-        cached_naive_conds = None
-        cached_naive_ctx_idxs = None
+            CREF.initialize_step(timestep, model_options, ADGS)
+            allow_multigpu_contexts = False  # ContextRef requires windows get run in a specific order
         if ADGS.params.context_options.extras.should_run_naive_reuse():
-            cached_naive_conds = [torch.zeros_like(x_in) for _ in conds]
-            #cached_naive_counts = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
-            naivereuse_active = True
-        # perform calc_conds_batch per context window 
-        for ctx_idxs in context_windows:
-            # allow processing to end between context window executions for faster Cancel
-            comfy.model_management.throw_exception_if_processing_interrupted()
-            curr_window_idx += 1
-            ADGS.params.sub_idxs = ctx_idxs
-            if ADGS.motion_models is not None:
-                ADGS.motion_models.set_sub_idxs(ctx_idxs)
-                ADGS.motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
-            # update exposed params
-            model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
-            model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
-            # get subsections of x, timestep, conds
-            sub_x = x_in[ctx_idxs]
-            sub_timestep = timestep[ctx_idxs]
-            sub_conds = [get_resized_cond(cond, ctx_idxs, len(ctx_idxs)) for cond in conds]
+            NAIVE.initialize_step(x_in, conds)
+        
+        if allow_multigpu_contexts:
+            cond_count = len([x for x in conds if x is not None])
+            context_count = len(context_windows)
+            # figure out if conds or ctxs would be better for splitting work
+            cond_relative_work, idle_cond = comfy.multigpu.load_balance_devices(model_options, cond_count, return_idle_time=True)
+            ctxs_relative_work, idle_ctxs = comfy.multigpu.load_balance_devices(model_options, context_count, return_idle_time=True,
+                                                                                work_normalized=cond_count)
+            # if splitting conds is better to splitting contexts, don't split contexts
+            if idle_cond < idle_ctxs:
+                allow_multigpu_contexts = False
 
-            if contextref_active:
-                # set cond counter to 0 (each cond encountered will increment it by 1)
-                for refcn in model_options["transformer_options"][CONTEXTREF_CONTROL_LIST_ALL]:
-                    refcn.contextref_cond_idx = 0
-                if first_context:
-                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
-                else:
-                    model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
-                    if contextref_mode.mode == ContextRefMode.SLIDING: # if sliding, check if time to READ and WRITE
-                        if curr_window_idx % (contextref_mode.sliding_width-1) == 0:
-                            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
-                # override with indexes mode, if set
-                if contextref_mode.mode == ContextRefMode.INDEXES:
-                    contains_idx = False
-                    for i in ctx_idxs:
-                        if i in contextref_idxs_set:
-                            contains_idx = True
-                            # single trigger decides if each index should only trigger READ_WRITE once per step
-                            if not contextref_mode.single_trigger:
-                                break
-                            contextref_idxs_set.remove(i)
-                    if contains_idx:
-                        model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
-                        if first_context:
-                            model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
-                    else:
-                        model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.READ
-            else:
-                model_options["transformer_options"][CONTEXTREF_MACHINE_STATE] = MachineState.OFF
-            #logger.info(f"window: {curr_window_idx} - {model_options['transformer_options'][CONTEXTREF_MACHINE_STATE]}")
 
-            sub_conds_out = executor(model, sub_conds, sub_x, sub_timestep, model_options)
+        if allow_multigpu_contexts:
+            multigpu_windows = {}
+            start_idx = 0
+            for device, work in ctxs_relative_work.items():
+                # if device == x_in.device:
+                #     continue
+                # multigpu_windows[device] = enumerated_context_windows
+                if work == 0:
+                    continue
+                end_idx = start_idx + work
+                multigpu_windows[device] = enumerated_context_windows[start_idx:end_idx]
+                start_idx = end_idx
+            first_device = list(multigpu_windows.keys())[0]
+            def _handle_context_batch(device: torch.device, batch_windows, model_options_batch, results: list[list[ContextResults]]):
+                model_options_batch = comfy.model_patcher.create_model_options_clone(model_options_batch)
+                comfy.samplers.cast_transformer_options(model_options_batch["transformer_options"], device=device)
+                with torch.no_grad():
+                    results.append(evaluate_context_windows(executor, model, x_in, conds, timestep, batch_windows, model_options_batch, CREF, ADGS,
+                                                       device=device, first_device=first_device))
+            combined_results: list[list[ContextResults]] = []
+            threads: list[threading.Thread] = []
+            try:
+                multigpu_entry = model_options.pop('multigpu_clones')
+                # for device, thread_windows in multigpu_windows.items():
+                #     _handle_context_batch(device, thread_windows, combined_results)
+                for device, thread_windows in multigpu_windows.items():
+                    new_thread = threading.Thread(target=_handle_context_batch, args=(device, thread_windows, model_options, combined_results))
+                    threads.append(new_thread)
+                    new_thread.start()
+                for thread in threads:
+                    thread.join()
+                if ADGS.is_processing_interrupted():
+                    raise comfy.model_management.InterruptProcessingException()
+            finally:
+                model_options['multigpu_clones'] = multigpu_entry
 
-            if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
-                full_length = ADGS.params.full_length
-                for pos, idx in enumerate(ctx_idxs):
-                    # bias is the influence of a specific index in relation to the whole context window
-                    bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
-                    bias = max(1e-2, bias)
-                    # take weighted average relative to total bias of current idx
-                    for i in range(len(sub_conds_out)):
-                        bias_total = biases_final[i][idx]
-                        prev_weight = (bias_total / (bias_total + bias))
-                        new_weight = (bias / (bias_total + bias))
-                        conds_final[i][idx] = conds_final[i][idx] * prev_weight + sub_conds_out[i][pos] * new_weight
-                        biases_final[i][idx] = bias_total + bias
-            else:
-                # add conds and counts based on weights of fuse method
-                weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep)
-                weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-                for i in range(len(sub_conds_out)):
-                    conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
-                    counts_final[i][ctx_idxs] += weights_tensor
-            # handle NaiveReuse
-            if naivereuse_active:
-                cached_naive_ctx_idxs = ctx_idxs
-                for i in range(len(sub_conds)):
-                    cached_naive_conds[i][ctx_idxs] = conds_final[i][ctx_idxs] / counts_final[i][ctx_idxs]
-                naivereuse_active = False
-            # toggle first_context off, if needed
-            if first_context:
-                first_context = False
+            for results in combined_results:
+                for result in results:
+                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, result.window_idx, timestep,
+                                                ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
+            
+        else:
+            for enum_window in enumerated_context_windows:
+                results = evaluate_context_windows(executor, model, x_in, conds, timestep, [enum_window], model_options, CREF, ADGS)
+                for result in results:
+                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, result.window_idx, timestep,
+                                                ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
     finally:
-        # clean contextref stuff with provided ACN function, if applicable
-        if contextref_active:
-            model_options["transformer_options"][CONTEXTREF_CLEAN_FUNC]()
+        CREF.cleanup(model_options)
 
     # handle NaiveReuse
-    if cached_naive_conds is not None:
-        start_idx = cached_naive_ctx_idxs[0]
-        for z in range(0, ADGS.params.full_length, len(cached_naive_ctx_idxs)):
-            for i in range(len(cached_naive_conds)):
-                # get the 'true' idxs of this window
-                new_ctx_idxs = [(zz+start_idx) % ADGS.params.full_length for zz in list(range(z, z+len(cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
-                # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
-                adjusted_naive_ctx_idxs = cached_naive_ctx_idxs[:len(new_ctx_idxs)]
-                weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
-                conds_final[i][new_ctx_idxs] = (weighted_mean * (cached_naive_conds[i][adjusted_naive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
-        del cached_naive_conds
+    NAIVE.apply_cached(x_in, conds_final, counts_final, ADGS)
 
+    # finalize conds
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
         # already normalized, so return as is
         del counts_final
@@ -857,6 +840,87 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             conds_final[i] /= counts_final[i]
         del counts_final
         return conds_final
+
+ContextResults = collections.namedtuple("ContextResults", ['window_idx', 'sub_conds_out', 'sub_conds', 'ctx_idxs'])
+def evaluate_context_windows(executor, model: BaseModel, x_in: Tensor, conds, timestep: Tensor, enumerated_context_windows: list[tuple[int, list[int]]],
+                             model_options, CREF: ContextRefHandler, ADGS: AnimateDiffGlobalState, device=None, first_device=None):
+    results: list[ContextResults] = []
+    for window_idx, ctx_idxs in enumerated_context_windows:
+        # allow processing to end between context window executions for faster Cancel
+        if device is None:
+            # non-MultiGPU execution
+            comfy.model_management.throw_exception_if_processing_interrupted()
+        elif first_device == device:
+            # MultiGPU execution
+            try:
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                if ADGS.is_processing_interrupted():
+                    break
+            except comfy.model_management.InterruptProcessingException:
+                ADGS.interrupt_processing()
+                break
+        else:
+            # MultiGPU execution
+            if ADGS.is_processing_interrupted():
+                break
+        ADGS.params.sub_idxs = ctx_idxs
+
+        if device is None:
+            motion_models_devices = ADGS.motion_models_devices.values()
+        else:
+            motion_models_devices = ADGS.motion_models_devices.get(device, None)
+            if motion_models_devices is None:
+                motion_models_devices = []
+            else:
+                motion_models_devices = [motion_models_devices]
+            model = ADGS.model_patcher_devices[device].model
+        for motion_models in motion_models_devices:
+            motion_models.set_sub_idxs(ctx_idxs)
+            motion_models.set_video_length(len(ctx_idxs), ADGS.params.full_length)
+        # update exposed params
+        model_options["transformer_options"]["ad_params"]["sub_idxs"] = ctx_idxs
+        model_options["transformer_options"]["ad_params"]["context_length"] = len(ctx_idxs)
+        # get subsections of x, timestep, conds
+        sub_x = x_in[ctx_idxs].to(device)
+        sub_timestep = timestep[ctx_idxs].to(device)
+        sub_conds = [get_resized_cond(cond, x_in, ctx_idxs, len(ctx_idxs), ADGS, device) for cond in conds]
+
+        CREF.prepare_referencecn(ctx_idxs, window_idx, model_options)
+        
+        sub_conds_out = executor(model, sub_conds, sub_x, sub_timestep, model_options)
+        if device is not None:
+            for i in range(len(sub_conds_out)):
+                sub_conds_out[i] = sub_conds_out[i].to(x_in.device)
+        results.append(ContextResults(window_idx, sub_conds_out, sub_conds, ctx_idxs))
+    return results
+
+
+def combine_context_window_results(x_in: Tensor, sub_conds_out, sub_conds, ctx_idxs: list[int], window_idx: int, timestep,
+                                   ADGS: AnimateDiffGlobalState, NAIVE: NaiveReuseHandler, CREF: ContextRefHandler,
+                                   conds_final: list[Tensor], counts_final: list[Tensor], biases_final: list[Tensor]):
+    if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
+        for pos, idx in enumerate(ctx_idxs):
+            # bias is the influence of a specific index in relation to the whole context window
+            bias = 1 - abs(idx - (ctx_idxs[0] + ctx_idxs[-1]) / 2) / ((ctx_idxs[-1] - ctx_idxs[0] + 1e-2) / 2)
+            bias = max(1e-2, bias)
+            # take weighted average relative to total bias of current idx
+            for i in range(len(sub_conds_out)):
+                bias_total = biases_final[i][idx]
+                prev_weight = (bias_total / (bias_total + bias))
+                new_weight = (bias / (bias_total + bias))
+                conds_final[i][idx] = conds_final[i][idx] * prev_weight + sub_conds_out[i][pos] * new_weight
+                biases_final[i][idx] = bias_total + bias
+    else:
+        # add conds and counts based on weights of fuse method
+        weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep)
+        weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        for i in range(len(sub_conds_out)):
+            conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
+            counts_final[i][ctx_idxs] += weights_tensor
+    # handle NaiveReuse
+    NAIVE.cache_first_context_results(window_idx, ctx_idxs, sub_conds, conds_final, counts_final)
+    # handle ContextRef
+    CREF.finalize_step()
 
 
 def get_conds_with_c_concat(conds: list[dict], c_concat: comfy.conds.CONDNoiseShape):

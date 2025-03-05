@@ -1,13 +1,17 @@
-from typing import Union
+from __future__ import annotations
+from typing import TYPE_CHECKING, Union
 import math
 import torch
 from torch import Tensor
 
 from comfy.model_base import BaseModel
 
-from .utils_model import BIGMAX_TENSOR
+from .dinklink import get_acn_dinklink_version
+from .utils_model import BIGMAX_TENSOR, MachineState
 from .utils_motion import (prepare_mask_batch, extend_to_batch_size, get_combined_multival, resize_multival,
                            get_sorted_list_via_attr)
+if TYPE_CHECKING:
+    from .sampling import AnimateDiffGlobalState
 
 
 CONTEXTREF_VERSION = 1
@@ -245,6 +249,85 @@ class ContextRef(ContextExtra):
 
     def should_run(self):
         return super().should_run()
+
+class ContextRefHandler:
+    CONTEXTREF_CONTROL_LIST_ALL = "contextref_control_list_all"
+    CONTEXTREF_MACHINE_STATE = "contextref_machine_state"
+    CONTEXTREF_CLEAN_FUNC = "contextref_clean_func"
+
+    def __init__(self):
+        self.contextref_active = False
+        self.contextref_mode: ContextRefMode = None
+        self.contextref_idxs_set: set[int] = None
+        self.first_context = True
+    
+    def initialize_step(self, timestep, model_options, ADGS: AnimateDiffGlobalState):
+        # check that ACN provided ContextRef as requested
+        temp_refcn_list = model_options["transformer_options"].get(self.CONTEXTREF_CONTROL_LIST_ALL, None)
+        if temp_refcn_list is None:
+            raise Exception("Advanced-ControlNet nodes are either missing or too outdated to support ContextRef. Update/install ComfyUI-Advanced-ControlNet to use ContextRef.")
+        if len(temp_refcn_list) == 0:
+            raise Exception("Unexpected ContextRef issue; Advanced-ControlNet did not provide any ContextRef objs for AnimateDiff-Evolved.")
+        del temp_refcn_list
+        # check if ContextRef ReferenceAdvanced ACN objs should_run
+        actually_should_run = True
+        for refcn in model_options["transformer_options"][self.CONTEXTREF_CONTROL_LIST_ALL]:
+            acn_dl_version = get_acn_dinklink_version()
+            if acn_dl_version > 10000:
+                refcn.prepare_current_timestep(timestep, model_options["transformer_options"])
+            else:
+                refcn.prepare_current_timestep(timestep)
+            if not refcn.should_run():
+                actually_should_run = False
+        if actually_should_run:
+            self.contextref_active = True
+            for refcn in model_options["transformer_options"][self.CONTEXTREF_CONTROL_LIST_ALL]:
+                # get mode_override if present, mode otherwise
+                self.contextref_mode = refcn.get_contextref_mode_replace() or ADGS.params.context_options.extras.context_ref.mode
+            self.contextref_idxs_set = self.contextref_mode.indexes.copy()
+
+    def prepare_referencecn(self, ctx_idxs: list[int], window_idx: int, model_options):
+        if self.contextref_active:
+            # set cond counter to 0 (each cond encountered will increment it by 1)
+            for refcn in model_options["transformer_options"][self.CONTEXTREF_CONTROL_LIST_ALL]:
+                refcn.contextref_cond_idx = 0
+            if self.first_context:
+                model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
+            else:
+                model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.READ
+                if self.contextref_mode.mode == ContextRefMode.SLIDING: # if sliding, check if time to READ and WRITE
+                    if window_idx % (self.contextref_mode.sliding_width-1) == 0:
+                        model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
+            # override with indexes mode, if set
+            if self.contextref_mode.mode == ContextRefMode.INDEXES:
+                contains_idx = False
+                for i in ctx_idxs:
+                    if i in self.contextref_idxs_set:
+                        contains_idx = True
+                        # single trigger decides if each index should only trigger READ_WRITE once per step
+                        if not self.contextref_mode.single_trigger:
+                            break
+                        self.contextref_idxs_set.remove(i)
+                if contains_idx:
+                    model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.READ_WRITE
+                    if self.first_context:
+                        model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.WRITE
+                else:
+                    model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.READ
+        else:
+            model_options["transformer_options"][self.CONTEXTREF_MACHINE_STATE] = MachineState.OFF
+        #logger.info(f"window: {window_idx} - {model_options['transformer_options'][CONTEXTREF_MACHINE_STATE]}")
+
+
+    def finalize_step(self):
+        'Toggle first_context off, if needed.'
+        if self.first_context:
+            self.first_context = False
+
+    def cleanup(self, model_options):
+        'Clean contextref stuff with provided ACN function, if applicable.'
+        if self.contextref_active:
+            model_options["transformer_options"][self.CONTEXTREF_CLEAN_FUNC]()
 #--------------------------------
 
 
@@ -432,6 +515,41 @@ class NaiveReuse(ContextExtra):
             return False
         # if weighted_mean is 0.0, then reuse will take no effect anyway
         return to_return and self.weighted_mean > 0.0 and self.keyframe.mult > 0.0
+
+class NaiveReuseHandler:
+    def __init__(self):
+        self.naivereuse_active = False
+        self.cached_naive_conds = None
+        self.cached_naive_ctx_idxs = None
+    
+    def initialize_step(self, x_in: Tensor, conds):
+        self.cached_naive_conds = [torch.zeros_like(x_in) for _ in conds]
+        #cached_naive_counts = [torch.zeros((x_in.shape[0], 1, 1, 1), device=x_in.device) for _ in conds]
+        self.naivereuse_active = True
+
+    def cache_first_context_results(self, window_idx, ctx_idxs: list[int], sub_conds: list, conds_final: list[Tensor], counts_final: list[Tensor]):
+        if self.naivereuse_active and window_idx == 0:
+            self.cached_naive_ctx_idxs = ctx_idxs
+            for i in range(len(sub_conds)):
+                self.cached_naive_conds[i][ctx_idxs] = conds_final[i][ctx_idxs] / counts_final[i][ctx_idxs]
+            self.naivereuse_active = False
+
+    def apply_cached(self, x_in: Tensor, conds_final: list[Tensor], counts_final: list[Tensor], ADGS: AnimateDiffGlobalState):
+        if self.cached_naive_conds is not None:
+            start_idx = self.cached_naive_ctx_idxs[0]
+            for z in range(0, ADGS.params.full_length, len(self.cached_naive_ctx_idxs)):
+                for i in range(len(self.cached_naive_conds)):
+                    # get the 'true' idxs of this window
+                    new_ctx_idxs = [(zz+start_idx) % ADGS.params.full_length for zz in list(range(z, z+len(self.cached_naive_ctx_idxs))) if zz < ADGS.params.full_length]
+                    # make sure when getting cached_naive idxs, they are adjusted for actual length leftover length
+                    adjusted_naive_ctx_idxs = self.cached_naive_ctx_idxs[:len(new_ctx_idxs)]
+                    weighted_mean = ADGS.params.context_options.extras.naive_reuse.get_effective_weighted_mean(x_in, new_ctx_idxs)
+                    conds_final[i][new_ctx_idxs] = (weighted_mean * (self.cached_naive_conds[i][adjusted_naive_ctx_idxs]*counts_final[i][new_ctx_idxs])) + ((1.-weighted_mean) * conds_final[i][new_ctx_idxs])
+            self.cleanup()
+
+    def cleanup(self):
+        del self.cached_naive_conds
+        self.cached_naive_conds = None
 #--------------------------------
 
 

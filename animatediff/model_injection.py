@@ -69,7 +69,14 @@ class ModelPatcherHelper:
             self.remove_motion_models()
             self.remove_forward_timestep_embed_patch()
 
-    def get_motion_models(self) -> list[MotionModelPatcher]:
+    def get_motion_models(self, all_devices=False) -> list[MotionModelPatcher]:
+        if all_devices:
+            patchers = [self.model]
+            patchers.extend(self.model.get_additional_models_with_key("multigpu"))
+            all_motion_models = []
+            for patcher in patchers:
+                all_motion_models.extend(patcher.get_additional_models_with_key(self.ADE))
+            return all_motion_models
         return self.model.additional_models.get(self.ADE, [])
 
     def set_motion_models(self, motion_models: list[MotionModelPatcher]):
@@ -82,7 +89,7 @@ class ModelPatcherHelper:
         self.model.remove_injections(self.ADE)
 
     def cleanup_motion_models(self):
-        for motion_model in self.get_motion_models():
+        for motion_model in self.get_motion_models(all_devices=True):
             motion_model.cleanup()
 
 
@@ -108,7 +115,7 @@ class ModelPatcherHelper:
     ##########################
     # motion models helpers
     def set_video_length(self, video_length: int, full_length: int):
-        for motion_model in self.get_motion_models():
+        for motion_model in self.get_motion_models(all_devices=True):
             motion_model.model.set_video_length(video_length=video_length, full_length=full_length)
     
     def get_name_string(self, show_version=False):
@@ -164,7 +171,7 @@ class ModelPatcherHelper:
 
     def pre_run(self):
         # TODO: could implement this as a ModelPatcher ON_PRE_RUN callback
-        for motion_model in self.get_motion_models():
+        for motion_model in self.get_motion_models(all_devices=True):
             motion_model.pre_run()
         self.get_sample_settings().pre_run(self.model)
 
@@ -670,7 +677,7 @@ class MotionModelAttachment:
 
 
 class MotionModelGroup:
-    def __init__(self, init_motion_model: MotionModelPatcher=None):
+    def __init__(self, init_motion_model: Union[MotionModelPatcher, list[MotionModelPatcher]]=None):
         self.models: list[MotionModelPatcher] = []
         if init_motion_model is not None:
             if isinstance(init_motion_model, list):
