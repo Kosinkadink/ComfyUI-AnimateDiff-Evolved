@@ -20,6 +20,8 @@ class ContextFuseMethod:
     FLAT = "flat"
     PYRAMID = "pyramid"
     RELATIVE = "relative"
+    OVERLAP_LINEAR = "overlap-linear"
+
     RANDOM = "🔬random"
     RANDOM_DEPR = "random"
     GAUSS_SIGMA = "🔬gauss-sigma"
@@ -33,8 +35,8 @@ class ContextFuseMethod:
     PYRAMID_SIGMA_INV = "🔬pyramid-sigma inverse"
     PYRAMID_SIGMA_INV_DEPR = "pyramid-sigma inverse"
 
-    LIST = [PYRAMID, FLAT, DELAYED_REVERSE_SAWTOOTH, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM]
-    LIST_STATIC = [PYRAMID, RELATIVE, FLAT, DELAYED_REVERSE_SAWTOOTH, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM]
+    LIST = [PYRAMID, FLAT, OVERLAP_LINEAR, DELAYED_REVERSE_SAWTOOTH, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM]
+    LIST_STATIC = [PYRAMID, RELATIVE, FLAT, OVERLAP_LINEAR, DELAYED_REVERSE_SAWTOOTH, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM]
 
 
 class ContextType:
@@ -360,11 +362,11 @@ CONTEXT_MAPPING = {
 }
 
 
-def get_context_weights(num_frames: int, fuse_method: str, sigma: Tensor = None):
-    weights_func = FUSE_MAPPING.get(fuse_method, None)
+def get_context_weights(length: int, full_length: int, idxs: list[int], ctx_opts: ContextOptions, sigma: Tensor=None):
+    weights_func = FUSE_MAPPING.get(ctx_opts.fuse_method, None)
     if not weights_func:
-        raise ValueError(f"Unknown fuse_method '{fuse_method}'.")
-    return weights_func(num_frames, sigma=sigma )
+        raise ValueError(f"Unknown fuse_method '{ctx_opts.fuse_method}'.")
+    return weights_func(length, sigma=sigma, ctx_opts=ctx_opts, full_length=full_length, idxs=idxs)
 
 
 def create_weights_flat(length: int, **kwargs) -> list[float]:
@@ -381,6 +383,20 @@ def create_weights_pyramid(length: int, **kwargs) -> list[float]:
         max_weight = (length + 1) // 2
         weight_sequence = list(range(1, max_weight, 1)) + [max_weight] + list(range(max_weight - 1, 0, -1))
     return weight_sequence
+
+def create_weights_overlap_linear(length: int, full_length: int, idxs: list[int], ctx_opts: ContextOptions, **kwargs):
+    # based on code in Kijai's WanVideoWrapper: https://github.com/kijai/ComfyUI-WanVideoWrapper/blob/dbb2523b37e4ccdf45127e5ae33e31362f755c8e/nodes.py#L1302
+    # only expected overlap is given different weights
+    weights_torch = torch.ones((length))
+    # blend left-side on all except first window
+    if min(idxs) > 0:
+        ramp_up = torch.linspace(1e-37, 1, ctx_opts.context_overlap)
+        weights_torch[:ctx_opts.context_overlap] = ramp_up
+    # blend right-side on all except last window
+    if max(idxs) < full_length-1:
+        ramp_down = torch.linspace(1, 1e-37, ctx_opts.context_overlap)
+        weights_torch[-ctx_opts.context_overlap:] = ramp_down
+    return weights_torch
 
 def create_weights_random(length: int, **kwargs) -> list[float]:
     if length % 2 == 0:
@@ -460,6 +476,8 @@ FUSE_MAPPING = {
     ContextFuseMethod.FLAT: create_weights_flat,
     ContextFuseMethod.PYRAMID: create_weights_pyramid,
     ContextFuseMethod.RELATIVE: create_weights_pyramid,
+    ContextFuseMethod.OVERLAP_LINEAR: create_weights_overlap_linear,
+    # experimental
     ContextFuseMethod.GAUSS_SIGMA: create_weights_gauss_sigma,
     ContextFuseMethod.GAUSS_SIGMA_DEPR: create_weights_gauss_sigma,
     ContextFuseMethod.GAUSS_SIGMA_INV: create_weights_gauss_sigma_inv,
