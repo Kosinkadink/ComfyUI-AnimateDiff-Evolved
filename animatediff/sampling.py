@@ -84,26 +84,29 @@ class AnimateDiffGlobalState:
             self.sample_settings.custom_cfg.prepare_current_keyframe(t=timestep, transformer_options=transformer_options)
 
     def perform_special_model_features(self, conds: list, x_in: Tensor, model_options: dict[str]):
-        # despite there be
+        # make sure multigpu clones of same model are not causing duplicate wraps
         clone_uuids = set()
         for device, motion_models in self.motion_models_devices.items():
             model: BaseModel = self.model_patcher_devices[device].model
             special_models = motion_models.get_special_models()
             if len(special_models) > 0:
                 for special_model in special_models:
+                    has_clone_base_uuid = hasattr(special_model, "clone_base_uuid") # backwards compatibility
                     if special_model.model.is_in_effect():
                         attachment = get_mm_attachment(special_model)
                         if attachment.is_pia(special_model):
                             special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
-                            if special_model.clone_base_uuid not in clone_uuids:
-                                clone_uuids.add(special_model.clone_base_uuid)
+                            if not has_clone_base_uuid or special_model.clone_base_uuid not in clone_uuids:
+                                if has_clone_base_uuid:
+                                    clone_uuids.add(special_model.clone_base_uuid)
                                 conds = get_conds_with_c_concat(conds,
                                                                 attachment.get_pia_c_concat(model, x_in))
                         elif attachment.is_fancyvideo(special_model):
                             # TODO: handle other weights
                             special_model.model.inject_unet_conv_in_pia_fancyvideo(model)
-                            if special_model.clone_base_uuid not in clone_uuids:
-                                clone_uuids.add(special_model.clone_base_uuid)
+                            if not has_clone_base_uuid or special_model.clone_base_uuid not in clone_uuids:
+                                if has_clone_base_uuid:
+                                    clone_uuids.add(special_model.clone_base_uuid)
                                 conds = get_conds_with_c_concat(conds,
                                                                 attachment.get_fancy_c_concat(model, x_in))
                                 # add fps_embedding/motion_embedding patches
