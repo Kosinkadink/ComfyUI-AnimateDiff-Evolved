@@ -783,9 +783,6 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
             multigpu_windows = {}
             start_idx = 0
             for device, work in ctxs_relative_work.items():
-                # if device == x_in.device:
-                #     continue
-                # multigpu_windows[device] = enumerated_context_windows
                 if work == 0:
                     continue
                 end_idx = start_idx + work
@@ -817,14 +814,14 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
 
             for results in combined_results:
                 for result in results:
-                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, result.window_idx, timestep,
+                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, result.window_idx, len(enumerated_context_windows), timestep,
                                                 ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
             
         else:
             for enum_window in enumerated_context_windows:
                 results = evaluate_context_windows(executor, model, x_in, conds, timestep, [enum_window], model_options, CREF, ADGS)
                 for result in results:
-                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, result.window_idx, timestep,
+                    combine_context_window_results(x_in, result.sub_conds_out, result.sub_conds, result.ctx_idxs, result.window_idx, len(enumerated_context_windows), timestep,
                                                 ADGS, NAIVE, CREF, conds_final, counts_final, biases_final)
     finally:
         CREF.cleanup(model_options)
@@ -834,7 +831,7 @@ def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], 
 
     # finalize conds
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
-        # already normalized, so return as is
+        # relative is already normalized, so return as is
         del counts_final
         return conds_final
     else:
@@ -898,7 +895,7 @@ def evaluate_context_windows(executor, model: BaseModel, x_in: Tensor, conds, ti
     return results
 
 
-def combine_context_window_results(x_in: Tensor, sub_conds_out, sub_conds, ctx_idxs: list[int], window_idx: int, timestep,
+def combine_context_window_results(x_in: Tensor, sub_conds_out, sub_conds, ctx_idxs: list[int], window_idx: int, total_windows: int, timestep,
                                    ADGS: AnimateDiffGlobalState, NAIVE: NaiveReuseHandler, CREF: ContextRefHandler,
                                    conds_final: list[Tensor], counts_final: list[Tensor], biases_final: list[Tensor]):
     if ADGS.params.context_options.fuse_method == ContextFuseMethod.RELATIVE:
@@ -915,7 +912,7 @@ def combine_context_window_results(x_in: Tensor, sub_conds_out, sub_conds, ctx_i
                 biases_final[i][idx] = bias_total + bias
     else:
         # add conds and counts based on weights of fuse method
-        weights = get_context_weights(len(ctx_idxs), ADGS.params.context_options.fuse_method, sigma=timestep)
+        weights = get_context_weights(len(ctx_idxs), x_in.shape[0], ctx_idxs, ADGS.params.context_options, sigma=timestep)
         weights_tensor = torch.Tensor(weights).to(device=x_in.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
         for i in range(len(sub_conds_out)):
             conds_final[i][ctx_idxs] += sub_conds_out[i] * weights_tensor
