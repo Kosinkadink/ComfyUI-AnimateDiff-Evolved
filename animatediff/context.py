@@ -20,12 +20,18 @@ class ContextFuseMethod:
     FLAT = "flat"
     PYRAMID = "pyramid"
     RELATIVE = "relative"
-    RANDOM = "random"
-    GAUSS_SIGMA = "gauss-sigma"
-    GAUSS_SIGMA_INV = "gauss-sigma inverse"
-    DELAYED_REVERSE_SAWTOOTH = "delayed reverse sawtooth"
-    PYRAMID_SIGMA = "pyramid-sigma"
-    PYRAMID_SIGMA_INV = "pyramid-sigma inverse"
+    RANDOM = "🔬random"
+    RANDOM_DEPR = "random"
+    GAUSS_SIGMA = "🔬gauss-sigma"
+    GAUSS_SIGMA_DEPR = "gauss-sigma"
+    GAUSS_SIGMA_INV = "🔬gauss-sigma inverse"
+    GAUSS_SIGMA_INV_DEPR = "gauss-sigma inverse"
+    DELAYED_REVERSE_SAWTOOTH = "🔬delayed reverse sawtooth"
+    DELAYED_REVERSE_SAWTOOTH_DEPR = "delayed reverse sawtooth"
+    PYRAMID_SIGMA = "🔬pyramid-sigma"
+    PYRAMID_SIGMA_DEPR = "pyramid-sigma"
+    PYRAMID_SIGMA_INV = "🔬pyramid-sigma inverse"
+    PYRAMID_SIGMA_INV_DEPR = "pyramid-sigma inverse"
 
     LIST = [PYRAMID, FLAT, DELAYED_REVERSE_SAWTOOTH, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM]
     LIST_STATIC = [PYRAMID, RELATIVE, FLAT, DELAYED_REVERSE_SAWTOOTH, PYRAMID_SIGMA, PYRAMID_SIGMA_INV, GAUSS_SIGMA, GAUSS_SIGMA_INV, RANDOM]
@@ -455,11 +461,17 @@ FUSE_MAPPING = {
     ContextFuseMethod.PYRAMID: create_weights_pyramid,
     ContextFuseMethod.RELATIVE: create_weights_pyramid,
     ContextFuseMethod.GAUSS_SIGMA: create_weights_gauss_sigma,
+    ContextFuseMethod.GAUSS_SIGMA_DEPR: create_weights_gauss_sigma,
     ContextFuseMethod.GAUSS_SIGMA_INV: create_weights_gauss_sigma_inv,
+    ContextFuseMethod.GAUSS_SIGMA_INV_DEPR: create_weights_gauss_sigma_inv,
     ContextFuseMethod.RANDOM: create_weights_random,
+    ContextFuseMethod.RANDOM_DEPR: create_weights_random,
     ContextFuseMethod.DELAYED_REVERSE_SAWTOOTH: create_weights_delayed_reverse_sawtooth,
+    ContextFuseMethod.DELAYED_REVERSE_SAWTOOTH_DEPR: create_weights_delayed_reverse_sawtooth,
     ContextFuseMethod.PYRAMID_SIGMA: create_weights_pyramid_sigma,
+    ContextFuseMethod.PYRAMID_SIGMA_DEPR: create_weights_pyramid_sigma,
     ContextFuseMethod.PYRAMID_SIGMA_INV: create_weights_pyramid_sigma_inv,
+    ContextFuseMethod.PYRAMID_SIGMA_INV_DEPR: create_weights_pyramid_sigma_inv,
 }
 
 
