@@ -257,7 +257,25 @@ def _diffusion_model_groupnormed_wrapper_factory(inject_helper: 'GroupnormInject
 ##################################################################################
 
 
-def apply_params_to_motion_models(helper: ModelPatcherHelper, params: InjectionParams):
+def create_prepare_sampling_wrapper(model_options: dict, params: InjectionParams):
+    # keep backwards compatibility
+    if hasattr(WrappersMP, "PREPARE_SAMPLING"):
+        comfy.patcher_extension.add_wrapper_with_key(WrappersMP.PREPARE_SAMPLING,
+                                                     "ADE_prepare_sampling",
+                                                     _prepare_sampling_wrapper_factory(params),
+                                                     model_options, is_model_options=True)
+
+
+def _prepare_sampling_wrapper_factory(params: InjectionParams):
+    def _prepare_sampling_wrapper(executor, model: ModelPatcher, noise_shape: Tensor, *args, **kwargs):
+        # TODO: handle various dims instead of defaulting to 0th
+        # limit noise_shape length to context_length for more accurate vram use estimation
+        noise_shape = [min(noise_shape[0], params.context_options.context_length)] + list(noise_shape[1:])
+        return executor(model, noise_shape, *args, **kwargs)
+    return _prepare_sampling_wrapper
+
+
+def apply_params_to_motion_models(helper: ModelPatcherHelper, params: InjectionParams, model_options: dict[str]):
     params = params.clone()
     for context in params.context_options.contexts:
         if context.context_schedule == ContextSchedules.VIEW_AS_CONTEXT:
@@ -273,6 +291,7 @@ def apply_params_to_motion_models(helper: ModelPatcherHelper, params: InjectionP
         enough_latents = False
     if params.context_options.context_length and enough_latents:
         logger.info(f"Sliding context window sampling activated - latents passed in ({params.full_length}) greater than context_length {params.context_options.context_length}.")
+        create_prepare_sampling_wrapper(model_options, params)
     else:
         logger.info(f"Regular sampling activated - latents passed in ({params.full_length}) less or equal to context_length {params.context_options.context_length}.")
         params.reset_context()
@@ -440,7 +459,7 @@ def outer_sample_wrapper(executor: WrapperExecutor, *args, **kwargs):
         seed = args[-1]
 
         # apply params to motion model
-        params = apply_params_to_motion_models(helper, params)
+        params = apply_params_to_motion_models(helper, params, model_options=guider.model_options)
 
         # store and inject funtions
         function_injections.inject_functions(helper, params, guider.model_options)
