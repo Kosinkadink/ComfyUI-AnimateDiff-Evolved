@@ -24,22 +24,22 @@ function initHelpDOM() {
     parentDOM.appendChild(helpDOM)
     helpDOM.className = "litegraph";
     let scrollbarStyle = document.createElement('style');
+    parentDOM.className = "VHS_floatinghelp"
     scrollbarStyle.innerHTML = `
-    <style id="scroll-properties">
-            * {
+            .VHS_floatinghelp {
                 scrollbar-width: 6px;
                 scrollbar-color: #0003  #0000;
-            }
-            ::-webkit-scrollbar {
-                background: transparent;
-                width: 6px;
-            }
-            ::-webkit-scrollbar-thumb {
-                background: #0005;
-                border-radius: 20px
-            }
-            ::-webkit-scrollbar-button {
-                display: none;
+                &::-webkit-scrollbar {
+                    background: transparent;
+                    width: 6px;
+                }
+                &::-webkit-scrollbar-thumb {
+                    background: #0005;
+                    border-radius: 20px
+                }
+                &::-webkit-scrollbar-button {
+                    display: none;
+                }
             }
             .VHS_loopedvideo::-webkit-media-controls-mute-button {
                 display:none;
@@ -47,7 +47,6 @@ function initHelpDOM() {
             .VHS_loopedvideo::-webkit-media-controls-fullscreen-button {
                 display:none;
             }
-        </style>
     `
     parentDOM.appendChild(scrollbarStyle)
     chainCallback(app.canvas, "onDrawForeground", function (ctx, visible_rect){
