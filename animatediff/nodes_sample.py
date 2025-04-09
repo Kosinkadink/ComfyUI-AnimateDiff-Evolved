@@ -28,7 +28,7 @@ class SampleSettingsNode:
             "optional": {
                 "noise_layers": ("NOISE_LAYERS",),
                 "iteration_opts": ("ITERATION_OPTS",),
-                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "defaultInput": True}),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
                 "adapt_denoise_steps": ("BOOLEAN", {"default": False},),
                 "custom_cfg": ("CUSTOM_CFG",),
                 "sigma_schedule": ("SIGMA_SCHEDULE",),
@@ -69,7 +69,7 @@ class AncestralOptionsNode:
                 #"seed_gen_override": (SeedNoiseGeneration.LIST_WITH_OVERRIDE,),
             },
             "optional": {
-                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "defaultInput": True}),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             },
             "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
@@ -99,7 +99,7 @@ class NoiseLayerReplaceNode:
             "optional": {
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
-                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "defaultInput": True}),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             },
             "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
@@ -137,7 +137,7 @@ class NoiseLayerAddNode:
             "optional": {
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
-                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "defaultInput": True}),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             },
             "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
@@ -178,7 +178,7 @@ class NoiseLayerAddWeightedNode:
             "optional": {
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
-                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "defaultInput": True}),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             },
             "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
@@ -218,7 +218,7 @@ class NoiseLayerNormalizedSumNode:
             "optional": {
                 "prev_noise_layers": ("NOISE_LAYERS",),
                 "mask_optional": ("MASK",),
-                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "defaultInput": True}),
+                "seed_override": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "forceInput": True}),
             },
             "hidden": {
                 "autosize": ("ADEAUTOSIZE", {"padding": 0}),
