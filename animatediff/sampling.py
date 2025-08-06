@@ -754,6 +754,23 @@ def get_resized_cond(cond_in, x_in: Tensor, full_idxs: list[int], context_length
 def sliding_calc_cond_batch(executor: Callable, model, conds: list[list[dict]], x_in: Tensor, timestep, model_options):
     ADGS: AnimateDiffGlobalState = model_options["transformer_options"]["ADGS"]
     if not ADGS.is_using_sliding_context():
+        if model_options["transformer_options"].get("context_window", None) is not None:
+            window = model_options["transformer_options"]["context_window"]
+            model_options["transformer_options"]["ad_params"]["sub_idxs"] = window.index_list
+            model_options["transformer_options"]["ad_params"]["context_length"] = len(window.index_list)
+            device = None
+            if device is None:
+                motion_models_devices = ADGS.motion_models_devices.values()
+            else:
+                motion_models_devices = ADGS.motion_models_devices.get(device, None)
+                if motion_models_devices is None:
+                    motion_models_devices = []
+                else:
+                    motion_models_devices = [motion_models_devices]
+                model = ADGS.model_patcher_devices[device].model
+            for motion_models in motion_models_devices:
+                motion_models.set_sub_idxs(window.index_list)
+                motion_models.set_video_length(len(window.index_list), ADGS.params.full_length)
         return executor(model, conds, x_in, timestep, model_options)
 
     # get context windows
