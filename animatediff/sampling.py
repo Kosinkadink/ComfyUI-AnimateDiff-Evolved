@@ -203,7 +203,8 @@ def groupnorm_mm_factory(params: InjectionParams, manual_cast=False):
 
         input = rearrange(input, "(b f) c h w -> b c f h w", b=batched_conds)
         if manual_cast:
-            weight, bias = comfy.ops.cast_bias_weight(self, input)
+            cast_result = comfy.ops.cast_bias_weight(self, input)
+            weight, bias = cast_result[0], cast_result[1]
         else:
             weight, bias = self.weight, self.bias
         input = group_norm(input, self.num_groups, weight, bias, self.eps)
@@ -628,7 +629,8 @@ def evolved_sampling_function(model, x: Tensor, timestep: Tensor, uncond, cond, 
                 uncond_ = None
             del cfg_multival
 
-        cond_pred, uncond_pred = comfy.samplers.calc_cond_batch(model, [cond, uncond_], x, timestep, model_options)
+        out = comfy.samplers.calc_cond_batch(model, [cond, uncond_], x, timestep, model_options)
+        cond_pred, uncond_pred = out[0], out[1]
 
         if ADGS.sample_settings.custom_cfg is not None:
             cond_scale = ADGS.sample_settings.custom_cfg.get_cfg_scale(cond_pred)
