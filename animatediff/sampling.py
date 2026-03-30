@@ -203,10 +203,13 @@ def groupnorm_mm_factory(params: InjectionParams, manual_cast=False):
 
         input = rearrange(input, "(b f) c h w -> b c f h w", b=batched_conds)
         if manual_cast:
-            weight, bias = comfy.ops.cast_bias_weight(self, input)
+            weight, bias, offload_stream = comfy.ops.cast_bias_weight(self, input, offloadable=True)
         else:
             weight, bias = self.weight, self.bias
+            offload_stream = None
         input = group_norm(input, self.num_groups, weight, bias, self.eps)
+        if offload_stream is not None:
+            comfy.ops.uncast_bias_weight(self, weight, bias, offload_stream)
         input = rearrange(input, "b c f h w -> (b f) c h w", b=batched_conds)
         return input
     return groupnorm_mm_forward

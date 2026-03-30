@@ -70,9 +70,9 @@ def load_hmreferenceadapter(model_name: str):
     else:
         ops = comfy.ops.manual_cast
     hmref = HMReferenceAdapter(ops=ops)
-    hmref.to(comfy.model_management.unet_dtype())
     hmref.to(comfy.model_management.unet_offload_device())
     load_result = hmref.load_state_dict(state_dict, strict=True)
+    hmref.to(comfy.model_management.unet_dtype())
     hmref_model = create_HMModelPatcher(model=hmref, load_device=comfy.model_management.get_torch_device(),
                                         offload_device=comfy.model_management.unet_offload_device())
     return hmref_model

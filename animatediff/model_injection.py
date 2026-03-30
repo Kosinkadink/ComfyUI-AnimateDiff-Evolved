@@ -841,9 +841,9 @@ def load_motion_module_gen1(model_name: str, model: ModelPatcher, motion_lora: M
     mm_state_dict = apply_mm_settings(model_dict=mm_state_dict, mm_settings=motion_model_settings)
     # initialize AnimateDiffModelWrapper
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
-    ad_wrapper.to(model.model_dtype())
     ad_wrapper.to(model.offload_device)
     load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=False)
+    ad_wrapper.to(model.model_dtype())
     verify_load_result(load_result=load_result, mm_info=mm_info)
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
     motion_model = create_MotionModelPatcher(model=ad_wrapper, load_device=model.load_device, offload_device=model.offload_device)
@@ -865,9 +865,9 @@ def load_motion_module_gen2(model_name: str, motion_model_settings: AnimateDiffS
     mm_state_dict = apply_mm_settings(model_dict=mm_state_dict, mm_settings=motion_model_settings)
     # initialize AnimateDiffModelWrapper
     ad_wrapper = AnimateDiffModel(mm_state_dict=mm_state_dict, mm_info=mm_info)
-    ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
     load_result = ad_wrapper.load_state_dict(mm_state_dict, strict=False)
+    ad_wrapper.to(comfy.model_management.unet_dtype())
     verify_load_result(load_result=load_result, mm_info=mm_info)
     # wrap motion_module into a ModelPatcher, to allow motion lora patches
     motion_model = create_MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
@@ -907,34 +907,34 @@ def verify_load_result(load_result: IncompatibleKeys, mm_info: AnimateDiffInfo):
 
 def create_fresh_motion_module(motion_model: MotionModelPatcher) -> MotionModelPatcher:
     ad_wrapper = AnimateDiffModel(mm_state_dict=motion_model.model.state_dict(), mm_info=motion_model.model.mm_info)
-    ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
     ad_wrapper.load_state_dict(motion_model.model.state_dict())
+    ad_wrapper.to(comfy.model_management.unet_dtype())
     return create_MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
                                       offload_device=comfy.model_management.unet_offload_device())
 
 
 def create_fresh_encoder_only_model(motion_model: MotionModelPatcher) -> MotionModelPatcher:
     ad_wrapper = EncoderOnlyAnimateDiffModel(mm_state_dict=motion_model.model.state_dict(), mm_info=motion_model.model.mm_info)
-    ad_wrapper.to(comfy.model_management.unet_dtype())
     ad_wrapper.to(comfy.model_management.unet_offload_device())
     ad_wrapper.load_state_dict(motion_model.model.state_dict(), strict=False)
+    ad_wrapper.to(comfy.model_management.unet_dtype())
     return create_MotionModelPatcher(model=ad_wrapper, load_device=comfy.model_management.get_torch_device(),
                                       offload_device=comfy.model_management.unet_offload_device())
 
 
 def inject_img_encoder_into_model(motion_model: MotionModelPatcher, w_encoder: MotionModelPatcher):
     motion_model.model.init_img_encoder()
-    motion_model.model.img_encoder.to(comfy.model_management.unet_dtype())
     motion_model.model.img_encoder.to(comfy.model_management.unet_offload_device())
     motion_model.model.img_encoder.load_state_dict(w_encoder.model.img_encoder.state_dict())
+    motion_model.model.img_encoder.to(comfy.model_management.unet_dtype())
 
 
 def inject_pia_conv_in_into_model(motion_model: MotionModelPatcher, w_pia: MotionModelPatcher):
     motion_model.model.init_conv_in(w_pia.model.state_dict())
-    motion_model.model.conv_in.to(comfy.model_management.unet_dtype())
     motion_model.model.conv_in.to(comfy.model_management.unet_offload_device())
     motion_model.model.conv_in.load_state_dict(w_pia.model.conv_in.state_dict())
+    motion_model.model.conv_in.to(comfy.model_management.unet_dtype())
     motion_model.model.mm_info.mm_format = AnimateDiffFormat.PIA
 
 
@@ -956,9 +956,9 @@ def inject_camera_encoder_into_model(motion_model: MotionModelPatcher, camera_ct
     # initialize CameraPoseEncoder on motion model, and load keys
     camera_encoder = CameraPoseEncoder(channels=motion_model.model.layer_channels, nums_rb=2, ops=motion_model.model.ops).to(
         device=comfy.model_management.unet_offload_device(),
-        dtype=comfy.model_management.unet_dtype()
     )
     camera_encoder.load_state_dict(camera_state_dict)
+    camera_encoder.to(dtype=comfy.model_management.unet_dtype())
     camera_encoder.temporal_pe_max_len = get_position_encoding_max_len(camera_state_dict, mm_name=camera_ctrl_name, mm_format=AnimateDiffFormat.ANIMATEDIFF)
     motion_model.model.set_camera_encoder(camera_encoder=camera_encoder)
     # initialize qkv_merge on specific attention blocks, and load keys
