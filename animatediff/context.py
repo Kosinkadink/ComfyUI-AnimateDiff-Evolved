@@ -467,7 +467,7 @@ def create_weights_delayed_reverse_sawtooth(length: int, **kwargs) -> list[float
         weight_sequence = [0.01]*(max_weight-1) + [max_weight] + list(range(max_weight, 0, -1))
     else:
         max_weight = (length + 1) // 2
-        weight_sequence = [0.01]*max_weight + [max_weight] + list(range(max_weight - 1, 0, -1))
+        weight_sequence = [0.01]*(max_weight - 1) + [max_weight] + list(range(max_weight - 1, 0, -1))
     #print("create_weights_delayed_falling_edge",len(weight_sequence),weight_sequence)
     return weight_sequence
 
